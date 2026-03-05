@@ -65,6 +65,30 @@ def ollama_embed_model() -> str:
     return os.getenv("AICL_OLLAMA_EMBED_MODEL", "nomic-embed-text")
 
 
+def graph_backend() -> str:
+    return os.getenv("AICL_GRAPH_BACKEND", "auto").strip().lower()
+
+
+def neo4j_uri() -> str:
+    return os.getenv("AICL_NEO4J_URI", "bolt://localhost:7687").strip()
+
+
+def neo4j_user() -> str:
+    return os.getenv("AICL_NEO4J_USER", "neo4j").strip()
+
+
+def neo4j_password() -> str:
+    return os.getenv("AICL_NEO4J_PASSWORD", "neo4j-dev-password").strip()
+
+
+def neo4j_database() -> str:
+    return os.getenv("AICL_NEO4J_DATABASE", "neo4j").strip()
+
+
+def neo4j_http_url() -> str:
+    return os.getenv("AICL_NEO4J_HTTP_URL", "http://localhost:7474").strip()
+
+
 def api_host() -> str:
     return os.getenv("AICL_API_HOST", "0.0.0.0")
 
@@ -116,6 +140,20 @@ def tool_exec_url() -> str:
 
 def tool_exec_timeout_s() -> float:
     return float(os.getenv("AICL_TOOL_EXEC_TIMEOUT_SEC", "8"))
+
+
+def proposal_timeout_sec() -> int:
+    return int(os.getenv("AICL_PROPOSAL_TIMEOUT_SEC", "20"))
+
+
+def proposal_max_commands() -> int:
+    return int(os.getenv("AICL_PROPOSAL_MAX_COMMANDS", "8"))
+
+
+def proposal_providers() -> list[str]:
+    raw = os.getenv("AICL_PROPOSAL_PROVIDERS", "codex,claude,gemini")
+    out = [x.strip().lower() for x in raw.split(",") if x.strip()]
+    return out or ["codex", "claude", "gemini"]
 
 
 def tools_core_container() -> str:

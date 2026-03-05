@@ -13,12 +13,19 @@ services:
       AICL_TOOL_EXEC_URL: http://aicl-tool-exec:8082
       AICL_QDRANT_URL: http://aicl-qdrant:6333
       AICL_OLLAMA_URL: http://aicl-ollama:11434
+      AICL_GRAPH_BACKEND: ${AICL_GRAPH_BACKEND:-auto}
+      AICL_NEO4J_URI: bolt://aicl-neo4j:7687
+      AICL_NEO4J_HTTP_URL: http://aicl-neo4j:7474
+      AICL_NEO4J_USER: ${AICL_NEO4J_USER:-neo4j}
+      AICL_NEO4J_PASSWORD: ${AICL_NEO4J_PASSWORD:-neo4j-dev-password}
+      AICL_NEO4J_DATABASE: ${AICL_NEO4J_DATABASE:-neo4j}
       AICL_LOG_DIR: /workspace/logs
       AICL_LOG_FILE: aicl.log
     depends_on:
       - qdrant
       - ollama
       - tool-exec
+      - neo4j
     volumes:
       - ../data:/workspace/data
       - ../logs:/workspace/logs
@@ -128,6 +135,18 @@ services:
       - qdrant_storage:/qdrant/storage
     restart: unless-stopped
 
+  neo4j:
+    image: neo4j:5-community
+    container_name: aicl-neo4j
+    ports:
+      - "${AICL_NEO4J_HTTP_HOST_PORT:-7474}:7474"
+      - "${AICL_NEO4J_BOLT_HOST_PORT:-7687}:7687"
+    environment:
+      NEO4J_AUTH: "${AICL_NEO4J_USER:-neo4j}/${AICL_NEO4J_PASSWORD:-neo4j-dev-password}"
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+
   langfuse:
     image: langfuse/langfuse:latest
     container_name: aicl-langfuse
@@ -157,4 +176,5 @@ services:
 volumes:
   ollama:
   qdrant_storage:
+  neo4j_data:
   langfuse_db:

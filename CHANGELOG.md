@@ -2,6 +2,52 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.5.1] - 2026-03-06
+### Added
+- New strategic backlog and roadmap document: `docs/FUTURE_IMPROVEMENTS.md`.
+  - Full-scan improvement inventory grouped by:
+    - Functionality
+    - Automation
+    - Intelligence
+    - UI/UX
+    - Pentest Tools
+    - Pentest Workflow
+    - Documentation
+  - Includes 30-60-90 roadmap phases, impact matrix, and KPI-oriented acceptance criteria.
+  - Includes external inspiration references from free/self-hosted and standards-oriented sources.
+
+### Changed
+- Updated `README.md` Documentation Index to include `Future Improvements`.
+
+## [0.5.0] - 2026-03-05
+### Added
+- Graph backend abstraction (`libs/graph_backend.py`) with optional Neo4j synchronization and SQLite fallback.
+- New graph intelligence APIs:
+  - `GET /graph/query`
+  - `GET /graph/subgraph`
+  - `GET /graph/timeline`
+- New multi-LLM proposal engine (`libs/proposals.py`) with local CLI adapters for Codex/Claude/Gemini and ensemble ranking.
+- New proposal API endpoint:
+  - `POST /proposals/commands`
+- New operations endpoints:
+  - `GET /ops/health/deep`
+  - `GET /ops/log-index`
+- New UI page:
+  - `/ui/proposals` for provider comparison and ensemble command approval workflow.
+
+### Changed
+- `/projects/{project}/graph` and `/sessions/{session_id}/graph` now route through backend abstraction and report selected backend.
+- `add_facts()` now syncs normalized facts to graph backend when Neo4j is enabled.
+- UI now defaults to readable cards/tables with explicit `Readable View` / `JSON View` toggles.
+- Graph UI readability improvements:
+  - default excludes pending facts
+  - confidence threshold filtering
+  - focus-by-entity-kind filtering
+  - node/edge capping to reduce overload
+- Compose stack now includes Neo4j service and orchestrator Neo4j env wiring.
+- Updated docs (`README`, `docs/HOW_TO_USE.md`, `docs/USAGE_PLAYBOOK.md`, `docs/TESTING_ROADMAP.md`) for proposals, graph APIs, and deep ops checks.
+- Extended smoke and contract tests for proposals and advanced graph endpoints.
+
 ## [0.4.3] - 2026-03-05
 ### Added
 - New operator-focused usage runbook: `docs/HOW_TO_USE.md`.

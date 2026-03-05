@@ -11,12 +11,17 @@ This repository provides a segmented architecture with specialized agents:
 
 The default orchestrator path uses deterministic keyword routing. Enable model-based router only if desired (`AICL_USE_LLM_ROUTER=true`). Set `AICL_USE_LANGGRAPH=true` only when your local LangGraph install is stable.
 
+Graph backend modes:
+- `sqlite` fallback (always available)
+- `neo4j` primary graph store for relationship-heavy investigations
+
 ## Documentation Index
 - [How To Use](docs/HOW_TO_USE.md)
 - [Testing Roadmap](docs/TESTING_ROADMAP.md)
 - [Usage Playbook](docs/USAGE_PLAYBOOK.md)
 - [Free Tools Stack](docs/FREE_TOOLS_STACK.md)
 - [Robustness Next Steps](docs/ROBUSTNESS_NEXT_STEPS.md)
+- [Future Improvements](docs/FUTURE_IMPROVEMENTS.md)
 
 ## Safety
 Use only on systems and labs you are explicitly authorized to test (HTB/THM/PortSwigger labs, internal approved environments, CTF targets).
@@ -101,6 +106,7 @@ echo $! > /tmp/aicl_api.pid
 curl -sS http://127.0.0.1:${AICL_API_PORT:-8080}/health
 curl -sS http://127.0.0.1:${AICL_API_PORT:-8080}/ready
 curl -sS "http://127.0.0.1:${AICL_API_PORT:-8080}/diagnostics?project=demo"
+curl -sS "http://127.0.0.1:${AICL_API_PORT:-8080}/ops/health/deep?project=demo"
 curl -sS http://127.0.0.1:8082/health
 curl -sS http://127.0.0.1:8082/capabilities
 ```
@@ -195,15 +201,19 @@ bash scripts/start_pentest_target.sh 10.10.10.10
 ## Workbench UI (Multi-Page)
 The UI now provides purpose-specific pages:
 - `http://127.0.0.1:8091/ui/recon` (target input, command planning, queue+confirm execution)
+- `http://127.0.0.1:8091/ui/proposals` (Codex/Claude/Gemini proposals + ensemble review)
 - `http://127.0.0.1:8091/ui/cracking` (authorized lab cracking command planning + queue)
 - `http://127.0.0.1:8091/ui/docs` (finding creation + screenshot upload/tag/link)
 - `http://127.0.0.1:8091/ui/sessions` (session lifecycle + timeline)
 - `http://127.0.0.1:8091/ui/reports` (markdown report generation + context snapshot)
 - `http://127.0.0.1:8091/ui/graph` (discoveries graph, fact review queue, relation inspector)
 
+Each page supports `Readable View` (default) and `JSON View` toggles for operator-friendly or raw payload inspection.
+
 ### New API Endpoints
 - Planner:
   - `POST /planner/commands`
+  - `POST /proposals/commands`
 - Jobs:
   - `POST /jobs`
   - `POST /jobs/{job_id}/confirm`
@@ -225,6 +235,9 @@ The UI now provides purpose-specific pages:
 - Graph intelligence:
   - `GET /projects/{project}/graph`
   - `GET /sessions/{session_id}/graph`
+  - `GET /graph/query`
+  - `GET /graph/subgraph`
+  - `GET /graph/timeline`
 - Fact review workflow:
   - `GET /facts/review`
   - `POST /facts/review/{fact_id}/approve`
@@ -233,6 +246,9 @@ The UI now provides purpose-specific pages:
 - Export workflow:
   - `POST /exports/session`
   - `POST /exports/project`
+- Operations:
+  - `GET /ops/health/deep`
+  - `GET /ops/log-index`
 
 ### Queue + Confirm Execution Model
 - Commands are created as `pending` jobs.
@@ -246,6 +262,7 @@ The UI now provides purpose-specific pages:
 ### Discoveries Graph + Review
 - Open `/ui/graph?project=<slug>` to visualize host/port/service/domain/user/hash relationships.
 - Use `Session Filter` to focus one campaign and reduce noise.
+- Use `Focus Kind` and `Min Confidence` controls to reduce visual overload.
 - Review queue allows approve/reject from the same page.
 - Reports page consumes approved facts for cleaner outputs.
 

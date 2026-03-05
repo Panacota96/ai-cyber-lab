@@ -8,6 +8,8 @@ import httpx
 from apps.orchestrator.config import (
     enable_langfuse,
     exec_backend,
+    graph_backend,
+    neo4j_http_url,
     ollama_url,
     qdrant_url,
     tool_exec_url,
@@ -67,11 +69,18 @@ def dependency_status() -> dict[str, Any]:
     else:
         langfuse_status = {"up": True, "status_code": 0, "latency_ms": 0, "url": "", "error": "disabled"}
 
+    graph_mode = graph_backend()
+    if graph_mode == "neo4j":
+        neo4j = _probe(neo4j_http_url(), "/")
+    else:
+        neo4j = {"up": True, "status_code": 0, "latency_ms": 0, "url": "", "error": "disabled"}
+
     status = {
         "qdrant": qdrant,
         "ollama": ollama,
         "tool_exec": tool_exec,
         "langfuse": langfuse_status,
+        "neo4j": neo4j,
     }
     logger.info(
         "dependency probe completed",
@@ -82,6 +91,7 @@ def dependency_status() -> dict[str, Any]:
                 "ollama_up": ollama.get("up", False),
                 "tool_exec_up": tool_exec.get("up", False),
                 "langfuse_up": langfuse_status.get("up", False),
+                "neo4j_up": neo4j.get("up", False),
             },
         },
     )

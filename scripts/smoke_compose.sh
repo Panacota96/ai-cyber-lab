@@ -61,7 +61,7 @@ if [[ "$WITH_EXEGOL" -eq 1 ]]; then
   COMPOSE_ARGS+=(--profile exegol)
 fi
 
-SERVICES=(qdrant ollama tools-core py2-runner py3-runner tool-exec orchestrator)
+SERVICES=(qdrant neo4j ollama tools-core py2-runner py3-runner tool-exec orchestrator)
 if [[ "$WITH_UI" -eq 1 ]]; then
   SERVICES+=(ui-web)
 fi
@@ -120,6 +120,12 @@ run_step "route study request" curl -fsS -X POST "$API_URL/route" \
 run_step "route pentest request" curl -fsS -X POST "$API_URL/route" \
   -H "content-type: application/json" \
   -d "{\"project\":\"$PROJECT\",\"user_input\":\"nmap recon on 10.10.10.10\"}"
+
+run_step "graph query endpoint" curl -fsS "$API_URL/graph/query?project=$PROJECT&q=10.10.10.10&include_pending=true"
+
+run_step "proposal ensemble endpoint" curl -fsS -X POST "$API_URL/proposals/commands" \
+  -H "content-type: application/json" \
+  -d "{\"project\":\"$PROJECT\",\"target\":\"10.10.10.10\",\"purpose\":\"recon\",\"profile\":\"balanced\",\"discoveries\":[\"80/tcp open http\"]}"
 
 run_step "python3 runtime check via tool-exec" curl -fsS -X POST "$TOOL_EXEC_URL/run" \
   -H "content-type: application/json" \

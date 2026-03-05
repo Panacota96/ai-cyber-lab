@@ -1,7 +1,7 @@
 .PHONY: up up-ui up-exegol down dev ui tool-exec route pentest-start format logs maintain-logs bundle-logs smoke-compose eval start-session end-session test verify check-changelog
 
 up:
-	cd infra && docker compose up -d qdrant ollama tools-core py2-runner py3-runner tool-exec orchestrator
+	cd infra && docker compose up -d qdrant neo4j ollama tools-core py2-runner py3-runner tool-exec orchestrator
 
 up-ui:
 	cd infra && docker compose --profile ui up -d ui-web

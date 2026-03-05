@@ -187,10 +187,32 @@ def test_fact_review_graph_and_export_contract(monkeypatch, tmp_path):
     project_graph = client.get("/projects/demo/graph", params={"include_pending": "true"})
     assert project_graph.status_code == 200
     assert project_graph.json()["stats"]["nodes"] >= 2
+    assert project_graph.json().get("backend") in {"sqlite", "neo4j"}
 
     session_graph = client.get(f"/sessions/{session_id}/graph", params={"include_pending": "true"})
     assert session_graph.status_code == 200
     assert session_graph.json()["stats"]["nodes"] >= 2
+
+    query_graph = client.get(
+        "/graph/query",
+        params={"project": "demo", "q": "10.10.10.10", "include_pending": "true"},
+    )
+    assert query_graph.status_code == 200
+    assert query_graph.json()["stats"]["matches"] >= 1
+
+    subgraph = client.get(
+        "/graph/subgraph",
+        params={"project": "demo", "root": "10.10.10.10", "depth": 2, "include_pending": "true"},
+    )
+    assert subgraph.status_code == 200
+    assert subgraph.json()["stats"]["nodes"] >= 1
+
+    timeline_graph = client.get(
+        "/graph/timeline",
+        params={"project": "demo", "session_id": session_id, "include_pending": "true"},
+    )
+    assert timeline_graph.status_code == 200
+    assert timeline_graph.json()["count"] >= 1
 
     exported_session = client.post(
         "/exports/session",
@@ -208,3 +230,26 @@ def test_fact_review_graph_and_export_contract(monkeypatch, tmp_path):
     assert Path(project_body["dataset_json"]).exists()
     assert Path(project_body["report_md"]).exists()
     assert Path(project_body["report_html"]).exists()
+
+
+def test_command_proposals_contract(monkeypatch, tmp_path):
+    client = _build_client(monkeypatch, tmp_path)
+
+    resp = client.post(
+        "/proposals/commands",
+        json={
+            "project": "demo",
+            "target": "10.10.10.10",
+            "purpose": "recon",
+            "profile": "balanced",
+            "providers": [],
+            "discoveries": ["80/tcp open http"],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["project"] == "demo"
+    assert "proposal_id" in body
+    assert "providers" in body
+    assert "ensemble" in body
+    assert isinstance(body["manual_review_required"], bool)

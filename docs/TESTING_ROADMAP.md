@@ -70,7 +70,7 @@ Expected outcome:
 | Layer | Command | Purpose | Expected |
 |---|---|---|---|
 | Bootstrap | `bash scripts/bootstrap.sh` | Build local venv and install package | `.venv` exists and install ends without errors |
-| Dependencies | `cd infra && docker compose up -d qdrant ollama` | Start memory and local model endpoints | Containers are running |
+| Dependencies | `cd infra && docker compose up -d qdrant neo4j ollama` | Start memory/model/graph endpoints | Containers are running |
 | Quick smoke (no build) | `bash scripts/smoke_compose.sh --with-ui --skip-build` | Fast health/route/runtime regression | Script exits `0` |
 | Full container smoke | `make smoke-compose` | Validate compose build + core health + route/report/runtime checks | Script exits `0` |
 | API readiness | `curl -sS http://127.0.0.1:<PORT>/ready` | Check orchestrator dependency health | JSON with `status` and `dependencies` |
@@ -80,6 +80,8 @@ Expected outcome:
 | Prompt routing | `make eval` | Guard routing behavior from regression | Pass rate >= configured threshold |
 | Troubleshooting log | `curl -sS "http://127.0.0.1:<PORT>/logs?lines=200"` | Confirm structured events are available | JSON with `stats` and `lines` |
 | Diagnostics | `curl -sS "http://127.0.0.1:<PORT>/diagnostics?project=demo"` | Inspect readiness + trace + critical events | JSON includes readiness/trace/knowledge/log stats |
+| Deep health | `curl -sS "http://127.0.0.1:<PORT>/ops/health/deep?project=demo"` | Validate worker + graph backend + critical log state | JSON includes `graph_backend` and critical counters |
+| Log index | `curl -sS "http://127.0.0.1:<PORT>/ops/log-index?limit=100"` | Enumerate recent log files for troubleshooting | JSON includes files + size metadata |
 | Incident bundle | `make bundle-logs` | Capture docker/API/system evidence for root-cause analysis | `logs/troubleshoot/bundle_<timestamp>.tar.gz` exists |
 
 ## End-to-End Smoke Test (Session + Report)
@@ -152,12 +154,14 @@ Run:
 
 Covers:
 - `POST /planner/commands`
+- `POST /proposals/commands`
 - Job lifecycle (`/jobs`, `/jobs/{id}/confirm`, `/jobs/{id}`, `/jobs`)
 - Findings creation/listing
 - Evidence upload/link/listing
 - Session timeline endpoint
 - Fact review queue/decision endpoints
 - Discoveries graph endpoints
+- Graph query/subgraph/timeline endpoints
 - Session/project export endpoints
 
 Expected:

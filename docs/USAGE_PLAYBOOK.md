@@ -12,6 +12,8 @@ For an operator-first quick runbook, see [HOW_TO_USE.md](HOW_TO_USE.md).
 | `apps/orchestrator/main.py` | FastAPI + CLI entrypoint (`/route`, `/health`, `/ready`, `/logs`, `/diagnostics`, session APIs) | Daily operations and automation integration |
 | `apps/tool_exec/main.py` | Tool execution API (`/run`, `/capabilities`) with allowlist and runtime-target routing | Containerized command execution without host dependency |
 | `apps/ui/main.py` | Web dashboard for route/session/log/report actions | Avoid raw API/curl workflows |
+| `libs/proposals.py` | Local CLI adapters + ensemble proposals (`/proposals/commands`) | Compare Codex/Claude/Gemini command ideas before execution |
+| `libs/graph_backend.py` | Graph backend abstraction (`sqlite` fallback, optional `neo4j`) | Dynamic relationship graph at larger scale |
 | `libs/command_planner.py` | Profile-based command plan generator (`stealth/balanced/aggressive`) | Recon/cracking command suggestion by target |
 | `libs/workbench_db.py` | SQLite index for sessions/jobs/findings/evidence/facts | Timeline, traceability, and cross-session querying |
 | `libs/job_worker.py` | Queue worker that executes confirmed jobs via tool-exec | Queue+confirm command execution model |
@@ -185,10 +187,14 @@ Suggested UI flow for a machine:
    - Visualize discovery relations (host/port/service/version/domain/user/password/hash).
    - Filter by session to isolate a single engagement.
    - Approve/reject pending facts before report generation.
-5. `Sessions` page:
+5. `Proposals` page:
+   - Generate local multi-LLM command suggestions.
+   - Compare provider outputs side-by-side.
+   - Execute only reviewed ensemble commands.
+6. `Sessions` page:
    - Start/end sessions.
    - Load session timeline with jobs, findings, and evidence.
-6. `Reports` page:
+7. `Reports` page:
    - Trigger markdown report generation and review context snapshots.
    - Use session/project exports to generate markdown/html/json bundles.
 

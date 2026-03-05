@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,25 +14,30 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from apps.agents.knowledge_agent import knowledge_diagnostics
-from apps.orchestrator.config import api_host, api_port, data_root, job_worker_enabled
+from apps.orchestrator.config import api_host, api_port, data_root, job_worker_enabled, log_dir
 from apps.orchestrator.deps import readiness
 from apps.orchestrator.graph import run_orchestrator
 from libs.command_planner import build_command_plan
 from libs.errors import api_error
 from libs.exporter import export_project_bundle, export_session_bundle
+from libs.graph_backend import (
+    build_graph_data,
+    graph_backend_status,
+    graph_timeline_data,
+    query_graph_data,
+    subgraph_data,
+)
 from libs.job_worker import WORKER, job_worker_status
 from libs.logs import get_logger, log_stats, read_recent_logs, setup_logging
+from libs.proposals import generate_command_proposals
 from libs.sessions import end_session, get_current_session, start_session
 from libs.trace import new_trace_id, reset_trace_id, set_trace_id, trace_diagnostics, trace_event
 from libs.workbench_db import (
     add_evidence,
-    build_graph,
     cancel_job,
     confirm_job,
     create_finding,
     create_job,
-    get_fact,
-    get_finding,
     get_job,
     init_db,
     link_evidence,
@@ -82,6 +88,15 @@ class PlannerRequest(BaseModel):
     purpose: str = "recon"
     profile: str = "balanced"
     discoveries: list[str] = Field(default_factory=list)
+
+
+class ProposalRequest(BaseModel):
+    project: str = Field(..., min_length=1)
+    target: str = Field(..., min_length=1)
+    purpose: str = "recon"
+    profile: str = "balanced"
+    discoveries: list[str] = Field(default_factory=list)
+    providers: list[str] = Field(default_factory=list)
 
 
 class JobCreateRequest(BaseModel):
@@ -162,6 +177,30 @@ def _critical_logs(limit: int = 50) -> list[dict[str, Any]]:
         if str(item.get("level", "")).upper() in {"WARNING", "ERROR", "CRITICAL"}:
             out.append(item)
     return out[-limit:]
+
+
+def _log_index(limit: int = 50) -> list[dict[str, Any]]:
+    logs_root = log_dir()
+    rows: list[dict[str, Any]] = []
+    if not logs_root.exists():
+        return rows
+
+    for item in logs_root.glob("*.log*"):
+        try:
+            stat = item.stat()
+        except Exception:
+            continue
+        rows.append(
+            {
+                "name": item.name,
+                "path": str(item),
+                "size_bytes": stat.st_size,
+                "modified_utc": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                "modified_epoch": stat.st_mtime,
+            }
+        )
+    rows.sort(key=lambda x: float(x.get("modified_epoch", 0.0)), reverse=True)
+    return rows[: max(1, min(limit, 500))]
 
 
 @app.on_event("startup")
@@ -285,6 +324,32 @@ def planner_commands(req: PlannerRequest) -> dict[str, Any]:
                 "purpose": req.purpose,
                 "profile": req.profile,
                 "commands": len(out.get("commands", [])),
+            },
+        },
+    )
+    return out
+
+
+@app.post("/proposals/commands")
+def proposals_commands(req: ProposalRequest) -> dict[str, Any]:
+    out = generate_command_proposals(
+        project=_slug(req.project),
+        target=req.target.strip(),
+        purpose=req.purpose.strip().lower() or "recon",
+        aggressiveness=req.profile.strip().lower() or "balanced",
+        discoveries=req.discoveries,
+        providers=[x.strip().lower() for x in req.providers if x.strip()],
+    )
+    logger.info(
+        "proposal ensemble generated",
+        extra={
+            "event": "proposal_ensemble_generated",
+            "details": {
+                "project": req.project,
+                "target": req.target,
+                "purpose": req.purpose,
+                "profile": req.profile,
+                "ensemble_count": len(out.get("ensemble", [])),
             },
         },
     )
@@ -502,7 +567,7 @@ def project_graph(
     include_pending: bool = Query(default=False),
     limit: int = Query(default=5000, ge=1, le=50000),
 ) -> dict[str, Any]:
-    return build_graph(
+    return build_graph_data(
         _slug(project),
         session_id=session_id.strip() if session_id else None,
         include_pending=include_pending,
@@ -530,7 +595,58 @@ def session_graph(session_id: str, include_pending: bool = Query(default=False))
                 details={"session_id": session_id},
             ),
         )
-    return build_graph(project, session_id=session_id, include_pending=include_pending)
+    return build_graph_data(project, session_id=session_id, include_pending=include_pending)
+
+
+@app.get("/graph/query")
+def graph_query(
+    project: str = Query(..., min_length=1),
+    q: str = Query(..., min_length=1),
+    session_id: str | None = Query(default=None),
+    include_pending: bool = Query(default=True),
+    limit: int = Query(default=5000, ge=1, le=50000),
+) -> dict[str, Any]:
+    return query_graph_data(
+        _slug(project),
+        q=q,
+        session_id=session_id.strip() if session_id else None,
+        include_pending=include_pending,
+        limit=limit,
+    )
+
+
+@app.get("/graph/subgraph")
+def graph_subgraph(
+    project: str = Query(..., min_length=1),
+    root: str = Query(..., min_length=1),
+    depth: int = Query(default=2, ge=1, le=5),
+    session_id: str | None = Query(default=None),
+    include_pending: bool = Query(default=True),
+    limit: int = Query(default=5000, ge=1, le=50000),
+) -> dict[str, Any]:
+    return subgraph_data(
+        _slug(project),
+        root=root,
+        depth=depth,
+        session_id=session_id.strip() if session_id else None,
+        include_pending=include_pending,
+        limit=limit,
+    )
+
+
+@app.get("/graph/timeline")
+def graph_timeline(
+    project: str = Query(..., min_length=1),
+    session_id: str | None = Query(default=None),
+    include_pending: bool = Query(default=True),
+    limit: int = Query(default=500, ge=1, le=5000),
+) -> dict[str, Any]:
+    return graph_timeline_data(
+        _slug(project),
+        session_id=session_id.strip() if session_id else None,
+        include_pending=include_pending,
+        limit=limit,
+    )
 
 
 @app.post("/exports/session")
@@ -714,12 +830,41 @@ def logs(lines: int = Query(default=200, ge=1, le=2000)) -> dict[str, object]:
     return out
 
 
+@app.get("/ops/log-index")
+def ops_log_index(limit: int = Query(default=50, ge=1, le=500)) -> dict[str, Any]:
+    files = _log_index(limit=limit)
+    return {
+        "log_dir": str(log_dir()),
+        "count": len(files),
+        "files": files,
+        "stats": log_stats(),
+    }
+
+
+@app.get("/ops/health/deep")
+def ops_health_deep(project: str = Query(default="default")) -> dict[str, Any]:
+    ready = readiness()
+    critical = _critical_logs(limit=100)
+    return {
+        "status": "ok" if str(ready.get("status")) == "ok" else "degraded",
+        "project": project,
+        "readiness": ready,
+        "worker": job_worker_status(),
+        "graph_backend": graph_backend_status(),
+        "current_session": get_current_session(project) or {},
+        "recent_critical_logs": critical,
+        "critical_count": len(critical),
+        "log_stats": log_stats(),
+    }
+
+
 @app.get("/diagnostics")
 def diagnostics(project: str = Query(default="default")) -> dict[str, object]:
     out = {
         "readiness": readiness(),
         "trace": trace_diagnostics(),
         "knowledge": knowledge_diagnostics(),
+        "graph_backend": graph_backend_status(),
         "log_stats": log_stats(),
         "current_session": get_current_session(project) or {},
         "recent_critical_logs": _critical_logs(limit=50),

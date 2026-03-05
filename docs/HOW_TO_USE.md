@@ -39,11 +39,16 @@ xdg-open http://127.0.0.1:8091
 
 Main pages:
 - `/ui/recon`: target planning + command queue/confirm
+- `/ui/proposals`: Codex/Claude/Gemini proposals + ensemble review
 - `/ui/cracking`: cracking plans (authorized labs only)
 - `/ui/docs`: findings + evidence upload
 - `/ui/graph`: discoveries graph + fact review
 - `/ui/sessions`: start/end sessions + timeline + export
 - `/ui/reports`: report generation context
+
+UI readability:
+- Default mode is `Readable View` (cards/tables).
+- Switch to `JSON View` from the top toggle when raw payload inspection is needed.
 
 ## 3) Typical Pentest Workflow (UI)
 1. Go to `/ui/sessions` and start a session with:
@@ -59,6 +64,11 @@ Main pages:
 4. Go to `/ui/graph`:
    - inspect discovered entities/relations
    - approve/reject pending facts
+   - use `Focus Kind` + `Min Confidence` to reduce graph overload
+5. Go to `/ui/proposals`:
+   - generate provider proposals
+   - compare Codex/Claude/Gemini side-by-side
+   - execute only reviewed ensemble commands
 5. Go to `/ui/reports` and `/ui/sessions`:
    - generate report
    - export session/project bundles (JSON + MD + HTML)
@@ -104,6 +114,8 @@ bash scripts/aicl.sh "retrieve ospf lsa type 1 notes" --project cert-study
 ```bash
 curl -sS "http://127.0.0.1:8080/logs?lines=200"
 curl -sS "http://127.0.0.1:8080/diagnostics?project=demo"
+curl -sS "http://127.0.0.1:8080/ops/health/deep?project=demo"
+curl -sS "http://127.0.0.1:8080/ops/log-index?limit=100"
 ```
 
 Collect troubleshooting bundle:

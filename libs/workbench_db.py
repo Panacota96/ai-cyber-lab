@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from apps.orchestrator.config import data_root
+from libs.logs import get_logger
 
 _LOCK = threading.Lock()
+logger = get_logger(__name__)
 
 
 def _now() -> str:
@@ -479,12 +481,14 @@ def add_facts(rows: list[dict[str, Any]]) -> int:
     if not rows:
         return 0
     init_db()
+    sync_rows: list[dict[str, Any]] = []
     with _LOCK:
         con = _conn()
         try:
             now = _now()
             for raw in rows:
                 item = _normalize_fact(raw)
+                fact_id = uuid.uuid4().hex
                 con.execute(
                     """
                     INSERT INTO facts(
@@ -495,7 +499,7 @@ def add_facts(rows: list[dict[str, Any]]) -> int:
                     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        uuid.uuid4().hex,
+                        fact_id,
                         item["project"],
                         item["session_id"],
                         item["job_id"],
@@ -515,10 +519,41 @@ def add_facts(rows: list[dict[str, Any]]) -> int:
                         json.dumps(item["details"], ensure_ascii=True),
                     ),
                 )
+                sync_rows.append(
+                    {
+                        "fact_id": fact_id,
+                        "created_utc": now,
+                        **item,
+                    }
+                )
             con.commit()
-            return len(rows)
         finally:
             con.close()
+
+    try:
+        from libs.graph_backend import sync_facts_to_graph
+
+        sync_result = sync_facts_to_graph(sync_rows)
+        logger.info(
+            "facts synchronized to graph backend",
+            extra={
+                "event": "facts_graph_sync",
+                "details": {
+                    "requested": len(sync_rows),
+                    "synced": int(sync_result.get("synced", 0)),
+                    "backend": sync_result.get("backend", "sqlite"),
+                },
+            },
+        )
+    except Exception as exc:
+        logger.warning(
+            "graph backend sync skipped",
+            extra={
+                "event": "facts_graph_sync_skipped",
+                "details": {"error": str(exc), "facts": len(sync_rows)},
+            },
+        )
+    return len(rows)
 
 
 def get_fact(fact_id: str) -> dict[str, Any] | None:

@@ -23,6 +23,18 @@ spec:
               value: http://aicl-qdrant:6333
             - name: AICL_OLLAMA_URL
               value: http://aicl-ollama:11434
+            - name: AICL_GRAPH_BACKEND
+              value: auto
+            - name: AICL_NEO4J_URI
+              value: bolt://aicl-neo4j:7687
+            - name: AICL_NEO4J_HTTP_URL
+              value: http://aicl-neo4j:7474
+            - name: AICL_NEO4J_USER
+              value: neo4j
+            - name: AICL_NEO4J_PASSWORD
+              value: neo4j-dev-password
+            - name: AICL_NEO4J_DATABASE
+              value: neo4j
             - name: AICL_EXEC_BACKEND
               value: service
             - name: AICL_TOOL_EXEC_URL

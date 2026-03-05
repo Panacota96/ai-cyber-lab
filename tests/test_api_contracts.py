@@ -27,7 +27,9 @@ def test_health_and_ready_contract(monkeypatch, tmp_path):
     body = ready.json()
     assert "status" in body
     assert "dependencies" in body
-    assert {"qdrant", "ollama", "tool_exec", "langfuse"}.issubset(set(body["dependencies"].keys()))
+    assert {"qdrant", "ollama", "tool_exec", "langfuse", "neo4j"}.issubset(
+        set(body["dependencies"].keys())
+    )
 
 
 def test_route_contract_includes_trace_id(monkeypatch, tmp_path):
@@ -73,5 +75,14 @@ def test_logs_and_diagnostics_contract(monkeypatch, tmp_path):
     assert "readiness" in body
     assert "trace" in body
     assert "knowledge" in body
+    assert "graph_backend" in body
     assert "log_stats" in body
     assert "recent_critical_logs" in body
+
+    deep = client.get("/ops/health/deep", params={"project": "demo"})
+    assert deep.status_code == 200
+    assert "graph_backend" in deep.json()
+
+    log_index = client.get("/ops/log-index", params={"limit": 20})
+    assert log_index.status_code == 200
+    assert "files" in log_index.json()

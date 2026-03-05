@@ -8,4 +8,5 @@ resources:
   - py2-runner-deploy.yaml
   - py3-runner-deploy.yaml
   - qdrant-statefulset.yaml
+  - neo4j-statefulset.yaml
   - ollama-deploy.yaml

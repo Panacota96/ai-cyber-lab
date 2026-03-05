@@ -17,7 +17,16 @@ def _build_client(monkeypatch):
 def test_ui_pages_render_without_backend(monkeypatch):
     client = _build_client(monkeypatch)
 
-    for path in ("/", "/ui/recon", "/ui/cracking", "/ui/docs", "/ui/sessions", "/ui/reports", "/ui/graph"):
+    for path in (
+        "/",
+        "/ui/recon",
+        "/ui/proposals",
+        "/ui/cracking",
+        "/ui/docs",
+        "/ui/sessions",
+        "/ui/reports",
+        "/ui/graph",
+    ):
         resp = client.get(path, params={"project": "demo"})
         assert resp.status_code == 200
         assert "AI Cyber Lab Workbench" in resp.text
