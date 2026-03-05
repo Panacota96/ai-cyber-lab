@@ -7,5 +7,7 @@ __pycache__/
 .ruff_cache/
 logs/*.log
 data/projects/_logs/
+data/projects/_evals/
+data/projects/demo-roadmap/
 data/projects/**/raw/
 data/artifacts/**

@@ -1,0 +1,4 @@
+[2026-03-05T10:00:00+00:00] event=session_start session=s-123 project=demo operator=tester
+[2026-03-05T10:01:00+00:00] event=command session=s-123 project=demo exit=0 cmd=nmap\ -sV\ -Pn\ 10.10.10.10
+[2026-03-05T10:02:00+00:00] event=command_output session=s-123 project=demo exit=0 digest=abcd1234 output_preview=Open\ ports cmd=nmap\ -sV\ -Pn\ 10.10.10.10
+[2026-03-05T10:10:00+00:00] event=session_end session=s-123 project=demo summary=done

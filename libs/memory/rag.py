@@ -47,9 +47,11 @@ def index_markdown_folder(folder: str, source: str, tags: list[str] | None = Non
                 chunk,
                 metadata={
                     "source": source,
+                    "project": source,
                     "path": str(path),
                     "chunk": idx,
                     "tags": tags or [],
+                    "confidence": "verified-lab",
                     "source_type": "markdown",
                 },
             )

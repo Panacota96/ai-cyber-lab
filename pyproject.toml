@@ -24,9 +24,12 @@ dev = [
   "ruff>=0.8.0",
   "pytest>=8.3.0"
 ]
+observability = [
+  "langfuse>=2.60.2"
+]
 
 [tool.setuptools]
-packages = ["apps", "apps.orchestrator", "apps.agents", "libs", "libs.tools", "libs.tools.parsers", "libs.memory", "libs.docs"]
+packages = ["apps", "apps.orchestrator", "apps.agents", "libs", "libs.tools", "libs.tools.parsers", "libs.tools.capture", "libs.memory", "libs.docs"]
 
 [tool.ruff]
 line-length = 100

@@ -1,0 +1,14 @@
+[
+  {"input": "Summarize CCNA OSPF and generate flashcards", "expected_route": "study"},
+  {"input": "Create revision notes for PortSwigger SSRF", "expected_route": "study"},
+  {"input": "nmap recon on 10.10.10.10", "expected_route": "pentest"},
+  {"input": "target 10.10.10.20 what is next after enum", "expected_route": "pentest"},
+  {"input": "Turn these logs into a writeup", "expected_route": "report"},
+  {"input": "Generate an executive summary from the findings", "expected_route": "report"},
+  {"input": "store: JWT weak secret observed in lab", "expected_route": "knowledge"},
+  {"input": "index: data/knowledge", "expected_route": "knowledge"},
+  {"input": "search notes for linux priv esc", "expected_route": "knowledge"},
+  {"input": "Compare SQLi detection approaches", "expected_route": "research"},
+  {"input": "Explain tradeoffs between ffuf and gobuster", "expected_route": "research"},
+  {"input": "remember this trick for smb null sessions", "expected_route": "knowledge"}
+]

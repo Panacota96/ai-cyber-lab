@@ -2,6 +2,50 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.1] - 2026-03-05
+### Added
+- Full testing roadmap documentation with step-by-step commands, expected outputs, smoke tests, and failure debug guidance (`docs/TESTING_ROADMAP.md`).
+- Component usage playbook mapping each code area to certification/CTF/report workflows (`docs/USAGE_PLAYBOOK.md`).
+- Prioritized robustness backlog with implementation sequence and acceptance criteria (`docs/ROBUSTNESS_NEXT_STEPS.md`).
+- Consolidated verification script (`scripts/verify_all.sh`) and Make target (`make verify`) for compile/tests/regression/changelog checks.
+
+### Changed
+- Root README now includes a documentation index, daemon API run pattern, configurable-port health/readiness examples, and explicit testing entrypoints.
+
+## [0.3.0] - 2026-03-05
+### Added
+- Readiness and diagnostics endpoints (`/ready`, `/diagnostics`) with dependency probes and critical-log snapshots.
+- Unified API error payload format with explicit `error_code`, `component`, and `operation`.
+- Circuit breaker utilities for Langfuse tracing and knowledge backend retries.
+- API contract integration tests (route/session/logs/ready/diagnostics).
+- Report generation fixture test for session-scoped evidence mapping.
+- CI workflow with compile checks, unit tests, prompt regression threshold gate, and changelog policy check.
+- Changelog policy script (`scripts/check_changelog.py`) and Make target.
+
+### Changed
+- Logging payloads now include per-event `event_id` for easier event correlation.
+- Prompt regression script now supports `--min-pass-rate` thresholds.
+- Make targets extended with `test` and `check-changelog`.
+- Logging default directory now points to `/mnt/c/Users/david/OneDrive - Pontificia Universidad Javeriana/Documents/GitHub/ai-cyber-lab/logs` for troubleshooting consistency in this environment.
+
+## [0.2.0] - 2026-03-05
+### Added
+- Session lifecycle support with CLI/API controls (`start-session`, `end-session`, current session lookup).
+- Session metadata storage under `data/projects/<project>/sessions`.
+- Session-aware command logging helpers (`aicl_session_start`, `aicl_session_end`, `aicl_run`, PowerShell equivalents).
+- New parsers for `ffuf` and `whatweb` outputs.
+- Pentest enrichment with evidence pointers and related knowledge retrieval.
+- Optional Langfuse tracing integration with `trace_id` correlation in route responses.
+- Prompt regression suite and dataset (`scripts/run_prompt_regression.py`, `automation/evals/prompt_regression.json`).
+- Unit tests for parser and report-session parsing logic.
+
+### Changed
+- Report agent now supports session-bounded report generation (`session:<id>`) and evidence map sections.
+- Router defaults to deterministic keyword mode (`AICL_USE_LLM_ROUTER=false`) with optional LLM-based mode.
+- Knowledge agent now includes retry/backoff and project-aware default indexing behavior.
+- Metadata normalization for memory records (`source`, `project`, `tags`, `confidence`).
+- Added new Make targets for session controls and regression eval.
+
 ## [0.1.0] - 2026-03-05
 ### Added
 - Initial AI Cyber Lab scaffold with segmented agents (`study`, `pentest`, `report`, `knowledge`, `research`).

@@ -44,13 +44,34 @@ def run_cmd(cmd: Sequence[str], timeout: int = 120) -> CmdResult:
         )
 
     start = time.monotonic()
-    proc = subprocess.run(
-        list(cmd),
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            list(cmd),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        logger.warning(
+            "command timed out",
+            extra={
+                "event": "command_timeout",
+                "details": {"cmd": shlex.join(cmd), "duration_ms": elapsed_ms, "timeout_s": timeout},
+            },
+        )
+        raise
+    except FileNotFoundError:
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        logger.warning(
+            "command not found",
+            extra={
+                "event": "command_not_found",
+                "details": {"cmd": shlex.join(cmd), "duration_ms": elapsed_ms},
+            },
+        )
+        raise
     elapsed_ms = int((time.monotonic() - start) * 1000)
     logger.info(
         "command executed",

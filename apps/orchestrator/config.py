@@ -49,7 +49,8 @@ def api_port() -> int:
 
 
 def log_dir() -> Path:
-    return Path(os.getenv("AICL_LOG_DIR", "./logs")).resolve()
+    default_logs = "/mnt/c/Users/david/OneDrive - Pontificia Universidad Javeriana/Documents/GitHub/ai-cyber-lab/logs"
+    return Path(os.getenv("AICL_LOG_DIR", default_logs)).resolve()
 
 
 def log_file() -> str:
@@ -66,3 +67,15 @@ def log_max_bytes() -> int:
 
 def log_level() -> str:
     return os.getenv("AICL_LOG_LEVEL", "INFO")
+
+
+def ffuf_wordlist() -> str:
+    return os.getenv("AICL_FFUF_WORDLIST", "").strip()
+
+
+def enable_langfuse() -> bool:
+    return os.getenv("AICL_ENABLE_LANGFUSE", "false").lower() == "true"
+
+
+def use_llm_router() -> bool:
+    return os.getenv("AICL_USE_LLM_ROUTER", "false").lower() == "true"

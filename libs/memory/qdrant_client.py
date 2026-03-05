@@ -66,6 +66,24 @@ class SearchHit:
     payload: dict[str, Any]
 
 
+def normalize_metadata(metadata: dict[str, Any] | None, default_project: str = "default") -> dict[str, Any]:
+    base = dict(metadata or {})
+    tags = base.get("tags", [])
+    if not isinstance(tags, list):
+        tags = [str(tags)]
+
+    source = str(base.get("source", default_project)).strip() or default_project
+    project = str(base.get("project", default_project)).strip() or default_project
+    confidence = str(base.get("confidence", "unverified")).strip().lower() or "unverified"
+
+    base["source"] = source
+    base["project"] = project
+    base["tags"] = [str(t).strip() for t in tags if str(t).strip()]
+    base["confidence"] = confidence
+    base["source_type"] = str(base.get("source_type", "note")).strip() or "note"
+    return base
+
+
 class MemoryClient:
     def __init__(
         self,
@@ -111,9 +129,8 @@ class MemoryClient:
         return _hash_embedding(text, self.size)
 
     def upsert_text(self, text: str, metadata: dict[str, Any] | None = None, point_id: str | None = None) -> str:
-        payload = metadata.copy() if metadata else {}
+        payload = normalize_metadata(metadata)
         payload["text"] = text
-        payload["source_type"] = payload.get("source_type", "note")
 
         record_id = point_id or str(uuid.uuid4())
         point = PointStruct(id=record_id, vector=self.embed(text), payload=payload)

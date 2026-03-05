@@ -11,8 +11,9 @@ from apps.agents.pentest_agent import handle_pentest
 from apps.agents.report_agent import handle_report
 from apps.agents.research_agent import handle_research
 from apps.agents.study_agent import handle_study
-from apps.orchestrator.config import default_project, ollama_model, ollama_url
+from apps.orchestrator.config import default_project, ollama_model, ollama_url, use_llm_router
 from libs.logs import get_logger
+from libs.trace import trace_event
 
 logger = get_logger(__name__)
 
@@ -92,13 +93,23 @@ def _llm_route(user_input: str) -> Route:
 
 
 def _router_node(state: OrchestratorState) -> OrchestratorState:
-    route = _llm_route(state["user_input"])
+    if use_llm_router():
+        route = _llm_route(state["user_input"])
+        mode = "llm"
+    else:
+        route = _keyword_route(state["user_input"])
+        mode = "keyword"
     logger.info(
         "router selected route",
         extra={
             "event": "router_selected",
-            "details": {"route": route, "project": state.get("project", "default")},
+            "details": {"route": route, "mode": mode, "project": state.get("project", "default")},
         },
+    )
+    trace_event(
+        "router_selected",
+        input_text=state.get("user_input", ""),
+        metadata={"route": route, "project": state.get("project", "default")},
     )
     return {"route": route}
 

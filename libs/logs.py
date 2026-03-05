@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import platform
 import threading
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -23,11 +26,15 @@ except Exception:
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
+            "event_id": uuid.uuid4().hex,
             "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
             "level": record.levelname,
             "logger": record.name,
             "module": record.module,
+            "function": record.funcName,
             "line": record.lineno,
+            "process": record.process,
+            "thread": record.threadName,
             "message": record.getMessage(),
         }
 
@@ -39,8 +46,24 @@ class JsonFormatter(logging.Formatter):
         if isinstance(details, dict):
             payload["details"] = details
 
+        component = getattr(record, "component", None)
+        operation = getattr(record, "operation", None)
+        if component:
+            payload["component"] = component
+        if operation:
+            payload["operation"] = operation
+
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
+
+        try:
+            from libs.trace import current_trace_id
+
+            trace_id = current_trace_id()
+            if trace_id:
+                payload["trace_id"] = trace_id
+        except Exception:
+            pass
 
         return json.dumps(payload, ensure_ascii=True)
 
@@ -135,6 +158,8 @@ def setup_logging() -> None:
                 "log_file": str(path),
                 "max_bytes": log_max_bytes(),
                 "level": log_level().upper(),
+                "cwd": os.getcwd(),
+                "python_version": platform.python_version(),
             },
         },
     )

@@ -9,7 +9,12 @@ This repository provides a segmented architecture with specialized agents:
 - `knowledge`: RAG-style storage/retrieval over your own notes.
 - `research`: scoped technical research prompts/checklists.
 
-The default orchestrator path uses direct routing with identical agent boundaries. Set `AICL_USE_LANGGRAPH=true` only when your local LangGraph install is stable.
+The default orchestrator path uses deterministic keyword routing. Enable model-based router only if desired (`AICL_USE_LLM_ROUTER=true`). Set `AICL_USE_LANGGRAPH=true` only when your local LangGraph install is stable.
+
+## Documentation Index
+- [Testing Roadmap](docs/TESTING_ROADMAP.md)
+- [Usage Playbook](docs/USAGE_PLAYBOOK.md)
+- [Robustness Next Steps](docs/ROBUSTNESS_NEXT_STEPS.md)
 
 ## Safety
 Use only on systems and labs you are explicitly authorized to test (HTB/THM/PortSwigger labs, internal approved environments, CTF targets).
@@ -67,6 +72,24 @@ python -m apps.orchestrator.main "nmap recon on 10.10.10.10"
 bash scripts/run_dev.sh
 ```
 
+If port `8080` is occupied:
+```bash
+AICL_API_PORT=8090 bash scripts/run_dev.sh
+```
+
+Run in background (daemon style):
+```bash
+AICL_API_PORT=8090 nohup bash scripts/run_dev.sh > logs/dev-server.log 2>&1 &
+echo $! > /tmp/aicl_api.pid
+```
+
+6. Check health/readiness:
+```bash
+curl -sS http://127.0.0.1:${AICL_API_PORT:-8080}/health
+curl -sS http://127.0.0.1:${AICL_API_PORT:-8080}/ready
+curl -sS "http://127.0.0.1:${AICL_API_PORT:-8080}/diagnostics?project=demo"
+```
+
 ## Command Logger (delegated note-taking)
 - Bash/WSL:
 ```bash
@@ -79,26 +102,71 @@ source libs/tools/capture/command_logger.sh
 
 Commands are appended to `data/projects/_logs/terminal_<date>.log`.
 
+Session helpers after sourcing:
+```bash
+aicl_session_start my-project david
+aicl_run nmap -sV -Pn 10.10.10.10
+aicl_session_end "Completed recon"
+```
+
+API session controls:
+```bash
+curl -sS -X POST http://127.0.0.1:8080/sessions/start -H 'content-type: application/json' -d '{"project":"demo","operator":"david"}'
+curl -sS "http://127.0.0.1:8080/sessions/current?project=demo"
+curl -sS -X POST http://127.0.0.1:8080/sessions/end -H 'content-type: application/json' -d '{"project":"demo","summary":"done"}'
+```
+
+To force report generation for a specific session:
+```bash
+python -m apps.orchestrator.main "writeup session:20260305-120001-abc123" --project demo
+```
+
 ## Logs
-- Central log file: `logs/aicl.log`
+- Central troubleshooting directory: `/mnt/c/Users/david/OneDrive - Pontificia Universidad Javeriana/Documents/GitHub/ai-cyber-lab/logs`
+- Central log file: `/mnt/c/Users/david/OneDrive - Pontificia Universidad Javeriana/Documents/GitHub/ai-cyber-lab/logs/aicl.log`
 - Max size is always capped to **1MB** (`AICL_LOG_MAX_BYTES=1048576`).
 - File contains router events, agent lifecycle events, tool execution metadata, memory operations, and API events.
+- Each route response includes a `trace_id` for log correlation.
+- Optional Langfuse tracing can be enabled with `AICL_ENABLE_LANGFUSE=true`.
 - Read recent entries via API:
 ```bash
-curl -sS "http://127.0.0.1:8080/logs?lines=200"
+curl -sS "http://127.0.0.1:${AICL_API_PORT:-8080}/logs?lines=200"
 ```
 - Or from shell:
 ```bash
 tail -n 200 logs/aicl.log
 ```
 
+## Testing
+Run full verification:
+```bash
+make verify
+```
+
+This executes compile checks, `pytest`, prompt regression, and changelog policy checks.  
+Detailed testing procedure is in [docs/TESTING_ROADMAP.md](docs/TESTING_ROADMAP.md).
+
 ## Make Targets
 ```bash
 make up
 make dev
 make route INPUT="writeup project demo"
+make start-session PROJECT=demo OPERATOR=david
+make end-session PROJECT=demo SUMMARY="done"
 make logs
+make eval
+make test
+make verify
+make check-changelog
 ```
+
+## Prompt Regression
+Regression dataset lives in `automation/evals/prompt_regression.json`.
+Run:
+```bash
+python scripts/run_prompt_regression.py --min-pass-rate 90
+```
+Outputs are written to `data/projects/_evals/`.
 
 ## Kubernetes (optional)
 Starter manifests are in `infra/kubernetes/`.
