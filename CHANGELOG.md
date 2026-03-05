@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.3] - 2026-03-05
+### Added
+- New operator-focused usage runbook: `docs/HOW_TO_USE.md`.
+
+### Changed
+- Updated `README.md` documentation index to include the new how-to guide.
+- Updated `docs/USAGE_PLAYBOOK.md` to point to the quick runbook for daily execution.
+
 ## [0.4.2] - 2026-03-05
 ### Fixed
 - Corrected SQLite migration/index ordering in `libs/workbench_db.py` to prevent orchestrator startup failure on older `data/aicl_workbench.db` files (`sqlite3.OperationalError: no such column: status`).

@@ -12,6 +12,7 @@ This repository provides a segmented architecture with specialized agents:
 The default orchestrator path uses deterministic keyword routing. Enable model-based router only if desired (`AICL_USE_LLM_ROUTER=true`). Set `AICL_USE_LANGGRAPH=true` only when your local LangGraph install is stable.
 
 ## Documentation Index
+- [How To Use](docs/HOW_TO_USE.md)
 - [Testing Roadmap](docs/TESTING_ROADMAP.md)
 - [Usage Playbook](docs/USAGE_PLAYBOOK.md)
 - [Free Tools Stack](docs/FREE_TOOLS_STACK.md)
