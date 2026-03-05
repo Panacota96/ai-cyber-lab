@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import gzip
 import re
 import shlex
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 
 from apps.orchestrator.config import data_root
 from libs.docs.md_writer import load_text, write_markdown_file, write_project_note
@@ -49,10 +51,13 @@ def _read_project_logs(project: str, max_lines: int = 4000) -> list[dict[str, st
     if not log_dir.exists():
         return []
 
-    files = sorted(log_dir.glob("terminal_*.log"), key=lambda p: p.stat().st_mtime)
+    files = sorted(
+        [*log_dir.glob("terminal_*.log"), *log_dir.glob("terminal_*.log.gz")],
+        key=lambda p: p.stat().st_mtime,
+    )
     parsed_rows: list[dict[str, str]] = []
     for path in files:
-        content = load_text(path)
+        content = _read_log_file(path)
         for raw in content.splitlines():
             line = raw.strip()
             if not line:
@@ -64,6 +69,13 @@ def _read_project_logs(project: str, max_lines: int = 4000) -> list[dict[str, st
             parsed_rows.append(item)
 
     return parsed_rows[-max_lines:]
+
+
+def _read_log_file(path: Path) -> str:
+    if path.name.endswith(".log.gz"):
+        with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as handle:
+            return handle.read()
+    return load_text(path)
 
 
 def _pick_session(rows: list[dict[str, str]], requested_session: str | None) -> str | None:

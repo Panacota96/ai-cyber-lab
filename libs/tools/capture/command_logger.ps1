@@ -22,6 +22,12 @@ if (-not $env:AICL_PROJECT) {
 if (-not $env:AICL_LOG_DIR) {
     $env:AICL_LOG_DIR = Join-Path (Get-Location) "data/projects/_logs"
 }
+if (-not $env:AICL_SESSION_LOG_COMPRESS_AFTER_DAYS) {
+    $env:AICL_SESSION_LOG_COMPRESS_AFTER_DAYS = "1"
+}
+if (-not $env:AICL_SESSION_LOG_RETENTION_DAYS) {
+    $env:AICL_SESSION_LOG_RETENTION_DAYS = "30"
+}
 New-Item -ItemType Directory -Path $env:AICL_LOG_DIR -Force | Out-Null
 
 if (-not $env:AICL_LOG_FILE) {
@@ -37,6 +43,15 @@ function Write-AICLEvent {
     $session = if ($env:AICL_SESSION_ID) { $env:AICL_SESSION_ID } else { "none" }
     $line = "[{0}] event={1} session={2} project={3} {4}" -f (Get-Date -Format o), $Event, $session, $env:AICL_PROJECT, $Details
     Add-Content -Path $env:AICL_LOG_FILE -Value $line
+}
+
+function Invoke-AICLLogMaintenance {
+    try {
+        python -m libs.tools.capture.sessionctl maintain `
+          --log-dir $env:AICL_LOG_DIR `
+          --compress-after-days $env:AICL_SESSION_LOG_COMPRESS_AFTER_DAYS `
+          --retention-days $env:AICL_SESSION_LOG_RETENTION_DAYS *> $null
+    } catch { }
 }
 
 function Start-AICLSession {
@@ -72,6 +87,7 @@ function Stop-AICLSession {
     }
 
     Write-AICLEvent -Event "session_end" -Details ("summary={0}" -f $Summary)
+    Invoke-AICLLogMaintenance
     Write-Output "AICL session ended: project=$env:AICL_PROJECT session=$env:AICL_SESSION_ID"
     Remove-Item Env:\AICL_SESSION_ID -ErrorAction SilentlyContinue
 }
@@ -105,5 +121,6 @@ function global:prompt {
     & $previousPrompt
 }
 
+Invoke-AICLLogMaintenance
 Write-Output "AICL logger active -> $env:AICL_LOG_FILE"
-Write-Output "Use: Start-AICLSession / Stop-AICLSession / Invoke-AICL"
+Write-Output "Use: Start-AICLSession / Stop-AICLSession / Invoke-AICL / Invoke-AICLLogMaintenance"

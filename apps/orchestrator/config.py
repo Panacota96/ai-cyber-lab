@@ -24,6 +24,19 @@ def validate_notes() -> bool:
     return os.getenv("AICL_VALIDATE_NOTES", "true").lower() == "true"
 
 
+def session_log_dir() -> Path:
+    default_dir = data_root() / "projects" / "_logs"
+    return Path(os.getenv("AICL_SESSION_LOG_DIR", str(default_dir))).resolve()
+
+
+def session_log_compress_after_days() -> int:
+    return int(os.getenv("AICL_SESSION_LOG_COMPRESS_AFTER_DAYS", "1"))
+
+
+def session_log_retention_days() -> int:
+    return int(os.getenv("AICL_SESSION_LOG_RETENTION_DAYS", "30"))
+
+
 def default_project() -> str:
     return os.getenv("AICL_PROJECT", "default")
 

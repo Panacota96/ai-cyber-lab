@@ -103,6 +103,16 @@ source libs/tools/capture/command_logger.sh
 ```
 
 Commands are appended to `data/projects/_logs/terminal_<date>.log`.
+Older logs can be auto-compressed to `terminal_<date>.log.gz` and pruned by retention policy.
+
+Manual maintenance:
+```bash
+make maintain-logs
+```
+
+Retention controls:
+- `AICL_SESSION_LOG_COMPRESS_AFTER_DAYS` (default `1`)
+- `AICL_SESSION_LOG_RETENTION_DAYS` (default `30`)
 
 Session helpers after sourcing:
 ```bash
@@ -161,6 +171,7 @@ make route INPUT="writeup project demo"
 make start-session PROJECT=demo OPERATOR=david
 make end-session PROJECT=demo SUMMARY="done"
 make logs
+make maintain-logs
 make eval
 make test
 make verify

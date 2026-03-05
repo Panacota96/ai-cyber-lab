@@ -10,6 +10,7 @@ This backlog is prioritized for your operational goals: dependable study automat
 - Prompt regression suite exists for routing stability.
 - Note payloads are schema-validated before write.
 - Pentest behavior has deterministic fixture tests independent of live tools.
+- Command logs support maintenance (compression + retention) and reports read `.log` + `.log.gz`.
 
 ## Priority 0 (Immediate)
 
@@ -36,7 +37,7 @@ Actions:
 Success criteria:
 - Any output contract break blocks CI.
 
-### 3) Add backup/rotation policy for command logs
+### 3) Add backup/rotation policy for command logs (Completed 2026-03-05)
 Why:
 - `data/projects/_logs` can grow quickly in long sessions.
 

@@ -15,6 +15,7 @@ This maps each code area to your intended outcomes: certification study, CTF exe
 | `apps/agents/knowledge_agent.py` | Store/index/retrieve memory over your notes | Reusing prior techniques across labs |
 | `libs/tools/capture/command_logger.sh` | Bash logger for command/event capture | WSL shell during hands-on testing |
 | `libs/tools/capture/command_logger.ps1` | PowerShell logger equivalent | Native Windows shell workflows |
+| `libs/tools/capture/log_maintenance.py` | Compresses/prunes session logs by policy | Keep long-running log storage controlled |
 | `libs/sessions.py` | Session lifecycle persistence | Scoped evidence and report generation |
 | `libs/logs.py` | Central JSON logging + enforced 1MB cap | Troubleshooting and observability |
 | `libs/memory/qdrant_client.py`, `libs/memory/rag.py` | Vector memory and retrieval helpers | Building long-term knowledge base |
@@ -65,6 +66,12 @@ python -m apps.orchestrator.main "nmap recon on 10.10.10.10" --project htb-machi
 ```bash
 aicl_session_end "Initial foothold not achieved"
 python -m apps.orchestrator.main "writeup project htb-machine" --project htb-machine
+```
+
+5. Run log maintenance (compression + retention):
+
+```bash
+make maintain-logs
 ```
 
 ## Workflow 3: Knowledge Base Growth

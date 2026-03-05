@@ -20,6 +20,8 @@ else
 fi
 export AICL_PROJECT="${AICL_PROJECT:-default}"
 export AICL_LOG_DIR="${AICL_LOG_DIR:-$PWD/data/projects/_logs}"
+export AICL_SESSION_LOG_COMPRESS_AFTER_DAYS="${AICL_SESSION_LOG_COMPRESS_AFTER_DAYS:-1}"
+export AICL_SESSION_LOG_RETENTION_DAYS="${AICL_SESSION_LOG_RETENTION_DAYS:-30}"
 mkdir -p "$AICL_LOG_DIR"
 export AICL_LOG_FILE="${AICL_LOG_FILE:-$AICL_LOG_DIR/terminal_$(date +%F).log}"
 
@@ -32,6 +34,13 @@ _aicl_log_event() {
   ts="$(date -Iseconds)"
   printf '[%s] event=%s session=%s project=%s %s\n' \
     "$ts" "$event" "${AICL_SESSION_ID:-none}" "${AICL_PROJECT:-default}" "$*" >> "$AICL_LOG_FILE"
+}
+
+aicl_log_maintain() {
+  python3 -m libs.tools.capture.sessionctl maintain \
+    --log-dir "$AICL_LOG_DIR" \
+    --compress-after-days "${AICL_SESSION_LOG_COMPRESS_AFTER_DAYS}" \
+    --retention-days "${AICL_SESSION_LOG_RETENTION_DAYS}" >/dev/null 2>&1 || true
 }
 
 aicl_session_start() {
@@ -61,6 +70,7 @@ aicl_session_end() {
       --summary "$summary" >/dev/null 2>&1 || true
   fi
   _aicl_log_event "session_end" "summary=$(printf %q "$summary")"
+  aicl_log_maintain
   echo "AICL session ended: project=${AICL_PROJECT:-default} session=${AICL_SESSION_ID:-none}"
   unset AICL_SESSION_ID
 }
@@ -105,5 +115,6 @@ else
   PROMPT_COMMAND="_aicl_precmd"
 fi
 
+aicl_log_maintain
 echo "AICL logger active -> $AICL_LOG_FILE"
-echo "Use: aicl_session_start [project] [operator], aicl_session_end [summary], aicl_run <cmd>"
+echo "Use: aicl_session_start [project] [operator], aicl_session_end [summary], aicl_run <cmd>, aicl_log_maintain"

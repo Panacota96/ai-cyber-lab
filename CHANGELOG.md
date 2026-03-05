@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.3] - 2026-03-05
+### Added
+- Command log maintenance utility with per-day compression and retention pruning (`libs/tools/capture/log_maintenance.py`).
+- Session control CLI maintenance action (`python -m libs.tools.capture.sessionctl maintain ...`).
+- New `make maintain-logs` target for one-command log maintenance.
+- Tests for maintenance behavior and gzipped report log ingestion:
+  - `tests/test_log_maintenance.py`
+  - `tests/test_report_parsing.py::test_read_project_logs_supports_gzip`
+
+### Changed
+- Report agent now ingests both `terminal_*.log` and `terminal_*.log.gz`.
+- Bash and PowerShell command logger helpers now trigger maintenance automatically and expose explicit maintenance helpers.
+- Added maintenance env configuration:
+  - `AICL_SESSION_LOG_DIR`
+  - `AICL_SESSION_LOG_COMPRESS_AFTER_DAYS`
+  - `AICL_SESSION_LOG_RETENTION_DAYS`
+- Updated README/testing/usage docs to include compression-retention workflow.
+
 ## [0.3.2] - 2026-03-05
 ### Added
 - Section-level JSON schemas for generated notes:

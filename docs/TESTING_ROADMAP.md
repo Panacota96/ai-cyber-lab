@@ -114,6 +114,18 @@ wc -c "/mnt/c/Users/david/OneDrive - Pontificia Universidad Javeriana/Documents/
 Expected:
 - Size is always `<= 1048576` bytes.
 
+## Command Log Maintenance Validation
+Run:
+
+```bash
+make maintain-logs
+```
+
+Expected:
+- Command returns JSON summary with `compressed` and `deleted` counters.
+- Older files may become `terminal_YYYY-MM-DD.log.gz`.
+- Report generation still works against both `.log` and `.log.gz` sources.
+
 ## Failure Debug Guide
 - `curl` connection error: API is not running; start with `bash scripts/run_dev.sh` or `nohup` mode.
 - `ready` degraded: one of `qdrant` or `ollama` is down; check `docker ps` and endpoint URLs in `.env`.
