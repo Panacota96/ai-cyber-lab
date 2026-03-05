@@ -157,6 +157,23 @@ bash scripts/aicl.sh "writeup session:20260305-120001-abc123" --project demo
 - File contains router events, agent lifecycle events, tool execution metadata, memory operations, and API events.
 - Each route response includes a `trace_id` for log correlation.
 - Optional Langfuse tracing can be enabled with `AICL_ENABLE_LANGFUSE=true`.
+- One-command troubleshooting bundle (docker + api + system + app logs):
+```bash
+make bundle-logs
+```
+- Bundle output:
+  - `logs/troubleshoot/bundle_<timestamp>/`
+  - `logs/troubleshoot/bundle_<timestamp>.tar.gz`
+- Bundle includes:
+  - Docker: compose logs, docker events, per-container logs, `docker inspect`
+  - API: `/health`, `/ready`, `/diagnostics`, `/logs`, tool-exec health/capabilities
+  - App: `aicl.log` tail, `dev-server.log` tail, latest session command log tail
+  - System: ports, memory/disk, git state, docker version/info
+- Bundle tuning examples:
+```bash
+AICL_DOCKER_LOG_SINCE=6h AICL_DOCKER_LOG_TAIL_LINES=3000 make bundle-logs
+AICL_BUNDLE_CURL_MAX_TIME=12 AICL_BUNDLE_CMD_TIMEOUT=40 make bundle-logs
+```
 - Read recent entries via API:
 ```bash
 curl -sS "http://127.0.0.1:${AICL_API_PORT:-8080}/logs?lines=200"
@@ -218,6 +235,7 @@ make start-session PROJECT=demo OPERATOR=david
 make end-session PROJECT=demo SUMMARY="done"
 make logs
 make maintain-logs
+make bundle-logs
 make smoke-compose
 make eval
 make test

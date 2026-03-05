@@ -154,6 +154,27 @@ Expected:
 - Older files may become `terminal_YYYY-MM-DD.log.gz`.
 - Report generation still works against both `.log` and `.log.gz` sources.
 
+## Troubleshooting Bundle (Docker + API + System)
+Run:
+
+```bash
+make bundle-logs
+```
+
+Expected:
+- Creates `logs/troubleshoot/bundle_<timestamp>/` and `.tar.gz` archive.
+- Captures:
+  - compose logs + docker events + per-container logs + `docker inspect`
+  - orchestrator/tool-exec health-readiness-diagnostics snapshots
+  - app log tails (`logs/aicl.log`, `logs/dev-server.log`)
+  - latest session command log tail and system context (`ss`, `df`, `free`, git/docker info)
+
+Useful overrides:
+
+```bash
+AICL_DOCKER_LOG_SINCE=6h AICL_DOCKER_LOG_TAIL_LINES=3000 make bundle-logs
+```
+
 ## Failure Debug Guide
 - `curl` connection error: API is not running; start with `bash scripts/run_dev.sh` or `nohup` mode.
 - tool-exec `503` or timeout: ensure service is up and `AICL_TOOL_EXEC_URL` is reachable.

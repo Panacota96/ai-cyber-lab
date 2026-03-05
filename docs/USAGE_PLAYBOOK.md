@@ -20,6 +20,7 @@ For external free tools that complement this workflow, see [FREE_TOOLS_STACK.md]
 | `libs/tools/capture/command_logger.sh` | Bash logger for command/event capture | WSL shell during hands-on testing |
 | `libs/tools/capture/command_logger.ps1` | PowerShell logger equivalent | Native Windows shell workflows |
 | `libs/tools/capture/log_maintenance.py` | Compresses/prunes session logs by policy | Keep long-running log storage controlled |
+| `scripts/collect_troubleshoot_bundle.sh` | Captures docker/API/app/system evidence into one archive | Incident triage and support handoff |
 | `libs/sessions.py` | Session lifecycle persistence | Scoped evidence and report generation |
 | `libs/logs.py` | Central JSON logging + enforced 1MB cap | Troubleshooting and observability |
 | `libs/memory/qdrant_client.py`, `libs/memory/rag.py` | Vector memory and retrieval helpers | Building long-term knowledge base |
@@ -112,6 +113,12 @@ curl -sS -X POST http://127.0.0.1:8090/route \
 
 ```bash
 tail -n 200 "/mnt/c/Users/david/OneDrive - Pontificia Universidad Javeriana/Documents/GitHub/ai-cyber-lab/logs/aicl.log"
+```
+
+4. Capture full troubleshooting bundle when an issue appears:
+
+```bash
+make bundle-logs
 ```
 
 ## Workflow 5: Web UI (No Raw API)

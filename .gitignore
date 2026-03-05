@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 logs/*.log
+logs/troubleshoot/
 data/projects/_logs/
 data/projects/_evals/
 data/projects/demo-roadmap/

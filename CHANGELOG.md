@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.8] - 2026-03-05
+### Added
+- Troubleshooting bundle collector (`scripts/collect_troubleshoot_bundle.sh`) to capture docker/API/app/system evidence into a timestamped folder and `.tar.gz` archive.
+- New `make bundle-logs` target to run bundle capture in one command.
+- Bundle tuning environment variables in `.env.example` for lookback windows, tail sizes, and timeout controls.
+
+### Changed
+- README now documents bundle capture usage and exact artifacts produced.
+- Testing roadmap now includes troubleshooting-bundle validation and tuning overrides.
+- Usage playbook now maps bundle collection into the operational workflow.
+- Bundle capture now uses bounded command and curl timeouts to avoid hanging during incident collection.
+
 ## [0.3.7] - 2026-03-05
 ### Changed
 - `scripts/smoke_compose.sh` now supports `--strict-exegol` and treats `--with-exegol` as a bounded check by default (avoids forced first-run multi-GB pulls).
