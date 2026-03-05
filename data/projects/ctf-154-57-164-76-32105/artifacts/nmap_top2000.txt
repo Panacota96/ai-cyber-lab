@@ -1,0 +1,8 @@
+# Nmap 7.93 scan initiated Thu Mar  5 20:38:10 2026 as: nmap -Pn -sS --top-ports 2000 --min-rate 3000 -oN /workspace/data/projects/ctf-154-57-164-76-32105/artifacts/nmap_top2000.txt 154.57.164.76
+Nmap scan report for 154-57-164-76.static.isp.htb.systems (154.57.164.76)
+Host is up (0.013s latency).
+Not shown: 1866 filtered tcp ports (no-response), 133 closed tcp ports (reset)
+PORT     STATE SERVICE
+8008/tcp open  http
+
+# Nmap done at Thu Mar  5 20:38:11 2026 -- 1 IP address (1 host up) scanned in 1.51 seconds

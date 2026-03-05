@@ -11,6 +11,9 @@ For external free tools that complement this workflow, see [FREE_TOOLS_STACK.md]
 | `apps/orchestrator/main.py` | FastAPI + CLI entrypoint (`/route`, `/health`, `/ready`, `/logs`, `/diagnostics`, session APIs) | Daily operations and automation integration |
 | `apps/tool_exec/main.py` | Tool execution API (`/run`, `/capabilities`) with allowlist and runtime-target routing | Containerized command execution without host dependency |
 | `apps/ui/main.py` | Web dashboard for route/session/log/report actions | Avoid raw API/curl workflows |
+| `libs/command_planner.py` | Profile-based command plan generator (`stealth/balanced/aggressive`) | Recon/cracking command suggestion by target |
+| `libs/workbench_db.py` | SQLite index for sessions/jobs/findings/evidence/facts | Timeline, traceability, and cross-session querying |
+| `libs/job_worker.py` | Queue worker that executes confirmed jobs via tool-exec | Queue+confirm command execution model |
 | `apps/orchestrator/graph.py` | Router logic (keyword or optional LLM) and agent dispatch | Route tuning and regression checks |
 | `apps/orchestrator/deps.py` | Dependency probing for Qdrant/Ollama/Langfuse | Troubleshooting and readiness checks |
 | `apps/agents/study_agent.py` | Study note generation and flashcard scaffolding | CCNA/HTB/PortSwigger study sessions |
@@ -21,6 +24,7 @@ For external free tools that complement this workflow, see [FREE_TOOLS_STACK.md]
 | `libs/tools/capture/command_logger.ps1` | PowerShell logger equivalent | Native Windows shell workflows |
 | `libs/tools/capture/log_maintenance.py` | Compresses/prunes session logs by policy | Keep long-running log storage controlled |
 | `scripts/collect_troubleshoot_bundle.sh` | Captures docker/API/app/system evidence into one archive | Incident triage and support handoff |
+| `scripts/start_pentest_target.sh` | End-to-end target kickoff automation (session + recon + route + report) | Fast CTF machine start with consistent artifacts |
 | `libs/sessions.py` | Session lifecycle persistence | Scoped evidence and report generation |
 | `libs/logs.py` | Central JSON logging + enforced 1MB cap | Troubleshooting and observability |
 | `libs/memory/qdrant_client.py`, `libs/memory/rag.py` | Vector memory and retrieval helpers | Building long-term knowledge base |
@@ -77,6 +81,27 @@ bash scripts/aicl.sh "writeup project htb-machine" --project htb-machine
 
 ```bash
 make maintain-logs
+```
+
+## Workflow 2B: One-Command Target Kickoff
+Use this when you want a machine-ready starting point quickly.
+
+```bash
+bash scripts/start_pentest_target.sh 154.57.164.76 32105 ctf-154-57-164-76-32105
+```
+
+What it does:
+- Starts a session in orchestrator.
+- Runs bounded recon (`nmap`, reason checks, HTTP probes, optional dir fuzzing).
+- Stores artifacts under `data/projects/<project>/artifacts`.
+- Calls pentest route and report route.
+- Ends session with summary.
+- Uses bounded defaults for safety/time (`AICL_MAX_REASON_PORTS=10`, `AICL_MAX_WEB_PORTS=3`).
+
+If no port is known yet:
+
+```bash
+bash scripts/start_pentest_target.sh 10.10.10.10
 ```
 
 ## Workflow 3: Knowledge Base Growth
@@ -137,8 +162,38 @@ xdg-open http://127.0.0.1:8091
 
 3. Use forms for route execution, session lifecycle, and diagnostics/log viewing.
 
+Suggested UI flow for a machine:
+1. Start session for project slug (example `ctf-154-57-164-76-32105`).
+2. Route request: `ctf recon target 154.57.164.76:32105`.
+3. Route request: `generate markdown report and writeup from project notes`.
+4. End session.
+5. Open `/logs` and `/diagnostics?project=<slug>` for traceable troubleshooting.
+
+## Workflow 6: Multi-Page Workbench (Recommended Daily Flow)
+1. `Recon` page:
+   - Generate command plan from target + profile.
+   - Queue + confirm selected commands.
+   - Observe job states and extracted facts.
+2. `Cracking` page:
+   - Generate cracking plan for authorized lab data only.
+   - Queue + confirm cracking jobs with explicit operator intent.
+3. `Docs` page:
+   - Create findings.
+   - Upload screenshots and tag/link to finding/report sections.
+4. `Graph` page:
+   - Visualize discovery relations (host/port/service/version/domain/user/password/hash).
+   - Filter by session to isolate a single engagement.
+   - Approve/reject pending facts before report generation.
+5. `Sessions` page:
+   - Start/end sessions.
+   - Load session timeline with jobs, findings, and evidence.
+6. `Reports` page:
+   - Trigger markdown report generation and review context snapshots.
+   - Use session/project exports to generate markdown/html/json bundles.
+
 ## Operational Rules for Your Use Case
 - Keep `AICL_ENABLE_ACTIVE_SCAN=false` unless you are explicitly in authorized active labs.
 - Use one project slug per machine/challenge to keep evidence boundaries clean.
 - Start and end sessions explicitly so report automation can scope evidence correctly.
+- Keep `AICL_JOB_WORKER_ENABLED=true` during normal use; disable only for deterministic API tests.
 - Run `make verify` before each commit to avoid drift.

@@ -1,0 +1,14 @@
+admin
+login
+dashboard
+api
+uploads
+upload
+assets
+js
+css
+backup
+.git
+robots.txt
+sitemap.xml
+server-status

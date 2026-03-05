@@ -1,0 +1,9 @@
+Starting Nmap 7.93 ( https://nmap.org ) at 2026-03-05 20:38 UTC
+Nmap scan report for 154-57-164-76.static.isp.htb.systems (154.57.164.76)
+Host is up (0.012s latency).
+
+PORT      STATE  SERVICE VERSION
+32105/tcp closed unknown
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 5.53 seconds

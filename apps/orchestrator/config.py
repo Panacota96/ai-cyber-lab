@@ -144,3 +144,7 @@ def ui_port() -> int:
 
 def orchestrator_url() -> str:
     return os.getenv("AICL_ORCHESTRATOR_URL", f"http://127.0.0.1:{api_port()}")
+
+
+def job_worker_enabled() -> bool:
+    return os.getenv("AICL_JOB_WORKER_ENABLED", "true").lower() == "true"

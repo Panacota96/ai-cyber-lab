@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from apps.orchestrator.config import data_root
+from libs.workbench_db import upsert_session
 
 
 def _slug(value: str) -> str:
@@ -33,7 +34,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def start_session(project: str, operator: str = "unknown", context: dict[str, Any] | None = None) -> dict[str, Any]:
+def start_session(
+    project: str, operator: str = "unknown", context: dict[str, Any] | None = None
+) -> dict[str, Any]:
     session_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + f"-{secrets.token_hex(3)}"
     payload: dict[str, Any] = {
         "session_id": session_id,
@@ -47,6 +50,7 @@ def start_session(project: str, operator: str = "unknown", context: dict[str, An
 
     _session_file(project, session_id).write_text(json.dumps(payload, indent=2), encoding="utf-8")
     _current_file(project).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    upsert_session(payload)
     return payload
 
 
@@ -74,6 +78,7 @@ def end_session(project: str, session_id: str | None = None, summary: str = "") 
     payload["ended_utc"] = _now()
     payload["summary"] = summary
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    upsert_session(payload)
 
     current_path = _current_file(project)
     if current_path.exists():

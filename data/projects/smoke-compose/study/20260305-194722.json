@@ -1,0 +1,26 @@
+{
+  "title": "Study Session - CCNA",
+  "timestamp_utc": "2026-03-05T19:47:22.090842+00:00",
+  "track": "ccna",
+  "query": "Summarize CCNA OSPF and create flashcards",
+  "atomic_notes": [
+    "Define each concept in your own words: summarize, ccna, ospf, and, create.",
+    "Build one lab scenario and validate expected behavior with commands/screenshots.",
+    "Record one misconception discovered during revision."
+  ],
+  "flashcards": [
+    "Q: Explain SUMMARIZE in one sentence. | A: [your answer]",
+    "Q: Common failure mode for SUMMARIZE? | A: [your answer]",
+    "Q: Explain CCNA in one sentence. | A: [your answer]",
+    "Q: Common failure mode for CCNA? | A: [your answer]",
+    "Q: Explain OSPF in one sentence. | A: [your answer]",
+    "Q: Common failure mode for OSPF? | A: [your answer]",
+    "Q: Explain AND in one sentence. | A: [your answer]",
+    "Q: Common failure mode for AND? | A: [your answer]"
+  ],
+  "next_actions": [
+    "Run a 25-minute focused drill on weakest concept.",
+    "Do a closed-book recap and compare against notes.",
+    "Schedule spaced repetition in 1, 3, and 7 days."
+  ]
+}

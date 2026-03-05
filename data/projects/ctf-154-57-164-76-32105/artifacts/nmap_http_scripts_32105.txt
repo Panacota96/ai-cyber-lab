@@ -1,0 +1,40 @@
+# Nmap 7.93 scan initiated Thu Mar  5 20:28:20 2026 as: nmap --script default,safe,http-title,http-headers -Pn -p 32105 -oN /workspace/data/projects/ctf-154-57-164-76-32105/artifacts/nmap_http_scripts_32105.txt 154.57.164.76
+Pre-scan script results:
+| targets-asn: 
+|_  targets-asn.asn is a mandatory parameter
+|_eap-info: please specify an interface with -e
+|_http-robtex-shared-ns: *TEMPORARILY DISABLED* due to changes in Robtex's API. See https://www.robtex.com/api/
+|_hostmap-robtex: *TEMPORARILY DISABLED* due to changes in Robtex's API. See https://www.robtex.com/api/
+Nmap scan report for 154-57-164-76.static.isp.htb.systems (154.57.164.76)
+Host is up (0.013s latency).
+
+PORT      STATE  SERVICE
+32105/tcp closed unknown
+
+Host script results:
+| dns-blacklist: 
+|   SPAM
+|     l2.apews.org - FAIL
+|_    list.quorum.to - SPAM
+|_fcrdns: PASS (154-57-164-76.static.isp.htb.systems)
+|_asn-query: No Answers
+|_path-mtu: PMTU == 1380
+|_ipidseq: All zeros
+| port-states: 
+|   tcp: 
+|_    closed: 32105
+| whois-ip: Record found at whois.afrinic.net
+| inetnum: 154.57.0.0 - 154.57.255.255
+| netname: NET-154-57-0-0
+| descr: __________________________
+| country: MU
+| orgname: African Network Information Center - (AfriNIC) Ltd
+|_organisation: ORG-AFNC1-AFRINIC
+|_ip-geolocation-geoplugin: coordinates: nil, nil
+|_whois-domain: You should provide a domain name.
+| unusual-port: 
+|_  WARNING: this script depends on Nmap's service/version detection (-sV)
+
+Post-scan script results:
+Bug in reverse-index: no string output.
+# Nmap done at Thu Mar  5 20:30:13 2026 -- 1 IP address (1 host up) scanned in 112.37 seconds

@@ -1,0 +1,8 @@
+*   Trying 154.57.164.76:30092...
+* Connected to 154.57.164.76 (154.57.164.76) port 30092 (#0)
+* ALPN: offers h2,http/1.1
+} [5 bytes data]
+* TLSv1.3 (OUT), TLS handshake, Client hello (1):
+} [512 bytes data]
+* OpenSSL/3.0.18: error:0A00010B:SSL routines::wrong version number
+* Closing connection 0

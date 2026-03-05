@@ -143,6 +143,72 @@ kill "$(cat /tmp/aicl_api.pid)"
 rm -f /tmp/aicl_api.pid
 ```
 
+## Workbench API Coverage
+Run:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_workbench_api.py
+```
+
+Covers:
+- `POST /planner/commands`
+- Job lifecycle (`/jobs`, `/jobs/{id}/confirm`, `/jobs/{id}`, `/jobs`)
+- Findings creation/listing
+- Evidence upload/link/listing
+- Session timeline endpoint
+- Fact review queue/decision endpoints
+- Discoveries graph endpoints
+- Session/project export endpoints
+
+Expected:
+- All tests pass.
+- SQLite index is created under `data/aicl_workbench.db` (or configured data root).
+
+Note:
+- Test suite disables worker using `AICL_JOB_WORKER_ENABLED=false` for deterministic queue assertions.
+
+## Graph + Review + Export Validation
+Run:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_workbench_api.py::test_fact_review_graph_and_export_contract
+```
+
+Expected:
+- Facts enter review queue as `pending`.
+- Review action updates fact status/reviewer fields.
+- Project and session graph endpoints return non-empty node stats.
+- Session and project export endpoints create `dataset.json`, `report.md`, and `report.html`.
+
+## Target Kickoff Script Test
+This validates the one-command pentest starter path.
+
+1. Ensure compose core is running:
+
+```bash
+make up
+```
+
+2. Run kickoff script against an authorized lab target:
+
+```bash
+bash scripts/start_pentest_target.sh 154.57.164.76 32105 ctf-154-57-164-76-32105
+```
+
+3. Validate outputs:
+
+```bash
+ls -lah data/projects/ctf-154-57-164-76-32105/artifacts
+ls -lah data/projects/ctf-154-57-164-76-32105/pentest
+ls -lah data/projects/ctf-154-57-164-76-32105/report
+```
+
+Expected:
+- `artifacts/run_summary.txt` exists.
+- `artifacts/orchestrator_route_pentest.json` exists.
+- `artifacts/orchestrator_route_report.json` exists.
+- At least one pentest `.md` note and `report/auto_report.md` exists.
+
 ## Expected Artifacts Per Successful Run
 - Regression outputs: `data/projects/_evals/prompt_regression_<timestamp>.json` and `.md`
 - Session metadata: `data/projects/demo/sessions/<session_id>.json`
@@ -150,6 +216,8 @@ rm -f /tmp/aicl_api.pid
 - Pentest output: `data/projects/demo/pentest/<timestamp>.json` and `.md`
 - Report output: `data/projects/demo/report/auto_report.md`
 - Troubleshooting log: `logs/aicl.log` (always <= 1MB)
+- Workbench DB: `data/aicl_workbench.db`
+- Job outputs: `data/projects/<project>/jobs/<job_id>.stdout.log` and `.stderr.log`
 
 ## Log Cap Validation (1MB)
 Central log file:

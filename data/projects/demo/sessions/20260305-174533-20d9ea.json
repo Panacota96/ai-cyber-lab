@@ -1,0 +1,10 @@
+{
+  "session_id": "20260305-174533-20d9ea",
+  "project": "demo",
+  "operator": "david",
+  "status": "ended",
+  "started_utc": "2026-03-05T17:45:33.237952+00:00",
+  "ended_utc": "2026-03-05T17:47:22.648707+00:00",
+  "context": {},
+  "summary": "smoke test complete"
+}

@@ -1,0 +1,1 @@
+Error: error on parsing arguments: wordlist file "/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt" does not exist: stat /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt: no such file or directory

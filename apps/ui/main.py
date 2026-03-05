@@ -3,24 +3,30 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import shlex
 from typing import Any
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, File, Form, Query, UploadFile
 from fastapi.responses import HTMLResponse
 
 from apps.orchestrator.config import api_host, orchestrator_url, ui_port
 
-app = FastAPI(title="AI Cyber Lab UI", version="0.1.0")
+app = FastAPI(title="AI Cyber Lab UI", version="0.3.0")
 
 
+# -----------------------------
+# HTTP helpers
+# -----------------------------
 def _fetch_json(method: str, path: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
     url = f"{orchestrator_url().rstrip('/')}{path}"
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=25.0) as client:
             if method == "GET":
                 resp = client.get(url)
+            elif method == "PATCH":
+                resp = client.patch(url, json=payload or {})
             else:
                 resp = client.post(url, json=payload or {})
         try:
@@ -31,121 +37,945 @@ def _fetch_json(method: str, path: str, payload: dict[str, Any] | None = None) -
         return 503, {"error": str(exc), "url": url}
 
 
+def _post_upload(path: str, data: dict[str, str], file_name: str, content: bytes, content_type: str) -> tuple[int, dict[str, Any]]:
+    url = f"{orchestrator_url().rstrip('/')}{path}"
+    files = {"screenshot": (file_name, content, content_type)}
+    try:
+        with httpx.Client(timeout=40.0) as client:
+            resp = client.post(url, data=data, files=files)
+        try:
+            return resp.status_code, resp.json()
+        except Exception:
+            return resp.status_code, {"raw": resp.text}
+    except Exception as exc:
+        return 503, {"error": str(exc), "url": url}
+
+
+# -----------------------------
+# rendering helpers
+# -----------------------------
+def _escape(value: Any) -> str:
+    return html.escape(str(value))
+
+
 def _pretty(value: Any) -> str:
-    return html.escape(json.dumps(value, indent=2))
+    return html.escape(json.dumps(value, indent=2, ensure_ascii=True))
 
 
-def _render(project: str, flash: str = "", detail: Any | None = None) -> str:
+def _status_chip(text: str) -> str:
+    val = (text or "").strip().lower()
+    cls = "chip"
+    if val in {"completed", "approved", "ok"}:
+        cls += " good"
+    elif val in {"failed", "rejected", "error"}:
+        cls += " bad"
+    elif val in {"running", "queued", "pending"}:
+        cls += " warn"
+    return f"<span class='{cls}'>{_escape(val or 'n/a')}</span>"
+
+
+def _table(headers: list[str], rows: list[list[str]]) -> str:
+    head = "".join(f"<th>{_escape(h)}</th>" for h in headers)
+    body_rows = ""
+    for row in rows:
+        body_rows += "<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>"
+    if not body_rows:
+        body_rows = f"<tr><td colspan='{len(headers)}'>No data</td></tr>"
+    return f"<table><thead><tr>{head}</tr></thead><tbody>{body_rows}</tbody></table>"
+
+
+def _layout(page: str, project: str, body: str, flash: str = "", detail: Any | None = None) -> str:
     health_code, health = _fetch_json("GET", "/health")
-    _, current = _fetch_json("GET", f"/sessions/current?project={project}")
-    _, logs = _fetch_json("GET", "/logs?lines=60")
-    _, caps = _fetch_json("GET", "/diagnostics?project=" + project)
+    _, ready = _fetch_json("GET", "/ready")
 
-    flash_block = ""
-    if flash:
-        flash_block = f"<div style='padding:10px;border:1px solid #a7c7ff;background:#eef4ff;margin-bottom:12px'>{html.escape(flash)}</div>"
+    nav_items = [
+        ("recon", "/ui/recon", "Recon"),
+        ("graph", "/ui/graph", "Graph"),
+        ("cracking", "/ui/cracking", "Cracking"),
+        ("docs", "/ui/docs", "Docs"),
+        ("sessions", "/ui/sessions", "Sessions"),
+        ("reports", "/ui/reports", "Reports"),
+    ]
+    nav = []
+    for key, href, label in nav_items:
+        cls = "tab active" if key == page else "tab"
+        nav.append(f"<a class='{cls}' href='{href}?project={_escape(project)}'>{label}</a>")
 
-    detail_block = ""
-    if detail is not None:
-        detail_block = (
-            "<h3>Result</h3>"
-            f"<pre style='background:#111;color:#ddd;padding:12px;overflow:auto'>{_pretty(detail)}</pre>"
-        )
+    flash_block = f"<div class='flash'>{_escape(flash)}</div>" if flash else ""
+    detail_block = f"<section class='panel'><h3>Result</h3><pre>{_pretty(detail)}</pre></section>" if detail is not None else ""
 
-    log_lines = logs.get("lines", []) if isinstance(logs, dict) else []
-    logs_preview = "\n".join(log_lines[-40:]) if isinstance(log_lines, list) else str(log_lines)
+    status_text = _escape(health.get("status", "unknown"))
+    degraded = _escape(ready.get("degraded", "?"))
 
     return f"""<!doctype html>
 <html>
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>AI Cyber Lab UI</title>
+  <meta charset='utf-8'/>
+  <meta name='viewport' content='width=device-width, initial-scale=1'/>
+  <title>AI Cyber Lab Workbench</title>
   <style>
-    body {{ font-family: 'Segoe UI', Tahoma, sans-serif; margin: 20px; background: #f5f7fb; color: #1a1a1a; }}
-    .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
-    .card {{ background: #fff; border: 1px solid #d7deea; border-radius: 10px; padding: 14px; }}
-    input, textarea, button {{ width: 100%; margin-top: 8px; padding: 8px; box-sizing: border-box; }}
-    button {{ cursor: pointer; background:#103f91;color:#fff;border:none;border-radius:6px; }}
-    pre {{ white-space: pre-wrap; }}
-    @media (max-width: 900px) {{ .grid {{ grid-template-columns: 1fr; }} }}
+    :root {{
+      --bg:#edf3fa;
+      --ink:#0f172a;
+      --muted:#475569;
+      --card:#fff;
+      --line:#d6e0ee;
+      --brand:#0d4a78;
+      --good:#0f8d54;
+      --warn:#976300;
+      --bad:#b42318;
+      --mono:'JetBrains Mono',Consolas,monospace;
+    }}
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; font-family:'IBM Plex Sans','Segoe UI',Tahoma,sans-serif; color:var(--ink); background:radial-gradient(1100px 450px at 20% -20%, #d7ebff 0%, transparent 60%),var(--bg); }}
+    .wrap {{ max-width:1400px; margin:0 auto; padding:20px; }}
+    .top {{ display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px; }}
+    .title {{ margin:0; font-size:1.45rem; }}
+    .meta {{ color:var(--muted); font-size:.9rem; }}
+    .tabs {{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }}
+    .tab {{ text-decoration:none; color:var(--ink); border:1px solid var(--line); background:#fff; padding:8px 12px; border-radius:999px; font-weight:700; }}
+    .tab.active {{ color:#fff; background:var(--brand); border-color:var(--brand); }}
+    .grid {{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }}
+    .panel {{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px; box-shadow: 0 5px 14px rgba(13,74,120,.04); }}
+    .panel h2,.panel h3 {{ margin:0 0 10px; }}
+    .small {{ color:var(--muted); font-size:.86rem; }}
+    label {{ display:block; font-size:.82rem; color:var(--muted); font-weight:700; margin:8px 0 4px; }}
+    input,textarea,select {{ width:100%; border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; background:#fff; }}
+    textarea {{ min-height:86px; resize:vertical; }}
+    button {{ margin-top:10px; border:0; border-radius:8px; background:var(--brand); color:#fff; font-weight:700; padding:9px 12px; cursor:pointer; }}
+    button.secondary {{ background:#334155; }}
+    .flash {{ border:1px solid #b3d5ff; background:#e8f3ff; color:#0d4a78; border-radius:10px; padding:10px; margin-bottom:14px; }}
+    .chip {{ border:1px solid var(--line); border-radius:999px; padding:4px 8px; display:inline-block; font-size:.75rem; text-transform:capitalize; }}
+    .chip.good {{ border-color:#b7ebcf; color:var(--good); background:#f0fff6; }}
+    .chip.warn {{ border-color:#f6e0a7; color:var(--warn); background:#fff9ea; }}
+    .chip.bad {{ border-color:#f3c5c2; color:var(--bad); background:#fff2f1; }}
+    table {{ width:100%; border-collapse:collapse; font-size:.9rem; }}
+    th,td {{ border:1px solid var(--line); text-align:left; padding:7px; vertical-align:top; }}
+    th {{ background:#f3f7ff; }}
+    .cmd {{ font-family:var(--mono); background:#0d1524; color:#d8eeff; border-radius:8px; padding:8px; white-space:pre-wrap; }}
+    pre {{ background:#0d1524; color:#d8eeff; border-radius:8px; padding:10px; overflow:auto; white-space:pre-wrap; margin:0; }}
+    .row {{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }}
+    .split {{ display:grid; grid-template-columns: 2fr 1fr; gap:14px; }}
+    .gallery {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:10px; }}
+    .card {{ border:1px solid var(--line); border-radius:10px; padding:10px; background:#fff; }}
+    #graphCanvas {{ width:100%; height:560px; border:1px solid var(--line); border-radius:10px; background:#fff; }}
+    @media (max-width:1000px) {{ .grid,.split {{ grid-template-columns:1fr; }} #graphCanvas {{ height:420px; }} }}
   </style>
 </head>
 <body>
-  <h1>AI Cyber Lab Dashboard</h1>
-  <p>Orchestrator health: <strong>{health_code}</strong> | status: <strong>{html.escape(str(health.get("status", "unknown")))}</strong></p>
-  {flash_block}
-  <div class="grid">
-    <div class="card">
-      <h2>Route Request</h2>
-      <form method="post" action="/ui/route">
-        <label>Project</label>
-        <input name="project" value="{html.escape(project)}"/>
-        <label>User Input</label>
-        <textarea name="user_input" rows="4" placeholder="nmap recon on 10.10.10.10"></textarea>
-        <button type="submit">Run Agent Route</button>
-      </form>
+  <div class='wrap'>
+    <div class='top'>
+      <h1 class='title'>AI Cyber Lab Workbench</h1>
+      <div class='meta'>Project <strong>{_escape(project)}</strong> | Health <strong>{health_code}/{status_text}</strong> | Ready degraded <strong>{degraded}</strong></div>
     </div>
-    <div class="card">
-      <h2>Session Control</h2>
-      <form method="post" action="/ui/session/start">
-        <label>Project</label>
-        <input name="project" value="{html.escape(project)}"/>
-        <label>Operator</label>
-        <input name="operator" value="david"/>
-        <button type="submit">Start Session</button>
-      </form>
-      <form method="post" action="/ui/session/end">
-        <label>Project</label>
-        <input name="project" value="{html.escape(project)}"/>
-        <label>Summary</label>
-        <input name="summary" value="session complete"/>
-        <button type="submit">End Session</button>
-      </form>
-      <h3>Current Session</h3>
-      <pre>{_pretty(current)}</pre>
-    </div>
+    <nav class='tabs'>{''.join(nav)}</nav>
+    {flash_block}
+    {body}
+    {detail_block}
   </div>
-  <div class="card" style="margin-top:16px">
-    <h2>Diagnostics Snapshot</h2>
-    <pre>{_pretty(caps)}</pre>
-  </div>
-  <div class="card" style="margin-top:16px">
-    <h2>Recent Logs</h2>
-    <pre style='background:#111;color:#ddd;padding:12px;overflow:auto'>{html.escape(logs_preview)}</pre>
-  </div>
-  {detail_block}
 </body>
-</html>
-"""
+</html>"""
 
 
+def _session_id(project: str) -> str:
+    _, current = _fetch_json("GET", f"/sessions/current?project={project}")
+    if not isinstance(current, dict):
+        return ""
+    return str(current.get("session_id", ""))
+
+
+# -----------------------------
+# page renderers
+# -----------------------------
+def _render_recon(project: str, flash: str = "", detail: Any | None = None, plan: dict[str, Any] | None = None) -> str:
+    _, jobs_resp = _fetch_json("GET", f"/jobs?project={project}&limit=40")
+    _, facts_resp = _fetch_json("GET", f"/projects/{project}/facts?status=approved&limit=40")
+
+    jobs = jobs_resp.get("jobs", []) if isinstance(jobs_resp, dict) else []
+    facts = facts_resp.get("facts", []) if isinstance(facts_resp, dict) else []
+    sid = _session_id(project)
+
+    cards = ""
+    if isinstance(plan, dict):
+        for cmd in plan.get("commands", []):
+            cmd_list = cmd.get("cmd", []) if isinstance(cmd, dict) else []
+            cmd_json = _escape(json.dumps(cmd_list, ensure_ascii=True))
+            cards += f"""
+            <div class='card'>
+              <h3>{_escape(cmd.get('title','Command'))}</h3>
+              <div class='cmd'>{_escape(' '.join(cmd_list))}</div>
+              <div class='row'>
+                {_status_chip(str(cmd.get('risk','low')))}
+                <span class='chip'>timeout {int(cmd.get('timeout_sec',120))}s</span>
+              </div>
+              <p class='small'>{_escape(cmd.get('rationale',''))}</p>
+              <form method='post' action='/ui/jobs/create'>
+                <input type='hidden' name='project' value='{_escape(project)}'/>
+                <input type='hidden' name='session_id' value='{_escape(sid)}'/>
+                <input type='hidden' name='purpose' value='{_escape(str(plan.get('purpose','recon')))}'/>
+                <input type='hidden' name='profile' value='{_escape(str(plan.get('profile','balanced')))}'/>
+                <input type='hidden' name='target' value='{_escape(str(plan.get('target','')))}'/>
+                <input type='hidden' name='plan_id' value='{_escape(str(plan.get('plan_id','')))}'/>
+                <input type='hidden' name='cmd_json' value='{cmd_json}'/>
+                <input type='hidden' name='timeout_sec' value='{_escape(cmd.get('timeout_sec',120))}'/>
+                <input type='hidden' name='page' value='recon'/>
+                <button type='submit'>Queue + Confirm</button>
+              </form>
+            </div>
+            """
+
+    job_rows = []
+    for item in jobs[:30]:
+        cmd = " ".join(item.get("command_json", [])[:8]) if isinstance(item.get("command_json", []), list) else ""
+        job_rows.append(
+            [
+                _status_chip(str(item.get("status", ""))),
+                _escape(item.get("purpose", "")),
+                _escape(item.get("target", "")),
+                _escape(cmd),
+                _escape(item.get("updated_utc", "")),
+            ]
+        )
+
+    fact_rows = []
+    for f in facts[:40]:
+        summary = f"{f.get('subject_type','')}:{f.get('subject_value','')}"
+        if f.get("fact_kind") == "relation":
+            summary = f"{f.get('subject_type','')}:{f.get('subject_value','')} -[{f.get('relation','')}]-> {f.get('object_type','')}:{f.get('object_value','')}"
+        fact_rows.append(
+            [
+                _status_chip(str(f.get("status", ""))),
+                _escape(f.get("fact_kind", "")),
+                _escape(summary),
+                _escape(f.get("source", "")),
+                _escape(f.get("confidence", "")),
+            ]
+        )
+
+    body = f"""
+    <div class='grid'>
+      <section class='panel'>
+        <h2>Generate Recon Plan</h2>
+        <form method='post' action='/ui/recon/plan'>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Target (IP/FQDN)</label><input name='target' required placeholder='10.10.10.10'/>
+          <label>Purpose</label>
+          <select name='purpose'><option value='recon'>recon</option><option value='scanning'>scanning</option></select>
+          <label>Profile</label>
+          <select name='profile'><option value='stealth'>stealth</option><option value='balanced' selected>balanced</option><option value='aggressive'>aggressive</option></select>
+          <label>Discoveries (one per line)</label>
+          <textarea name='discoveries' placeholder='80/tcp open http'></textarea>
+          <button type='submit'>Generate Commands</button>
+        </form>
+      </section>
+      <section class='panel'>
+        <h2>Manual Command</h2>
+        <form method='post' action='/ui/jobs/create'>
+          <input type='hidden' name='page' value='recon'/>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Session ID</label><input name='session_id' value='{_escape(sid)}'/>
+          <label>Purpose</label><input name='purpose' value='recon'/>
+          <label>Profile</label><input name='profile' value='balanced'/>
+          <label>Target</label><input name='target' placeholder='10.10.10.10'/>
+          <label>Command</label><textarea name='cmd_text' placeholder='nmap -sC -sV -Pn 10.10.10.10' required></textarea>
+          <label>Timeout (sec)</label><input name='timeout_sec' value='180'/>
+          <button type='submit'>Queue + Confirm</button>
+        </form>
+      </section>
+    </div>
+    <section class='panel'><h2>Planned Commands</h2><div class='gallery'>{cards or '<p class="small">Generate plan to view command cards.</p>'}</div></section>
+    <section class='panel'><h2>Recent Jobs</h2>{_table(['Status','Purpose','Target','Command','Updated'], job_rows)}</section>
+    <section class='panel'><h2>Approved Facts Snapshot</h2>{_table(['Status','Kind','Discovery','Source','Confidence'], fact_rows)}</section>
+    """
+    return _layout("recon", project, body, flash=flash, detail=detail)
+
+
+def _render_graph(
+    project: str,
+    session_id: str = "",
+    include_pending: bool = True,
+    flash: str = "",
+    detail: Any | None = None,
+) -> str:
+    query = f"/projects/{project}/graph?include_pending={'true' if include_pending else 'false'}"
+    if session_id.strip():
+        query += f"&session_id={session_id.strip()}"
+    _, graph = _fetch_json("GET", query)
+
+    _, sessions_resp = _fetch_json("GET", f"/projects/{project}/sessions?limit=200")
+    _, pending_resp = _fetch_json("GET", f"/facts/review?project={project}&status=pending&limit=100")
+
+    sessions = sessions_resp.get("sessions", []) if isinstance(sessions_resp, dict) else []
+    pending = pending_resp.get("facts", []) if isinstance(pending_resp, dict) else []
+
+    options = ["<option value=''>All sessions</option>"]
+    for s in sessions[:200]:
+        sid = str(s.get("session_id", ""))
+        selected = " selected" if sid == session_id else ""
+        label = f"{sid} | {s.get('status','')} | {s.get('started_utc','')}"
+        options.append(f"<option value='{_escape(sid)}'{selected}>{_escape(label)}</option>")
+
+    review_rows = []
+    for f in pending[:100]:
+        summary = f"{f.get('subject_type','')}:{f.get('subject_value','')}"
+        if f.get("fact_kind") == "relation":
+            summary = f"{f.get('subject_type','')}:{f.get('subject_value','')} -[{f.get('relation','')}]-> {f.get('object_type','')}:{f.get('object_value','')}"
+        fact_id = str(f.get("fact_id", ""))
+        actions = (
+            f"<form method='post' action='/ui/facts/{_escape(fact_id)}/approve' style='display:inline'>"
+            f"<input type='hidden' name='project' value='{_escape(project)}'/><input type='hidden' name='session_id' value='{_escape(session_id)}'/><input type='hidden' name='include_pending' value={'1' if include_pending else '0'}/><button type='submit'>Approve</button></form> "
+            f"<form method='post' action='/ui/facts/{_escape(fact_id)}/reject' style='display:inline'>"
+            f"<input type='hidden' name='project' value='{_escape(project)}'/><input type='hidden' name='session_id' value='{_escape(session_id)}'/><input type='hidden' name='include_pending' value={'1' if include_pending else '0'}/><button class='secondary' type='submit'>Reject</button></form>"
+        )
+        review_rows.append(
+            [
+                _escape(f.get("fact_kind", "")),
+                _escape(summary),
+                _escape(f.get("source", "")),
+                _escape(f.get("confidence", "")),
+                actions,
+            ]
+        )
+
+    graph_json = json.dumps(graph, ensure_ascii=True)
+
+    body = f"""
+    <div class='split'>
+      <section class='panel'>
+        <h2>Discoveries Graph</h2>
+        <form method='get' action='/ui/graph' class='row'>
+          <input type='hidden' name='project' value='{_escape(project)}'/>
+          <div style='flex:1;min-width:260px'><label>Session Filter</label><select name='session_id'>{''.join(options)}</select></div>
+          <div><label>Include Pending</label><select name='include_pending'><option value='1'{' selected' if include_pending else ''}>yes</option><option value='0'{' selected' if not include_pending else ''}>no</option></select></div>
+          <div><button type='submit'>Refresh Graph</button></div>
+        </form>
+        <div id='graphCanvas'></div>
+        <p class='small'>Tip: click nodes/edges for details in the inspector panel.</p>
+      </section>
+      <section class='panel'>
+        <h2>Inspector</h2>
+        <pre id='graphInspector'>Select a node or edge.</pre>
+      </section>
+    </div>
+    <section class='panel'><h2>Pending Fact Review</h2>{_table(['Kind','Discovery','Source','Confidence','Actions'], review_rows)}</section>
+    <script src='https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js'></script>
+    <script>
+      const graphPayload = {graph_json};
+      const elements = [];
+      const nodes = (graphPayload.nodes || []).map(n => ({{ data: {{ id: n.id, label: n.label, kind: n.kind, meta: n.meta || {{}} }} }}));
+      const edges = (graphPayload.edges || []).map(e => ({{ data: {{ id: e.id, source: e.source, target: e.target, label: e.label, meta: e.meta || {{}} }} }}));
+      elements.push(...nodes, ...edges);
+
+      const cy = cytoscape({{
+        container: document.getElementById('graphCanvas'),
+        elements,
+        style: [
+          {{ selector: 'node', style: {{ 'label': 'data(label)', 'background-color': '#0d4a78', 'color': '#fff', 'font-size': 10, 'text-wrap': 'wrap', 'text-max-width': 120, 'text-valign': 'center', 'text-halign': 'center' }} }},
+          {{ selector: 'node[kind="port"]', style: {{ 'background-color': '#1982c4' }} }},
+          {{ selector: 'node[kind="service"]', style: {{ 'background-color': '#2b7a0b' }} }},
+          {{ selector: 'node[kind="user"]', style: {{ 'background-color': '#8a5d00' }} }},
+          {{ selector: 'node[kind="password"], node[kind="hash"]', style: {{ 'background-color': '#b42318' }} }},
+          {{ selector: 'edge', style: {{ 'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'line-color': '#8aa1be', 'target-arrow-color': '#8aa1be', 'label': 'data(label)', 'font-size': 9, 'text-background-color': '#fff', 'text-background-opacity': 1, 'text-background-padding': 2 }} }},
+        ],
+        layout: {{ name: 'cose', animate: false, padding: 20 }}
+      }});
+
+      const inspector = document.getElementById('graphInspector');
+      cy.on('tap', 'node, edge', function(evt) {{
+        inspector.textContent = JSON.stringify(evt.target.data(), null, 2);
+      }});
+    </script>
+    """
+    return _layout("graph", project, body, flash=flash, detail=detail)
+
+
+def _render_cracking(project: str, flash: str = "", detail: Any | None = None, plan: dict[str, Any] | None = None) -> str:
+    _, jobs_resp = _fetch_json("GET", f"/jobs?project={project}&purpose=cracking&limit=40")
+    jobs = jobs_resp.get("jobs", []) if isinstance(jobs_resp, dict) else []
+    sid = _session_id(project)
+
+    cards = ""
+    if isinstance(plan, dict):
+        for cmd in plan.get("commands", []):
+            cmd_list = cmd.get("cmd", []) if isinstance(cmd, dict) else []
+            cards += f"""
+            <div class='card'>
+              <h3>{_escape(cmd.get('title','Command'))}</h3>
+              <div class='cmd'>{_escape(' '.join(cmd_list))}</div>
+              <p class='small'>{_escape(cmd.get('rationale',''))}</p>
+              <form method='post' action='/ui/jobs/create'>
+                <input type='hidden' name='project' value='{_escape(project)}'/>
+                <input type='hidden' name='session_id' value='{_escape(sid)}'/>
+                <input type='hidden' name='purpose' value='cracking'/>
+                <input type='hidden' name='profile' value='{_escape(plan.get('profile','balanced'))}'/>
+                <input type='hidden' name='target' value='{_escape(plan.get('target',''))}'/>
+                <input type='hidden' name='plan_id' value='{_escape(plan.get('plan_id',''))}'/>
+                <input type='hidden' name='cmd_json' value='{_escape(json.dumps(cmd_list, ensure_ascii=True))}'/>
+                <input type='hidden' name='timeout_sec' value='{_escape(cmd.get('timeout_sec',300))}'/>
+                <input type='hidden' name='page' value='cracking'/>
+                <button type='submit'>Queue + Confirm</button>
+              </form>
+            </div>
+            """
+
+    job_rows = []
+    for item in jobs[:30]:
+        cmd = " ".join(item.get("command_json", [])[:8]) if isinstance(item.get("command_json", []), list) else ""
+        job_rows.append(
+            [
+                _status_chip(str(item.get("status", ""))),
+                _escape(item.get("target", "")),
+                _escape(cmd),
+                _escape(item.get("updated_utc", "")),
+            ]
+        )
+
+    body = f"""
+    <div class='grid'>
+      <section class='panel'>
+        <h2>Generate Cracking Plan</h2>
+        <p class='small'>Authorized labs/CTFs only.</p>
+        <form method='post' action='/ui/cracking/plan'>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Target/Context</label><input name='target' required placeholder='hash dump source'/>
+          <label>Profile</label>
+          <select name='profile'><option value='stealth'>stealth</option><option value='balanced' selected>balanced</option><option value='aggressive'>aggressive</option></select>
+          <button type='submit'>Generate Cracking Commands</button>
+        </form>
+      </section>
+      <section class='panel'>
+        <h2>Manual Cracking Command</h2>
+        <form method='post' action='/ui/jobs/create'>
+          <input type='hidden' name='page' value='cracking'/>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Session ID</label><input name='session_id' value='{_escape(sid)}'/>
+          <label>Command</label><textarea name='cmd_text' placeholder='john --wordlist=... hashes.txt' required></textarea>
+          <label>Timeout (sec)</label><input name='timeout_sec' value='300'/>
+          <input type='hidden' name='purpose' value='cracking'/>
+          <input type='hidden' name='profile' value='balanced'/>
+          <button type='submit'>Queue + Confirm</button>
+        </form>
+      </section>
+    </div>
+    <section class='panel'><h2>Planned Commands</h2><div class='gallery'>{cards or '<p class="small">Generate plan to view command cards.</p>'}</div></section>
+    <section class='panel'><h2>Recent Cracking Jobs</h2>{_table(['Status','Target','Command','Updated'], job_rows)}</section>
+    """
+    return _layout("cracking", project, body, flash=flash, detail=detail)
+
+
+def _render_docs(project: str, flash: str = "", detail: Any | None = None) -> str:
+    _, findings_resp = _fetch_json("GET", f"/findings?project={project}&limit=200")
+    _, evidence_resp = _fetch_json("GET", f"/evidence?project={project}&limit=200")
+    findings = findings_resp.get("findings", []) if isinstance(findings_resp, dict) else []
+    evidence = evidence_resp.get("evidence", []) if isinstance(evidence_resp, dict) else []
+    sid = _session_id(project)
+
+    finding_cards = ""
+    for f in findings[:100]:
+        finding_cards += f"""
+        <div class='card'>
+          <h3>{_escape(f.get('title','Finding'))}</h3>
+          <div class='row'>{_status_chip(str(f.get('severity','medium')))} {_status_chip(str(f.get('status','open')))}</div>
+          <p class='small'>{_escape(f.get('description',''))}</p>
+          <div class='small'>session: {_escape(f.get('session_id',''))}</div>
+        </div>
+        """
+
+    evidence_rows = []
+    for e in evidence[:150]:
+        tags = ", ".join(e.get("tags_json", [])) if isinstance(e.get("tags_json"), list) else ""
+        evidence_rows.append(
+            [
+                _escape(e.get("file_name", "")),
+                _escape(e.get("finding_id", "")),
+                _escape(tags),
+                _escape(e.get("report_section", "")),
+                _escape(e.get("created_utc", "")),
+            ]
+        )
+
+    body = f"""
+    <div class='grid'>
+      <section class='panel'>
+        <h2>Create Finding</h2>
+        <form method='post' action='/ui/findings/create'>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Session ID</label><input name='session_id' value='{_escape(sid)}'/>
+          <label>Title</label><input name='title' required/>
+          <label>Severity</label><select name='severity'><option value='low'>low</option><option value='medium' selected>medium</option><option value='high'>high</option><option value='critical'>critical</option></select>
+          <label>Description</label><textarea name='description'></textarea>
+          <button type='submit'>Save Finding</button>
+        </form>
+      </section>
+      <section class='panel'>
+        <h2>Upload Screenshot Evidence</h2>
+        <form method='post' action='/ui/evidence/upload' enctype='multipart/form-data'>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Session ID</label><input name='session_id' value='{_escape(sid)}'/>
+          <label>Finding ID (optional)</label><input name='finding_id'/>
+          <label>Report Section</label><input name='report_section' placeholder='recon/exploitation/impact'/>
+          <label>Tags (comma-separated)</label><input name='tags' placeholder='web,proof'/>
+          <label>Screenshot file</label><input name='screenshot' type='file' required/>
+          <button type='submit'>Upload Evidence</button>
+        </form>
+      </section>
+    </div>
+    <section class='panel'><h2>Findings</h2><div class='gallery'>{finding_cards or '<p class="small">No findings yet.</p>'}</div></section>
+    <section class='panel'><h2>Evidence</h2>{_table(['File','Finding','Tags','Report Section','Created'], evidence_rows)}</section>
+    """
+    return _layout("docs", project, body, flash=flash, detail=detail)
+
+
+def _render_sessions(
+    project: str,
+    flash: str = "",
+    detail: Any | None = None,
+    timeline: dict[str, Any] | None = None,
+    filters: dict[str, str] | None = None,
+) -> str:
+    filters = filters or {}
+    status = filters.get("status", "")
+    operator = filters.get("operator", "")
+    q = filters.get("q", "")
+
+    _, current = _fetch_json("GET", f"/sessions/current?project={project}")
+    params = f"project={project}&limit=200"
+    if status:
+        params += f"&status={status}"
+    if operator:
+        params += f"&operator={operator}"
+    if q:
+        params += f"&q={q}"
+    _, sessions_resp = _fetch_json("GET", f"/projects/{project}/sessions?{params}")
+    _, jobs_resp = _fetch_json("GET", f"/jobs?project={project}&limit=100")
+
+    sessions = sessions_resp.get("sessions", []) if isinstance(sessions_resp, dict) else []
+    jobs = jobs_resp.get("jobs", []) if isinstance(jobs_resp, dict) else []
+
+    session_rows = []
+    for s in sessions[:200]:
+        sid = str(s.get("session_id", ""))
+        actions = (
+            f"<a class='tab' href='/ui/graph?project={_escape(project)}&session_id={_escape(sid)}&include_pending=1'>Graph</a> "
+            f"<form method='post' action='/ui/exports/session' style='display:inline'><input type='hidden' name='project' value='{_escape(project)}'/><input type='hidden' name='session_id' value='{_escape(sid)}'/><button type='submit'>Export</button></form> "
+            f"<form method='post' action='/ui/sessions/timeline' style='display:inline'><input type='hidden' name='project' value='{_escape(project)}'/><input type='hidden' name='session_id' value='{_escape(sid)}'/><button class='secondary' type='submit'>Timeline</button></form>"
+        )
+        session_rows.append(
+            [
+                _escape(sid),
+                _status_chip(str(s.get("status", ""))),
+                _escape(s.get("operator", "")),
+                _escape(s.get("started_utc", "")),
+                _escape(s.get("ended_utc", "")),
+                actions,
+            ]
+        )
+
+    job_rows = []
+    for item in jobs[:60]:
+        cmd = " ".join(item.get("command_json", [])[:8]) if isinstance(item.get("command_json", []), list) else ""
+        job_rows.append(
+            [
+                _status_chip(str(item.get("status", ""))),
+                _escape(item.get("session_id", "")),
+                _escape(item.get("purpose", "")),
+                _escape(cmd),
+                _escape(item.get("updated_utc", "")),
+            ]
+        )
+
+    timeline_block = "<p class='small'>Select a session to display timeline.</p>"
+    if isinstance(timeline, dict):
+        events = timeline.get("events", []) if isinstance(timeline.get("events", []), list) else []
+        rows = []
+        for e in events[:400]:
+            rows.append(
+                [
+                    _escape(e.get("timestamp", "")),
+                    _escape(e.get("type", "")),
+                    _escape(e.get("title", "")),
+                ]
+            )
+        timeline_block = _table(["Timestamp", "Type", "Title"], rows)
+
+    body = f"""
+    <div class='grid'>
+      <section class='panel'>
+        <h2>Session Control</h2>
+        <form method='post' action='/ui/session/start'>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Operator</label><input name='operator' value='david'/>
+          <button type='submit'>Start Session</button>
+        </form>
+        <form method='post' action='/ui/session/end'>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Summary</label><input name='summary' value='session complete'/>
+          <button type='submit'>End Session</button>
+        </form>
+      </section>
+      <section class='panel'>
+        <h2>Session Filters + Export</h2>
+        <form method='get' action='/ui/sessions'>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Status</label><input name='status' value='{_escape(status)}' placeholder='active/ended'/>
+          <label>Operator</label><input name='operator' value='{_escape(operator)}'/>
+          <label>Search</label><input name='q' value='{_escape(q)}' placeholder='session id or summary'/>
+          <button type='submit'>Apply Filters</button>
+        </form>
+        <form method='post' action='/ui/exports/project'>
+          <input type='hidden' name='project' value='{_escape(project)}'/>
+          <button type='submit'>Export Project</button>
+        </form>
+      </section>
+    </div>
+    <section class='panel'><h2>Current Session</h2><div class='row'><span class='chip'>{_escape(current.get('session_id','none') if isinstance(current, dict) else 'none')}</span>{_status_chip(str((current or {}).get('status','none')) if isinstance(current, dict) else 'none')}</div></section>
+    <section class='panel'><h2>Sessions List</h2>{_table(['Session ID','Status','Operator','Started','Ended','Actions'], session_rows)}</section>
+    <section class='panel'><h2>Jobs During Sessions</h2>{_table(['Status','Session','Purpose','Command','Updated'], job_rows)}</section>
+    <section class='panel'><h2>Timeline</h2>{timeline_block}</section>
+    """
+    return _layout("sessions", project, body, flash=flash, detail=detail)
+
+
+def _render_reports(project: str, flash: str = "", detail: Any | None = None) -> str:
+    _, facts_resp = _fetch_json("GET", f"/projects/{project}/facts?status=approved&limit=80")
+    _, findings_resp = _fetch_json("GET", f"/findings?project={project}&limit=80")
+    _, evidence_resp = _fetch_json("GET", f"/evidence?project={project}&limit=80")
+
+    facts = facts_resp.get("facts", []) if isinstance(facts_resp, dict) else []
+    findings = findings_resp.get("findings", []) if isinstance(findings_resp, dict) else []
+    evidence = evidence_resp.get("evidence", []) if isinstance(evidence_resp, dict) else []
+
+    finding_rows = []
+    for f in findings[:80]:
+        finding_rows.append(
+            [
+                _escape(f.get("title", "")),
+                _status_chip(str(f.get("severity", ""))),
+                _status_chip(str(f.get("status", ""))),
+                _escape(f.get("session_id", "")),
+            ]
+        )
+
+    evidence_rows = []
+    for e in evidence[:80]:
+        evidence_rows.append(
+            [
+                _escape(e.get("file_name", "")),
+                _escape(e.get("finding_id", "")),
+                _escape(e.get("report_section", "")),
+            ]
+        )
+
+    fact_rows = []
+    for f in facts[:80]:
+        fact_rows.append(
+            [
+                _escape(f.get("fact_kind", "")),
+                _escape(f.get("subject_type", "")),
+                _escape(f.get("subject_value", "")),
+                _escape(f.get("confidence", "")),
+            ]
+        )
+
+    body = f"""
+    <div class='grid'>
+      <section class='panel'>
+        <h2>Generate Session Report</h2>
+        <form method='post' action='/ui/reports/generate'>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Prompt</label>
+          <textarea name='prompt'>generate markdown report and writeup from project notes and artifacts</textarea>
+          <button type='submit'>Generate Markdown</button>
+        </form>
+      </section>
+      <section class='panel'>
+        <h2>Export Bundle</h2>
+        <p class='small'>Use Sessions page for per-session export and project export. Exports include Markdown + HTML + JSON.</p>
+      </section>
+    </div>
+    <section class='panel'><h2>Findings For Report</h2>{_table(['Title','Severity','Status','Session'], finding_rows)}</section>
+    <section class='panel'><h2>Evidence For Report</h2>{_table(['File','Finding','Section'], evidence_rows)}</section>
+    <section class='panel'><h2>Approved Facts For Report</h2>{_table(['Kind','Type','Value','Confidence'], fact_rows)}</section>
+    """
+    return _layout("reports", project, body, flash=flash, detail=detail)
+
+
+# -----------------------------
+# page routes
+# -----------------------------
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.get("/", response_class=HTMLResponse)
-def home(project: str = "demo") -> str:
-    return _render(project=project)
+def home(project: str = Query(default="demo")) -> str:
+    return _render_recon(project=project)
 
 
-@app.post("/ui/route", response_class=HTMLResponse)
-def ui_route(project: str = Form(...), user_input: str = Form(...)) -> str:
-    code, out = _fetch_json("POST", "/route", {"project": project, "user_input": user_input})
-    return _render(project=project, flash=f"/route status={code}", detail=out)
+@app.get("/ui/recon", response_class=HTMLResponse)
+def page_recon(project: str = Query(default="demo")) -> str:
+    return _render_recon(project=project)
+
+
+@app.post("/ui/recon/plan", response_class=HTMLResponse)
+def ui_recon_plan(
+    project: str = Form(...),
+    target: str = Form(...),
+    purpose: str = Form("recon"),
+    profile: str = Form("balanced"),
+    discoveries: str = Form(""),
+) -> str:
+    disc = [x.strip() for x in discoveries.splitlines() if x.strip()]
+    code, out = _fetch_json(
+        "POST",
+        "/planner/commands",
+        {"project": project, "target": target, "purpose": purpose, "profile": profile, "discoveries": disc},
+    )
+    return _render_recon(project=project, flash=f"/planner/commands status={code}", detail=out, plan=out if code == 200 else None)
+
+
+@app.get("/ui/graph", response_class=HTMLResponse)
+def page_graph(
+    project: str = Query(default="demo"),
+    session_id: str = Query(default=""),
+    include_pending: int = Query(default=1),
+) -> str:
+    return _render_graph(
+        project=project,
+        session_id=session_id,
+        include_pending=bool(include_pending),
+    )
+
+
+@app.post("/ui/facts/{fact_id}/approve", response_class=HTMLResponse)
+def ui_fact_approve(
+    fact_id: str,
+    project: str = Form(...),
+    session_id: str = Form(""),
+    include_pending: int = Form(1),
+) -> str:
+    code, out = _fetch_json("POST", f"/facts/review/{fact_id}/approve", {"reviewer": "ui"})
+    return _render_graph(
+        project=project,
+        session_id=session_id,
+        include_pending=bool(include_pending),
+        flash=f"approve fact status={code}",
+        detail=out,
+    )
+
+
+@app.post("/ui/facts/{fact_id}/reject", response_class=HTMLResponse)
+def ui_fact_reject(
+    fact_id: str,
+    project: str = Form(...),
+    session_id: str = Form(""),
+    include_pending: int = Form(1),
+) -> str:
+    code, out = _fetch_json("POST", f"/facts/review/{fact_id}/reject", {"reviewer": "ui"})
+    return _render_graph(
+        project=project,
+        session_id=session_id,
+        include_pending=bool(include_pending),
+        flash=f"reject fact status={code}",
+        detail=out,
+    )
+
+
+@app.get("/ui/cracking", response_class=HTMLResponse)
+def page_cracking(project: str = Query(default="demo")) -> str:
+    return _render_cracking(project=project)
+
+
+@app.post("/ui/cracking/plan", response_class=HTMLResponse)
+def ui_cracking_plan(project: str = Form(...), target: str = Form(...), profile: str = Form("balanced")) -> str:
+    code, out = _fetch_json(
+        "POST",
+        "/planner/commands",
+        {"project": project, "target": target, "purpose": "cracking", "profile": profile, "discoveries": []},
+    )
+    return _render_cracking(project=project, flash=f"/planner/commands status={code}", detail=out, plan=out if code == 200 else None)
+
+
+@app.post("/ui/jobs/create", response_class=HTMLResponse)
+def ui_jobs_create(
+    project: str = Form(...),
+    page: str = Form("recon"),
+    session_id: str = Form(""),
+    purpose: str = Form("recon"),
+    profile: str = Form("balanced"),
+    target: str = Form(""),
+    plan_id: str = Form(""),
+    timeout_sec: int = Form(120),
+    cmd_json: str = Form(""),
+    cmd_text: str = Form(""),
+) -> str:
+    cmd: list[str] = []
+    if cmd_json.strip():
+        try:
+            raw = json.loads(cmd_json)
+            if isinstance(raw, list):
+                cmd = [str(x) for x in raw if str(x).strip()]
+        except Exception:
+            cmd = []
+    if not cmd and cmd_text.strip():
+        cmd = shlex.split(cmd_text.strip())
+
+    if not cmd:
+        if page == "cracking":
+            return _render_cracking(project=project, flash="No command provided")
+        return _render_recon(project=project, flash="No command provided")
+
+    create_code, created = _fetch_json(
+        "POST",
+        "/jobs",
+        {
+            "project": project,
+            "cmd": cmd,
+            "timeout_sec": timeout_sec,
+            "session_id": session_id or None,
+            "purpose": purpose,
+            "profile": profile,
+            "target": target,
+            "plan_id": plan_id,
+            "auto_confirm": False,
+        },
+    )
+    detail: Any = created
+    flash = f"/jobs create status={create_code}"
+
+    job_id = str(created.get("job_id", "")) if isinstance(created, dict) else ""
+    if create_code == 200 and job_id:
+        confirm_code, confirmed = _fetch_json("POST", f"/jobs/{job_id}/confirm", {})
+        detail = {"create": created, "confirm": confirmed}
+        flash = f"/jobs create={create_code} confirm={confirm_code}"
+
+    if page == "cracking":
+        return _render_cracking(project=project, flash=flash, detail=detail)
+    return _render_recon(project=project, flash=flash, detail=detail)
+
+
+@app.get("/ui/docs", response_class=HTMLResponse)
+def page_docs(project: str = Query(default="demo")) -> str:
+    return _render_docs(project=project)
+
+
+@app.post("/ui/findings/create", response_class=HTMLResponse)
+def ui_findings_create(
+    project: str = Form(...),
+    session_id: str = Form(""),
+    title: str = Form(...),
+    severity: str = Form("medium"),
+    description: str = Form(""),
+) -> str:
+    code, out = _fetch_json(
+        "POST",
+        "/findings",
+        {
+            "project": project,
+            "session_id": session_id or None,
+            "title": title,
+            "severity": severity,
+            "status": "open",
+            "description": description,
+            "facts": [],
+            "evidence": [],
+        },
+    )
+    return _render_docs(project=project, flash=f"/findings status={code}", detail=out)
+
+
+@app.post("/ui/evidence/upload", response_class=HTMLResponse)
+async def ui_evidence_upload(
+    project: str = Form(...),
+    session_id: str = Form(""),
+    finding_id: str = Form(""),
+    report_section: str = Form(""),
+    tags: str = Form(""),
+    screenshot: UploadFile = File(...),
+) -> str:
+    content = await screenshot.read()
+    code, out = _post_upload(
+        "/evidence/upload",
+        {
+            "project": project,
+            "session_id": session_id,
+            "finding_id": finding_id,
+            "report_section": report_section,
+            "tags": tags,
+        },
+        file_name=screenshot.filename or "evidence.bin",
+        content=content,
+        content_type=screenshot.content_type or "application/octet-stream",
+    )
+    return _render_docs(project=project, flash=f"/evidence/upload status={code}", detail=out)
+
+
+@app.get("/ui/sessions", response_class=HTMLResponse)
+def page_sessions(
+    project: str = Query(default="demo"),
+    status: str = Query(default=""),
+    operator: str = Query(default=""),
+    q: str = Query(default=""),
+) -> str:
+    return _render_sessions(project=project, filters={"status": status, "operator": operator, "q": q})
+
+
+@app.post("/ui/sessions/timeline", response_class=HTMLResponse)
+def ui_sessions_timeline(
+    project: str = Form(...),
+    session_id: str = Form(...),
+    status: str = Form(default=""),
+    operator: str = Form(default=""),
+    q: str = Form(default=""),
+) -> str:
+    code, out = _fetch_json("GET", f"/sessions/{session_id}/timeline")
+    return _render_sessions(
+        project=project,
+        flash=f"/sessions/{session_id}/timeline status={code}",
+        detail=out,
+        timeline=out,
+        filters={"status": status, "operator": operator, "q": q},
+    )
+
+
+@app.post("/ui/exports/session", response_class=HTMLResponse)
+def ui_export_session(project: str = Form(...), session_id: str = Form(...)) -> str:
+    code, out = _fetch_json(
+        "POST",
+        "/exports/session",
+        {"project": project, "session_id": session_id, "include_pending_facts": True},
+    )
+    return _render_sessions(project=project, flash=f"/exports/session status={code}", detail=out)
+
+
+@app.post("/ui/exports/project", response_class=HTMLResponse)
+def ui_export_project(project: str = Form(...)) -> str:
+    code, out = _fetch_json("POST", "/exports/project", {"project": project, "include_pending_facts": True})
+    return _render_sessions(project=project, flash=f"/exports/project status={code}", detail=out)
 
 
 @app.post("/ui/session/start", response_class=HTMLResponse)
 def ui_session_start(project: str = Form(...), operator: str = Form("unknown")) -> str:
     code, out = _fetch_json("POST", "/sessions/start", {"project": project, "operator": operator})
-    return _render(project=project, flash=f"/sessions/start status={code}", detail=out)
+    return _render_sessions(project=project, flash=f"/sessions/start status={code}", detail=out)
 
 
 @app.post("/ui/session/end", response_class=HTMLResponse)
 def ui_session_end(project: str = Form(...), summary: str = Form("")) -> str:
     code, out = _fetch_json("POST", "/sessions/end", {"project": project, "summary": summary})
-    return _render(project=project, flash=f"/sessions/end status={code}", detail=out)
+    return _render_sessions(project=project, flash=f"/sessions/end status={code}", detail=out)
+
+
+@app.get("/ui/reports", response_class=HTMLResponse)
+def page_reports(project: str = Query(default="demo")) -> str:
+    return _render_reports(project=project)
+
+
+@app.post("/ui/reports/generate", response_class=HTMLResponse)
+def ui_reports_generate(project: str = Form(...), prompt: str = Form(...)) -> str:
+    code, out = _fetch_json("POST", "/route", {"project": project, "user_input": prompt})
+    return _render_reports(project=project, flash=f"/route status={code}", detail=out)
 
 
 def _run_cli() -> None:

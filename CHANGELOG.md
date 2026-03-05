@@ -2,6 +2,73 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.1] - 2026-03-05
+### Added
+- Discoveries graph and review workflow support in UI:
+  - `GET /ui/graph` page for relationship visualization and session filtering.
+  - Inline fact approve/reject actions from graph review queue.
+- Workbench API coverage for advanced contracts:
+  - fact review lifecycle
+  - graph endpoints
+  - session/project export endpoints
+
+### Changed
+- Fixed UI graph renderer template escaping in embedded Cytoscape JavaScript.
+- Fixed reports page fact status chip rendering.
+- Updated API graph endpoint typing to preserve FastAPI schema generation compatibility.
+- README/testing/usage docs now document graph, review, and export operations end-to-end.
+
+## [0.4.0] - 2026-03-05
+### Added
+- Multi-page web workbench UI with dedicated pages for:
+  - Recon
+  - Cracking
+  - Documentation (findings + evidence upload)
+  - Sessions (lifecycle + timeline)
+  - Reports
+- Command planner (`POST /planner/commands`) with profile presets (`stealth`, `balanced`, `aggressive`).
+- Queue+confirm job execution model:
+  - `POST /jobs`
+  - `POST /jobs/{job_id}/confirm`
+  - `POST /jobs/{job_id}/cancel`
+  - `GET /jobs`
+  - `GET /jobs/{job_id}`
+- SQLite workbench index (`data/aicl_workbench.db`) for sessions/jobs/findings/evidence/facts.
+- Evidence and findings APIs:
+  - `POST /findings`, `GET /findings`, `PATCH /findings/{finding_id}`
+  - `POST /evidence/upload`, `GET /evidence`, `POST /evidence/{evidence_id}/link`
+- Session intelligence APIs:
+  - `GET /projects/{project}/sessions`
+  - `GET /sessions/{session_id}/timeline`
+  - `GET /projects/{project}/facts`
+- Background job worker (`AICL_JOB_WORKER_ENABLED=true|false`) executing confirmed jobs via tool-exec.
+- New test coverage: `tests/test_workbench_api.py`.
+
+### Changed
+- Session lifecycle now mirrors to the SQLite workbench index for timeline/history queries.
+- Tool-exec default allowlist now includes cracking tooling entries (`john`, `hashcat`, `hydra`).
+- README, usage playbook, and testing roadmap updated for multi-page workbench workflows and APIs.
+
+## [0.3.10] - 2026-03-05
+### Added
+- New target kickoff automation script: `scripts/start_pentest_target.sh`.
+  - Starts/ends orchestrator sessions.
+  - Runs bounded recon commands with artifact capture.
+  - Triggers pentest and report routes automatically.
+  - Stores run summary and route responses for troubleshooting.
+- New make target `make pentest-start TARGET=<ip> PORTS=<ports> PROJECT=<slug>`.
+
+### Changed
+- README now includes one-command pentest startup and a UI-first machine workflow.
+- Usage playbook now maps the kickoff script to machine onboarding.
+- Testing roadmap now includes a dedicated validation flow for the kickoff script.
+- Kickoff script now enforces bounded probe loops to avoid long runs on hosts with many open ports.
+- `.env.example` now includes kickoff-script timeout and port-cap controls.
+
+## [0.3.9] - 2026-03-05
+### Changed
+- Synced generated `data/projects/demo` and `data/projects/smoke-compose` artifacts from latest session and smoke executions.
+
 ## [0.3.8] - 2026-03-05
 ### Added
 - Troubleshooting bundle collector (`scripts/collect_troubleshoot_bundle.sh`) to capture docker/API/app/system evidence into a timestamped folder and `.tar.gz` archive.

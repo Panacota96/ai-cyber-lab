@@ -1,4 +1,4 @@
-.PHONY: up up-ui up-exegol down dev ui tool-exec route format logs maintain-logs bundle-logs smoke-compose eval start-session end-session test verify check-changelog
+.PHONY: up up-ui up-exegol down dev ui tool-exec route pentest-start format logs maintain-logs bundle-logs smoke-compose eval start-session end-session test verify check-changelog
 
 up:
 	cd infra && docker compose up -d qdrant ollama tools-core py2-runner py3-runner tool-exec orchestrator
@@ -23,6 +23,9 @@ tool-exec:
 
 route:
 	.venv/bin/python -m apps.orchestrator.main "$(INPUT)"
+
+pentest-start:
+	bash scripts/start_pentest_target.sh "$(TARGET)" "$(PORTS)" "$(PROJECT)"
 
 start-session:
 	.venv/bin/python -m apps.orchestrator.main --start-session --project "$(PROJECT)" --operator "$(OPERATOR)"

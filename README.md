@@ -150,6 +150,109 @@ To force report generation for a specific session:
 bash scripts/aicl.sh "writeup session:20260305-120001-abc123" --project demo
 ```
 
+## Start A Pentest Target (One Command)
+Authorized labs/CTFs only.
+
+CLI automation (session start -> recon -> pentest route -> report route -> session end):
+```bash
+bash scripts/start_pentest_target.sh 154.57.164.76 32105 ctf-154-57-164-76-32105
+```
+
+Runtime bounds (recommended defaults):
+- `AICL_MAX_REASON_PORTS=10` (max ports for reason + HTTP probe loop)
+- `AICL_MAX_WEB_PORTS=3` (max ports for gobuster/ffuf loop)
+- `AICL_NMAP_TOP_TIMEOUT=180`, `AICL_NMAP_ALL_TIMEOUT=240`, `AICL_WEB_SCAN_TIMEOUT=120`
+
+Equivalent Make target:
+```bash
+make pentest-start TARGET=154.57.164.76 PORTS=32105 PROJECT=ctf-154-57-164-76-32105
+```
+
+Artifacts are written to:
+- `data/projects/<project>/artifacts/`
+- `data/projects/<project>/pentest/`
+- `data/projects/<project>/report/`
+
+If no port is provided, the script performs discovery first:
+```bash
+bash scripts/start_pentest_target.sh 10.10.10.10
+```
+
+## UI Pentest Flow (Human-Friendly)
+1. Open `http://127.0.0.1:8091`.
+2. In `Session Start`, set `project` (example: `ctf-154-57-164-76-32105`) and `operator`, submit.
+3. In `Route Request`, run:
+   - `user_input`: `ctf recon target 154.57.164.76:32105`
+4. Review generated note under `data/projects/<project>/pentest/`.
+5. Run second route request:
+   - `user_input`: `generate markdown report and writeup from project notes`
+6. End session from `Session End` form.
+7. Check logs/troubleshooting:
+   - `http://127.0.0.1:8080/logs?lines=200`
+   - `http://127.0.0.1:8080/diagnostics?project=<project>`
+
+## Workbench UI (Multi-Page)
+The UI now provides purpose-specific pages:
+- `http://127.0.0.1:8091/ui/recon` (target input, command planning, queue+confirm execution)
+- `http://127.0.0.1:8091/ui/cracking` (authorized lab cracking command planning + queue)
+- `http://127.0.0.1:8091/ui/docs` (finding creation + screenshot upload/tag/link)
+- `http://127.0.0.1:8091/ui/sessions` (session lifecycle + timeline)
+- `http://127.0.0.1:8091/ui/reports` (markdown report generation + context snapshot)
+- `http://127.0.0.1:8091/ui/graph` (discoveries graph, fact review queue, relation inspector)
+
+### New API Endpoints
+- Planner:
+  - `POST /planner/commands`
+- Jobs:
+  - `POST /jobs`
+  - `POST /jobs/{job_id}/confirm`
+  - `POST /jobs/{job_id}/cancel`
+  - `GET /jobs`
+  - `GET /jobs/{job_id}`
+- Findings:
+  - `POST /findings`
+  - `GET /findings`
+  - `PATCH /findings/{finding_id}`
+- Evidence:
+  - `POST /evidence/upload`
+  - `GET /evidence`
+  - `POST /evidence/{evidence_id}/link`
+- Session intelligence:
+  - `GET /projects/{project}/sessions`
+  - `GET /sessions/{session_id}/timeline`
+  - `GET /projects/{project}/facts`
+- Graph intelligence:
+  - `GET /projects/{project}/graph`
+  - `GET /sessions/{session_id}/graph`
+- Fact review workflow:
+  - `GET /facts/review`
+  - `POST /facts/review/{fact_id}/approve`
+  - `POST /facts/review/{fact_id}/reject`
+  - `PATCH /facts/review/{fact_id}`
+- Export workflow:
+  - `POST /exports/session`
+  - `POST /exports/project`
+
+### Queue + Confirm Execution Model
+- Commands are created as `pending` jobs.
+- UI confirms jobs (`/jobs/{id}/confirm`) to move them to `queued`.
+- Background worker executes queued jobs through tool-exec service.
+- Worker extracts candidate entity/relation facts into review queue (`pending` by default).
+- Outputs are stored under:
+  - `data/projects/<project>/jobs/<job_id>.stdout.log`
+  - `data/projects/<project>/jobs/<job_id>.stderr.log`
+
+### Discoveries Graph + Review
+- Open `/ui/graph?project=<slug>` to visualize host/port/service/domain/user/hash relationships.
+- Use `Session Filter` to focus one campaign and reduce noise.
+- Review queue allows approve/reject from the same page.
+- Reports page consumes approved facts for cleaner outputs.
+
+### New Runtime Toggle
+- `AICL_JOB_WORKER_ENABLED=true|false`
+  - Default: `true`
+  - Set to `false` for deterministic API tests without background execution.
+
 ## Logs
 - Central troubleshooting directory: `/mnt/c/Users/david/OneDrive - Pontificia Universidad Javeriana/Documents/GitHub/ai-cyber-lab/logs`
 - Central log file: `/mnt/c/Users/david/OneDrive - Pontificia Universidad Javeriana/Documents/GitHub/ai-cyber-lab/logs/aicl.log`
@@ -238,6 +341,7 @@ make dev
 make ui
 make tool-exec
 make route INPUT="writeup project demo"
+make pentest-start TARGET=10.10.10.10 PORTS=80,443 PROJECT=demo
 make start-session PROJECT=demo OPERATOR=david
 make end-session PROJECT=demo SUMMARY="done"
 make logs

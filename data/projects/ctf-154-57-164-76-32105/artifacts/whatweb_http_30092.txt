@@ -1,0 +1,4 @@
+[1m[31mERROR Opening: http://154.57.164.76:30092 - uninitialized constant #<Class:ExtendedHTTPResponse>::HTTPBadResponse
+
+      raise(HTTPBadResponse, "wrong status line: #{str.dump}")
+            ^^^^^^^^^^^^^^^[0m

@@ -66,7 +66,9 @@ class SearchHit:
     payload: dict[str, Any]
 
 
-def normalize_metadata(metadata: dict[str, Any] | None, default_project: str = "default") -> dict[str, Any]:
+def normalize_metadata(
+    metadata: dict[str, Any] | None, default_project: str = "default"
+) -> dict[str, Any]:
     base = dict(metadata or {})
     tags = base.get("tags", [])
     if not isinstance(tags, list):
@@ -99,7 +101,11 @@ class MemoryClient:
             "memory client initialized",
             extra={
                 "event": "memory_init",
-                "details": {"url": self.url, "collection": self.collection, "vector_size": self.size},
+                "details": {
+                    "url": self.url,
+                    "collection": self.collection,
+                    "vector_size": self.size,
+                },
             },
         )
         self._ensure_collection()
@@ -110,7 +116,10 @@ class MemoryClient:
         except Exception:
             logger.info(
                 "creating qdrant collection",
-                extra={"event": "memory_create_collection", "details": {"collection": self.collection}},
+                extra={
+                    "event": "memory_create_collection",
+                    "details": {"collection": self.collection},
+                },
             )
             self.client.create_collection(
                 collection_name=self.collection,
@@ -128,7 +137,9 @@ class MemoryClient:
 
         return _hash_embedding(text, self.size)
 
-    def upsert_text(self, text: str, metadata: dict[str, Any] | None = None, point_id: str | None = None) -> str:
+    def upsert_text(
+        self, text: str, metadata: dict[str, Any] | None = None, point_id: str | None = None
+    ) -> str:
         payload = normalize_metadata(metadata)
         payload["text"] = text
 
@@ -137,21 +148,37 @@ class MemoryClient:
         self.client.upsert(collection_name=self.collection, points=[point])
         logger.info(
             "memory upsert completed",
-            extra={"event": "memory_upsert", "details": {"id": record_id, "collection": self.collection}},
+            extra={
+                "event": "memory_upsert",
+                "details": {"id": record_id, "collection": self.collection},
+            },
         )
         return record_id
 
     def search_text(self, text: str, limit: int = 5) -> list[SearchHit]:
         vector = self.embed(text)
-        hits = self.client.search(
-            collection_name=self.collection,
-            query_vector=vector,
-            limit=limit,
-            with_payload=True,
-        )
+        if hasattr(self.client, "search"):
+            hits = self.client.search(
+                collection_name=self.collection,
+                query_vector=vector,
+                limit=limit,
+                with_payload=True,
+            )
+        else:
+            # qdrant-client >=1.9 uses query_points instead of search.
+            result = self.client.query_points(
+                collection_name=self.collection,
+                query=vector,
+                limit=limit,
+                with_payload=True,
+            )
+            hits = list(getattr(result, "points", []) or [])
         logger.info(
             "memory search completed",
-            extra={"event": "memory_search", "details": {"collection": self.collection, "hits": len(hits)}},
+            extra={
+                "event": "memory_search",
+                "details": {"collection": self.collection, "hits": len(hits)},
+            },
         )
         return [SearchHit(score=float(hit.score), payload=dict(hit.payload or {})) for hit in hits]
 
