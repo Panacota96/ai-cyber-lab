@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aicl-tools-core
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aicl-tools-core
+  template:
+    metadata:
+      labels:
+        app: aicl-tools-core
+    spec:
+      containers:
+        - name: tools-core
+          image: aicl-tools-core:latest
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "-lc", "tail -f /dev/null"]

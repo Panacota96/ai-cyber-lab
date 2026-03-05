@@ -15,6 +15,7 @@ dependencies = [
   "langgraph>=0.2.60",
   "pydantic>=2.10.0",
   "jsonschema>=4.23.0",
+  "python-multipart>=0.0.20",
   "qdrant-client>=1.12.0",
   "httpx>=0.28.0",
   "python-dotenv>=1.0.1"
@@ -30,7 +31,19 @@ observability = [
 ]
 
 [tool.setuptools]
-packages = ["apps", "apps.orchestrator", "apps.agents", "libs", "libs.tools", "libs.tools.parsers", "libs.tools.capture", "libs.memory", "libs.docs"]
+packages = [
+  "apps",
+  "apps.orchestrator",
+  "apps.agents",
+  "apps.tool_exec",
+  "apps.ui",
+  "libs",
+  "libs.tools",
+  "libs.tools.parsers",
+  "libs.tools.capture",
+  "libs.memory",
+  "libs.docs",
+]
 
 [tool.ruff]
 line-length = 100

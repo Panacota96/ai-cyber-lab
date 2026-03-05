@@ -23,6 +23,10 @@ spec:
               value: http://aicl-qdrant:6333
             - name: AICL_OLLAMA_URL
               value: http://aicl-ollama:11434
+            - name: AICL_EXEC_BACKEND
+              value: service
+            - name: AICL_TOOL_EXEC_URL
+              value: http://aicl-tool-exec:8082
             - name: AICL_API_HOST
               value: 0.0.0.0
             - name: AICL_API_PORT

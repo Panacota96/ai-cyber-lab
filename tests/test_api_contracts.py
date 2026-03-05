@@ -27,7 +27,7 @@ def test_health_and_ready_contract(monkeypatch, tmp_path):
     body = ready.json()
     assert "status" in body
     assert "dependencies" in body
-    assert {"qdrant", "ollama", "langfuse"}.issubset(set(body["dependencies"].keys()))
+    assert {"qdrant", "ollama", "tool_exec", "langfuse"}.issubset(set(body["dependencies"].keys()))
 
 
 def test_route_contract_includes_trace_id(monkeypatch, tmp_path):

@@ -1,4 +1,114 @@
 services:
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: infra/images/orchestrator.Dockerfile
+    container_name: aicl-orchestrator
+    ports:
+      - "8080:8080"
+    environment:
+      AICL_API_HOST: 0.0.0.0
+      AICL_API_PORT: 8080
+      AICL_EXEC_BACKEND: service
+      AICL_TOOL_EXEC_URL: http://aicl-tool-exec:8082
+      AICL_QDRANT_URL: http://aicl-qdrant:6333
+      AICL_OLLAMA_URL: http://aicl-ollama:11434
+      AICL_LOG_DIR: /workspace/logs
+      AICL_LOG_FILE: aicl.log
+    depends_on:
+      - qdrant
+      - ollama
+      - tool-exec
+    volumes:
+      - ../data:/workspace/data
+      - ../logs:/workspace/logs
+    restart: unless-stopped
+
+  ui-web:
+    build:
+      context: ..
+      dockerfile: infra/images/ui.Dockerfile
+    container_name: aicl-ui
+    profiles: ["ui"]
+    ports:
+      - "8091:8091"
+    environment:
+      AICL_API_HOST: 0.0.0.0
+      AICL_UI_PORT: 8091
+      AICL_ORCHESTRATOR_URL: http://aicl-orchestrator:8080
+    depends_on:
+      - orchestrator
+    restart: unless-stopped
+
+  tool-exec:
+    build:
+      context: ..
+      dockerfile: infra/images/tool-exec.Dockerfile
+    container_name: aicl-tool-exec
+    ports:
+      - "8082:8082"
+    environment:
+      AICL_API_HOST: 0.0.0.0
+      AICL_TOOL_EXEC_PORT: 8082
+      AICL_TOOL_EXEC_MODE: docker
+      AICL_DOCKER_TOOLS_CONTAINER: aicl-tools-core
+      AICL_DOCKER_PY2_CONTAINER: aicl-py2-runner
+      AICL_DOCKER_PY3_CONTAINER: aicl-py3-runner
+      AICL_DOCKER_EXEGOL_CONTAINER: aicl-exegol
+      AICL_ALLOWED_TOOLS: nmap,ffuf,gobuster,nikto,whatweb,sqlmap,nuclei,python2,python3,pip,pip2,pytest,uv
+      AICL_LOG_DIR: /workspace/logs
+      AICL_LOG_FILE: aicl.log
+    depends_on:
+      - tools-core
+      - py2-runner
+      - py3-runner
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../logs:/workspace/logs
+    restart: unless-stopped
+
+  tools-core:
+    build:
+      context: ..
+      dockerfile: infra/images/tools-core.Dockerfile
+    container_name: aicl-tools-core
+    command: ["bash", "-lc", "tail -f /dev/null"]
+    volumes:
+      - ../data:/workspace/data
+      - ../data/artifacts:/workspace/artifacts
+    restart: unless-stopped
+
+  exegol:
+    image: nwodtuhs/exegol:latest
+    container_name: aicl-exegol
+    profiles: ["exegol"]
+    command: ["bash", "-lc", "tail -f /dev/null"]
+    volumes:
+      - ../data:/workspace/data
+      - ../data/artifacts:/workspace/artifacts
+    tty: true
+    restart: unless-stopped
+
+  py2-runner:
+    build:
+      context: ..
+      dockerfile: infra/images/py2-runner.Dockerfile
+    container_name: aicl-py2-runner
+    command: ["bash", "-lc", "tail -f /dev/null"]
+    volumes:
+      - ../data:/workspace/data
+    restart: unless-stopped
+
+  py3-runner:
+    build:
+      context: ..
+      dockerfile: infra/images/py3-runner.Dockerfile
+    container_name: aicl-py3-runner
+    command: ["bash", "-lc", "tail -f /dev/null"]
+    volumes:
+      - ../data:/workspace/data
+    restart: unless-stopped
+
   ollama:
     image: ollama/ollama:latest
     container_name: aicl-ollama
@@ -18,8 +128,6 @@ services:
       - qdrant_storage:/qdrant/storage
     restart: unless-stopped
 
-  # Optional profile for observability experiments.
-  # For production/self-host hardening, use Langfuse official compose docs.
   langfuse:
     image: langfuse/langfuse:latest
     container_name: aicl-langfuse

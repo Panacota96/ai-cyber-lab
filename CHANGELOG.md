@@ -2,6 +2,37 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.5] - 2026-03-05
+### Added
+- New tool execution microservice (`apps/tool_exec/main.py`) with:
+  - `POST /run` for allowlisted command execution.
+  - `GET /capabilities` for mode/tool/container visibility.
+- New local web dashboard (`apps/ui/main.py`) to run routes/sessions and inspect logs/diagnostics without raw API calls.
+- Docker microservice images:
+  - `infra/images/orchestrator.Dockerfile`
+  - `infra/images/tool-exec.Dockerfile`
+  - `infra/images/ui.Dockerfile`
+  - `infra/images/tools-core.Dockerfile`
+  - `infra/images/py2-runner.Dockerfile`
+  - `infra/images/py3-runner.Dockerfile`
+- Expanded Docker Compose stack with core services plus optional `ui` and `exegol` profiles.
+- Kubernetes manifests for new services:
+  - tool-exec
+  - ui
+  - tools-core
+  - py2-runner
+  - py3-runner
+- New tests:
+  - `tests/test_tool_exec_api.py`
+  - `tests/test_cli_exec_backends.py`
+
+### Changed
+- CLI execution layer now supports `AICL_EXEC_BACKEND=service` and calls tool-exec over HTTP.
+- Readiness probes include tool-exec dependency when service backend is enabled.
+- `Makefile` now includes `up-ui`, `up-exegol`, `ui`, and `tool-exec` targets.
+- Environment configuration now includes execution backend/UI/runtime container settings.
+- README/testing/usage docs updated for microservice stack, UI usage, and Exegol option.
+
 ## [0.3.4] - 2026-03-05
 ### Added
 - Python-version-safe CLI wrapper: `scripts/aicl.sh` (always runs `.venv/bin/python -m apps.orchestrator.main`).

@@ -7,8 +7,10 @@ import httpx
 
 from apps.orchestrator.config import (
     enable_langfuse,
+    exec_backend,
     ollama_url,
     qdrant_url,
+    tool_exec_url,
 )
 from libs.logs import get_logger
 
@@ -43,6 +45,10 @@ def _probe(url: str, path: str, timeout_s: float = 2.5) -> dict[str, Any]:
 def dependency_status() -> dict[str, Any]:
     qdrant = _probe(qdrant_url(), "/collections")
     ollama = _probe(ollama_url(), "/api/tags")
+    if exec_backend() == "service":
+        tool_exec = _probe(tool_exec_url(), "/health")
+    else:
+        tool_exec = {"up": True, "status_code": 0, "latency_ms": 0, "url": "", "error": "disabled"}
 
     langfuse_status: dict[str, Any]
     if enable_langfuse():
@@ -64,6 +70,7 @@ def dependency_status() -> dict[str, Any]:
     status = {
         "qdrant": qdrant,
         "ollama": ollama,
+        "tool_exec": tool_exec,
         "langfuse": langfuse_status,
     }
     logger.info(
@@ -73,6 +80,7 @@ def dependency_status() -> dict[str, Any]:
             "details": {
                 "qdrant_up": qdrant.get("up", False),
                 "ollama_up": ollama.get("up", False),
+                "tool_exec_up": tool_exec.get("up", False),
                 "langfuse_up": langfuse_status.get("up", False),
             },
         },

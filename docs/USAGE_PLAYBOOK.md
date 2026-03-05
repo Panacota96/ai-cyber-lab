@@ -7,6 +7,8 @@ This maps each code area to your intended outcomes: certification study, CTF exe
 | Path | Purpose | When You Use It |
 |---|---|---|
 | `apps/orchestrator/main.py` | FastAPI + CLI entrypoint (`/route`, `/health`, `/ready`, `/logs`, `/diagnostics`, session APIs) | Daily operations and automation integration |
+| `apps/tool_exec/main.py` | Tool execution API (`/run`, `/capabilities`) with allowlist and runtime-target routing | Containerized command execution without host dependency |
+| `apps/ui/main.py` | Web dashboard for route/session/log/report actions | Avoid raw API/curl workflows |
 | `apps/orchestrator/graph.py` | Router logic (keyword or optional LLM) and agent dispatch | Route tuning and regression checks |
 | `apps/orchestrator/deps.py` | Dependency probing for Qdrant/Ollama/Langfuse | Troubleshooting and readiness checks |
 | `apps/agents/study_agent.py` | Study note generation and flashcard scaffolding | CCNA/HTB/PortSwigger study sessions |
@@ -109,6 +111,22 @@ curl -sS -X POST http://127.0.0.1:8090/route \
 ```bash
 tail -n 200 "/mnt/c/Users/david/OneDrive - Pontificia Universidad Javeriana/Documents/GitHub/ai-cyber-lab/logs/aicl.log"
 ```
+
+## Workflow 5: Web UI (No Raw API)
+1. Start UI and core stack:
+
+```bash
+make up
+make up-ui
+```
+
+2. Open dashboard:
+
+```bash
+xdg-open http://127.0.0.1:8091
+```
+
+3. Use forms for route execution, session lifecycle, and diagnostics/log viewing.
 
 ## Operational Rules for Your Use Case
 - Keep `AICL_ENABLE_ACTIVE_SCAN=false` unless you are explicitly in authorized active labs.

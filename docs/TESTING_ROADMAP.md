@@ -35,6 +35,8 @@ Expected outcome:
 | Bootstrap | `bash scripts/bootstrap.sh` | Build local venv and install package | `.venv` exists and install ends without errors |
 | Dependencies | `cd infra && docker compose up -d qdrant ollama` | Start memory and local model endpoints | Containers are running |
 | API readiness | `curl -sS http://127.0.0.1:<PORT>/ready` | Check orchestrator dependency health | JSON with `status` and `dependencies` |
+| Tool-exec readiness | `curl -sS http://127.0.0.1:8082/health` | Check execution microservice is up | `{"status":"ok"}` |
+| Tool capabilities | `curl -sS http://127.0.0.1:8082/capabilities` | Verify runtime/container mapping and allowed tools | JSON includes `mode`, `allowed_tools`, `container_status` |
 | Unit + contracts | `make test` | Validate parser behavior and API/session contracts | `N passed` |
 | Prompt routing | `make eval` | Guard routing behavior from regression | Pass rate >= configured threshold |
 | Troubleshooting log | `curl -sS "http://127.0.0.1:<PORT>/logs?lines=200"` | Confirm structured events are available | JSON with `stats` and `lines` |
@@ -128,6 +130,8 @@ Expected:
 
 ## Failure Debug Guide
 - `curl` connection error: API is not running; start with `bash scripts/run_dev.sh` or `nohup` mode.
+- tool-exec `503` or timeout: ensure service is up and `AICL_TOOL_EXEC_URL` is reachable.
+- command blocked errors: check `AICL_ALLOWED_TOOLS` and tool/container mapping.
 - `ready` degraded: one of `qdrant` or `ollama` is down; check `docker ps` and endpoint URLs in `.env`.
 - Empty reports: ensure `command_logger.sh` or API session endpoints were used in the same project scope.
 - Knowledge retrieval errors: verify Qdrant endpoint and run `index: project` via route endpoint.

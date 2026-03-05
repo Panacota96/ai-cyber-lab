@@ -1,13 +1,25 @@
-.PHONY: up down dev route format logs maintain-logs eval start-session end-session test verify check-changelog
+.PHONY: up up-ui up-exegol down dev ui tool-exec route format logs maintain-logs eval start-session end-session test verify check-changelog
 
 up:
-	cd infra && docker compose up -d qdrant ollama
+	cd infra && docker compose up -d qdrant ollama tools-core py2-runner py3-runner tool-exec orchestrator
+
+up-ui:
+	cd infra && docker compose --profile ui up -d ui-web
+
+up-exegol:
+	cd infra && docker compose --profile exegol up -d exegol
 
 down:
 	cd infra && docker compose down
 
 dev:
 	bash scripts/run_dev.sh
+
+ui:
+	.venv/bin/python -m apps.ui.main
+
+tool-exec:
+	.venv/bin/python -m apps.tool_exec.main --serve --host 0.0.0.0 --port 8082
 
 route:
 	.venv/bin/python -m apps.orchestrator.main "$(INPUT)"

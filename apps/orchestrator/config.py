@@ -104,3 +104,43 @@ def enable_langfuse() -> bool:
 
 def use_llm_router() -> bool:
     return os.getenv("AICL_USE_LLM_ROUTER", "false").lower() == "true"
+
+
+def exec_backend() -> str:
+    return os.getenv("AICL_EXEC_BACKEND", "host").strip().lower()
+
+
+def tool_exec_url() -> str:
+    return os.getenv("AICL_TOOL_EXEC_URL", "http://127.0.0.1:8082")
+
+
+def tool_exec_timeout_s() -> float:
+    return float(os.getenv("AICL_TOOL_EXEC_TIMEOUT_SEC", "8"))
+
+
+def tools_core_container() -> str:
+    return os.getenv("AICL_DOCKER_TOOLS_CONTAINER", "aicl-tools-core")
+
+
+def py2_container() -> str:
+    return os.getenv("AICL_DOCKER_PY2_CONTAINER", "aicl-py2-runner")
+
+
+def py3_container() -> str:
+    return os.getenv("AICL_DOCKER_PY3_CONTAINER", "aicl-py3-runner")
+
+
+def exegol_container() -> str:
+    return os.getenv("AICL_DOCKER_EXEGOL_CONTAINER", "aicl-exegol")
+
+
+def ui_enabled() -> bool:
+    return os.getenv("AICL_UI_ENABLED", "true").lower() == "true"
+
+
+def ui_port() -> int:
+    return int(os.getenv("AICL_UI_PORT", "8091"))
+
+
+def orchestrator_url() -> str:
+    return os.getenv("AICL_ORCHESTRATOR_URL", f"http://127.0.0.1:{api_port()}")

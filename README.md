@@ -24,6 +24,8 @@ Use only on systems and labs you are explicitly authorized to test (HTB/THM/Port
 apps/
   orchestrator/         # LangGraph router + FastAPI/CLI entrypoints
   agents/               # Specialized agent handlers
+  tool_exec/            # Tool execution microservice
+  ui/                   # Local web dashboard
 libs/
   tools/                # Command wrappers/parsers/capture scripts
   memory/               # Qdrant + RAG helpers
@@ -37,7 +39,8 @@ data/
 logs/
   aicl.log              # Global troubleshooting log (hard-capped to 1MB)
 infra/
-  docker-compose.yml    # Ollama + Qdrant (+ optional observability profile)
+  docker-compose.yml    # Full local stack (orchestrator, tool-exec, runtimes, UI profile)
+  images/               # Dockerfiles for orchestrator/tool-exec/ui/runtimes
   kubernetes/           # Optional scale-out manifests
 scripts/
   bootstrap.sh          # Local environment setup
@@ -53,11 +56,15 @@ Do not use bare `python` if your system default is Python 2.7.
 cp .env.example .env
 ```
 
-2. Start dependencies:
+2. Start core container stack:
 ```bash
-cd infra
-docker compose up -d qdrant ollama
-cd ..
+make up
+```
+
+Optional profiles:
+```bash
+make up-ui        # web dashboard on :8091
+make up-exegol    # exegol runtime container
 ```
 
 3. Bootstrap Python environment:
@@ -92,6 +99,13 @@ echo $! > /tmp/aicl_api.pid
 curl -sS http://127.0.0.1:${AICL_API_PORT:-8080}/health
 curl -sS http://127.0.0.1:${AICL_API_PORT:-8080}/ready
 curl -sS "http://127.0.0.1:${AICL_API_PORT:-8080}/diagnostics?project=demo"
+curl -sS http://127.0.0.1:8082/health
+curl -sS http://127.0.0.1:8082/capabilities
+```
+
+If UI profile is enabled:
+```bash
+xdg-open http://127.0.0.1:8091
 ```
 
 ## Command Logger (delegated note-taking)
@@ -151,6 +165,17 @@ curl -sS "http://127.0.0.1:${AICL_API_PORT:-8080}/logs?lines=200"
 tail -n 200 logs/aicl.log
 ```
 
+## Exegol
+- Exegol is a Docker-based offensive security workspace with prebuilt tooling and repeatable environments.
+- This project supports optional Exegol runtime container via compose profile:
+```bash
+make up-exegol
+```
+- To route default tool execution to Exegol in the tool-exec service:
+```bash
+export AICL_TOOL_EXEC_MODE=exegol
+```
+
 ## Testing
 Run full verification:
 ```bash
@@ -168,7 +193,11 @@ Detailed testing procedure is in [docs/TESTING_ROADMAP.md](docs/TESTING_ROADMAP.
 ## Make Targets
 ```bash
 make up
+make up-ui
+make up-exegol
 make dev
+make ui
+make tool-exec
 make route INPUT="writeup project demo"
 make start-session PROJECT=demo OPERATOR=david
 make end-session PROJECT=demo SUMMARY="done"
