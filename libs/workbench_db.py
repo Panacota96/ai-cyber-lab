@@ -142,7 +142,6 @@ def init_db() -> None:
 
                 CREATE INDEX IF NOT EXISTS idx_facts_project ON facts(project);
                 CREATE INDEX IF NOT EXISTS idx_facts_session ON facts(session_id);
-                CREATE INDEX IF NOT EXISTS idx_facts_status ON facts(status);
                 """
             )
 
@@ -158,6 +157,12 @@ def init_db() -> None:
             _ensure_column(cur.connection, "facts", "object_type", "TEXT NOT NULL DEFAULT ''")
             _ensure_column(cur.connection, "facts", "object_value", "TEXT NOT NULL DEFAULT ''")
             _ensure_column(cur.connection, "facts", "details_json", "TEXT NOT NULL DEFAULT '{}' ")
+
+            # Index creation that depends on migration-added columns must run
+            # after _ensure_column() for backward compatibility.
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_project ON facts(project)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_session ON facts(session_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_facts_status ON facts(status)")
 
             con.commit()
         finally:

@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.4.2] - 2026-03-05
+### Fixed
+- Corrected SQLite migration/index ordering in `libs/workbench_db.py` to prevent orchestrator startup failure on older `data/aicl_workbench.db` files (`sqlite3.OperationalError: no such column: status`).
+- Verified compose runtime startup with remapped host Ollama port (`AICL_OLLAMA_HOST_PORT=11435`) and healthy API/UI endpoints.
+
 ## [0.4.1] - 2026-03-05
 ### Added
 - Discoveries graph and review workflow support in UI:
