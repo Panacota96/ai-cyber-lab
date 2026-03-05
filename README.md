@@ -210,12 +210,19 @@ make smoke-compose
 
 Optional smoke flags:
 ```bash
+bash scripts/smoke_compose.sh --with-ui --skip-build
 bash scripts/smoke_compose.sh --with-ui --with-exegol
 bash scripts/smoke_compose.sh --with-ui --strict-exegol
 ```
 
 `--with-exegol` now performs a bounded Exegol check by default (no forced first-time multi-GB pull).
 Use `--strict-exegol` when you want full Exegol image pull/start validation.
+Use `--skip-build` for fast reruns when Dockerfiles have not changed.
+
+If a host port is already occupied (example: Ollama on `11434`), remap only for this run:
+```bash
+AICL_OLLAMA_HOST_PORT=11435 bash scripts/smoke_compose.sh --with-ui --skip-build
+```
 
 ## Note Schema Validation
 - Generated note payloads are validated before being written to disk.

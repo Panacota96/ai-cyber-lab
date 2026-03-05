@@ -3,8 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INFRA_DIR="$ROOT_DIR/infra"
-API_URL="${AICL_API_URL:-http://127.0.0.1:8080}"
-TOOL_EXEC_URL="${AICL_TOOL_EXEC_URL:-http://127.0.0.1:8082}"
+API_HOST_PORT="${AICL_API_HOST_PORT:-8080}"
+TOOL_EXEC_HOST_PORT="${AICL_TOOL_EXEC_HOST_PORT:-8082}"
+UI_HOST_PORT="${AICL_UI_HOST_PORT:-8091}"
+API_URL="${AICL_API_URL:-http://127.0.0.1:${API_HOST_PORT}}"
+TOOL_EXEC_URL="${AICL_TOOL_EXEC_URL:-http://127.0.0.1:${TOOL_EXEC_HOST_PORT}}"
 PROJECT="${AICL_SMOKE_PROJECT:-smoke-compose}"
 WITH_UI=0
 WITH_EXEGOL=0
@@ -129,7 +132,7 @@ run_step "python2 runtime check via tool-exec" curl -fsS -X POST "$TOOL_EXEC_URL
 run_step "generate report" bash -lc "cd '$ROOT_DIR' && bash scripts/aicl.sh \"writeup project $PROJECT\" --project \"$PROJECT\""
 
 if [[ "$WITH_UI" -eq 1 ]]; then
-  run_step "ui health" curl -fsS http://127.0.0.1:8091/health
+  run_step "ui health" curl -fsS "http://127.0.0.1:${UI_HOST_PORT}/health"
 fi
 
 if [[ "$WITH_EXEGOL" -eq 1 ]]; then

@@ -5,7 +5,7 @@ services:
       dockerfile: infra/images/orchestrator.Dockerfile
     container_name: aicl-orchestrator
     ports:
-      - "8080:8080"
+      - "${AICL_API_HOST_PORT:-8080}:8080"
     environment:
       AICL_API_HOST: 0.0.0.0
       AICL_API_PORT: 8080
@@ -31,7 +31,7 @@ services:
     container_name: aicl-ui
     profiles: ["ui"]
     ports:
-      - "8091:8091"
+      - "${AICL_UI_HOST_PORT:-8091}:8091"
     environment:
       AICL_API_HOST: 0.0.0.0
       AICL_UI_PORT: 8091
@@ -46,7 +46,7 @@ services:
       dockerfile: infra/images/tool-exec.Dockerfile
     container_name: aicl-tool-exec
     ports:
-      - "8082:8082"
+      - "${AICL_TOOL_EXEC_HOST_PORT:-8082}:8082"
     environment:
       AICL_API_HOST: 0.0.0.0
       AICL_TOOL_EXEC_PORT: 8082
@@ -113,7 +113,7 @@ services:
     image: ollama/ollama:latest
     container_name: aicl-ollama
     ports:
-      - "11434:11434"
+      - "${AICL_OLLAMA_HOST_PORT:-11434}:11434"
     volumes:
       - ollama:/root/.ollama
     restart: unless-stopped
@@ -122,8 +122,8 @@ services:
     image: qdrant/qdrant:latest
     container_name: aicl-qdrant
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "${AICL_QDRANT_HOST_PORT:-6333}:6333"
+      - "${AICL_QDRANT_GRPC_HOST_PORT:-6334}:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
     restart: unless-stopped
@@ -133,7 +133,7 @@ services:
     container_name: aicl-langfuse
     profiles: ["observability"]
     ports:
-      - "3000:3000"
+      - "${AICL_LANGFUSE_HOST_PORT:-3000}:3000"
     environment:
       DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
       NEXTAUTH_URL: http://localhost:3000

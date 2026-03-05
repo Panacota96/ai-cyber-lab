@@ -107,8 +107,55 @@ def _run_local(cmd: list[str], timeout: int) -> RunResponse:
     )
 
 
+def _load_docker_sdk():
+    try:
+        import docker as docker_sdk  # type: ignore
+
+        return docker_sdk
+    except Exception:
+        return None
+
+
+def _run_docker_sdk(target: str, cmd: list[str], timeout: int) -> RunResponse:
+    docker_sdk = _load_docker_sdk()
+    if docker_sdk is None:
+        raise RuntimeError("docker sdk is unavailable and docker cli is not present")
+
+    started = time.monotonic()
+    client = docker_sdk.from_env(timeout=timeout)
+    try:
+        container = client.containers.get(target)
+        out = container.exec_run(cmd, stdout=True, stderr=True, demux=True)
+        stdout_b: bytes | None
+        stderr_b: bytes | None
+        if isinstance(out.output, tuple):
+            stdout_b, stderr_b = out.output
+        else:
+            stdout_b, stderr_b = out.output, b""
+        elapsed = int((time.monotonic() - started) * 1000)
+        return RunResponse(
+            cmd=cmd,
+            executor="docker-sdk",
+            target=target,
+            stdout=(stdout_b or b"").decode("utf-8", errors="ignore"),
+            stderr=(stderr_b or b"").decode("utf-8", errors="ignore"),
+            returncode=int(out.exit_code or 0),
+            duration_ms=elapsed,
+        )
+    finally:
+        client.close()
+
+
 def _run_docker(target: str, cmd: list[str], timeout: int) -> RunResponse:
-    docker_cmd = ["docker", "exec", "-i", target, *cmd]
+    docker_bin = shutil.which("docker")
+    if not docker_bin:
+        logger.warning(
+            "docker cli missing in tool-exec; using docker sdk fallback",
+            extra={"event": "tool_exec_docker_cli_missing", "details": {"target": target}},
+        )
+        return _run_docker_sdk(target, cmd, timeout)
+
+    docker_cmd = [docker_bin, "exec", "-i", target, *cmd]
     started = time.monotonic()
     proc = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=timeout, check=False)
     elapsed = int((time.monotonic() - started) * 1000)
@@ -141,6 +188,20 @@ def _run_with_mode(cmd: list[str], timeout: int) -> RunResponse:
     return _run_docker(target, cmd, timeout)
 
 
+def _container_names_via_sdk(timeout: int = 5) -> set[str]:
+    docker_sdk = _load_docker_sdk()
+    if docker_sdk is None:
+        return set()
+
+    client = docker_sdk.from_env(timeout=timeout)
+    try:
+        return {c.name for c in client.containers.list()}
+    except Exception:
+        return set()
+    finally:
+        client.close()
+
+
 def _container_status() -> dict[str, bool]:
     targets = {
         "tools-core": tools_core_container(),
@@ -153,16 +214,20 @@ def _container_status() -> dict[str, bool]:
         return {name: True for name in targets}
 
     docker_bin = shutil.which("docker")
-    if not docker_bin:
-        return {name: False for name in targets}
+    names: set[str] = set()
+    if docker_bin:
+        proc = subprocess.run(
+            [docker_bin, "ps", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            names = {line.strip() for line in (proc.stdout or "").splitlines() if line.strip()}
 
-    proc = subprocess.run(
-        [docker_bin, "ps", "--format", "{{.Names}}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    names = {line.strip() for line in (proc.stdout or "").splitlines() if line.strip()}
+    if not names:
+        names = _container_names_via_sdk()
+
     return {name: container in names for name, container in targets.items()}
 
 

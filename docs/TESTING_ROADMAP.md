@@ -10,6 +10,7 @@ Verify that routing, agents, sessions, reports, knowledge memory, and troublesho
 - Python 3.11+ and Docker available.
 - `.env` created from `.env.example`.
 - If `8080` is occupied, set `AICL_API_PORT=8090` (or another free port).
+- Use `bash scripts/aicl.sh ...` or `.venv/bin/python ...` for CLI tests. Avoid bare `python` if your system default is Python 2.7.
 
 ## Quality Gate (One Command)
 Run:
@@ -28,8 +29,8 @@ Expected outcome:
 - Process exits with code `0`.
 - Console prints `Verification completed successfully.`
 
-## Full Container Smoke Campaign
-Run:
+## Container Smoke Profiles
+Default full campaign:
 
 ```bash
 make smoke-compose
@@ -41,11 +42,15 @@ Variants:
 bash scripts/smoke_compose.sh --with-ui
 bash scripts/smoke_compose.sh --with-ui --with-exegol
 bash scripts/smoke_compose.sh --with-ui --strict-exegol
+bash scripts/smoke_compose.sh --with-ui --skip-build
 ```
 
 Notes:
 - `--with-exegol` validates Exegol wiring and starts the Exegol container only if the image is already cached locally.
 - `--strict-exegol` forces full Exegol pull/start validation (first run can take significant time and bandwidth).
+- `--skip-build` is recommended for quick reruns after no Dockerfile changes.
+- If `11434` is busy on host (common when local Ollama is already running), remap:
+  - `AICL_OLLAMA_HOST_PORT=11435 bash scripts/smoke_compose.sh --with-ui --skip-build`
 
 Expected outcome:
 - Core services build and start.
@@ -53,12 +58,20 @@ Expected outcome:
 - Route, runtime, and report smoke checks pass.
 - Script exits `0` with `Smoke test finished successfully.`
 
+## Recommended Test Order
+1. `make verify`
+2. `bash scripts/smoke_compose.sh --with-ui --skip-build`
+3. End-to-end API session test (below)
+4. `make bundle-logs` only when a test fails or behavior is inconsistent
+5. `bash scripts/smoke_compose.sh --with-ui --strict-exegol` for deep runtime validation
+
 ## Layered Testing Matrix
 
 | Layer | Command | Purpose | Expected |
 |---|---|---|---|
 | Bootstrap | `bash scripts/bootstrap.sh` | Build local venv and install package | `.venv` exists and install ends without errors |
 | Dependencies | `cd infra && docker compose up -d qdrant ollama` | Start memory and local model endpoints | Containers are running |
+| Quick smoke (no build) | `bash scripts/smoke_compose.sh --with-ui --skip-build` | Fast health/route/runtime regression | Script exits `0` |
 | Full container smoke | `make smoke-compose` | Validate compose build + core health + route/report/runtime checks | Script exits `0` |
 | API readiness | `curl -sS http://127.0.0.1:<PORT>/ready` | Check orchestrator dependency health | JSON with `status` and `dependencies` |
 | Tool-exec readiness | `curl -sS http://127.0.0.1:8082/health` | Check execution microservice is up | `{"status":"ok"}` |
@@ -67,6 +80,7 @@ Expected outcome:
 | Prompt routing | `make eval` | Guard routing behavior from regression | Pass rate >= configured threshold |
 | Troubleshooting log | `curl -sS "http://127.0.0.1:<PORT>/logs?lines=200"` | Confirm structured events are available | JSON with `stats` and `lines` |
 | Diagnostics | `curl -sS "http://127.0.0.1:<PORT>/diagnostics?project=demo"` | Inspect readiness + trace + critical events | JSON includes readiness/trace/knowledge/log stats |
+| Incident bundle | `make bundle-logs` | Capture docker/API/system evidence for root-cause analysis | `logs/troubleshoot/bundle_<timestamp>.tar.gz` exists |
 
 ## End-to-End Smoke Test (Session + Report)
 1. Start API in background:
@@ -129,6 +143,14 @@ kill "$(cat /tmp/aicl_api.pid)"
 rm -f /tmp/aicl_api.pid
 ```
 
+## Expected Artifacts Per Successful Run
+- Regression outputs: `data/projects/_evals/prompt_regression_<timestamp>.json` and `.md`
+- Session metadata: `data/projects/demo/sessions/<session_id>.json`
+- Study output: `data/projects/demo/study/<timestamp>.json` and `.md`
+- Pentest output: `data/projects/demo/pentest/<timestamp>.json` and `.md`
+- Report output: `data/projects/demo/report/auto_report.md`
+- Troubleshooting log: `logs/aicl.log` (always <= 1MB)
+
 ## Log Cap Validation (1MB)
 Central log file:
 - `/mnt/c/Users/david/OneDrive - Pontificia Universidad Javeriana/Documents/GitHub/ai-cyber-lab/logs/aicl.log`
@@ -173,12 +195,16 @@ Useful overrides:
 
 ```bash
 AICL_DOCKER_LOG_SINCE=6h AICL_DOCKER_LOG_TAIL_LINES=3000 make bundle-logs
+AICL_BUNDLE_CURL_MAX_TIME=12 AICL_BUNDLE_CMD_TIMEOUT=40 make bundle-logs
 ```
 
 ## Failure Debug Guide
 - `curl` connection error: API is not running; start with `bash scripts/run_dev.sh` or `nohup` mode.
+- `python -m apps.orchestrator.main` shows Python 2 syntax error: use `bash scripts/aicl.sh ...` or `.venv/bin/python -m apps.orchestrator.main ...`.
 - tool-exec `503` or timeout: ensure service is up and `AICL_TOOL_EXEC_URL` is reachable.
 - command blocked errors: check `AICL_ALLOWED_TOOLS` and tool/container mapping.
 - `ready` degraded: one of `qdrant` or `ollama` is down; check `docker ps` and endpoint URLs in `.env`.
+- docker bind error on `11434`: rerun with `AICL_OLLAMA_HOST_PORT=11435` (or free `11434`) and retry smoke.
 - Empty reports: ensure `command_logger.sh` or API session endpoints were used in the same project scope.
 - Knowledge retrieval errors: verify Qdrant endpoint and run `index: project` via route endpoint.
+- If issue is intermittent: run `make bundle-logs` immediately after failure and inspect `api/diagnostics.json`, `docker/compose_logs.txt`, and `app/aicl.tail.log`.

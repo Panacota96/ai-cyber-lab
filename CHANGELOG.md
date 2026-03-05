@@ -13,6 +13,9 @@ All notable changes to this project are documented in this file.
 - Testing roadmap now includes troubleshooting-bundle validation and tuning overrides.
 - Usage playbook now maps bundle collection into the operational workflow.
 - Bundle capture now uses bounded command and curl timeouts to avoid hanging during incident collection.
+- Docker compose host port bindings are now configurable via env (`AICL_API_HOST_PORT`, `AICL_TOOL_EXEC_HOST_PORT`, `AICL_UI_HOST_PORT`, `AICL_OLLAMA_HOST_PORT`, `AICL_QDRANT_HOST_PORT`, `AICL_QDRANT_GRPC_HOST_PORT`, `AICL_LANGFUSE_HOST_PORT`).
+- Smoke script now honors host-port env overrides for API/tool-exec/UI checks.
+- Tool execution now falls back to Docker SDK when Docker CLI binary is missing in the tool-exec container, preserving `python2/python3` routed execution.
 
 ## [0.3.7] - 2026-03-05
 ### Changed
