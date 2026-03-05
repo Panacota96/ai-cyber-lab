@@ -87,7 +87,7 @@ curl -sS -X POST http://127.0.0.1:8090/sessions/end \
   -H 'content-type: application/json' \
   -d '{"project":"demo","summary":"smoke test complete"}'
 
-python -m apps.orchestrator.main "writeup project demo" --project demo
+bash scripts/aicl.sh "writeup project demo" --project demo
 ```
 
 Expected:

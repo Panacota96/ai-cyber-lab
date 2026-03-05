@@ -26,19 +26,19 @@ This maps each code area to your intended outcomes: certification study, CTF exe
 1. Route a study request:
 
 ```bash
-python -m apps.orchestrator.main "Summarize OSPF areas and generate flashcards" --project cert-study
+bash scripts/aicl.sh "Summarize OSPF areas and generate flashcards" --project cert-study
 ```
 
 2. Store refined notes:
 
 ```bash
-python -m apps.orchestrator.main "store: OSPF LSA types are easiest to remember by flooding scope." --project cert-study
+bash scripts/aicl.sh "store: OSPF LSA types are easiest to remember by flooding scope." --project cert-study
 ```
 
 3. Retrieve related notes before next session:
 
 ```bash
-python -m apps.orchestrator.main "retrieve ospf lsa flooding scope" --project cert-study
+bash scripts/aicl.sh "retrieve ospf lsa flooding scope" --project cert-study
 ```
 
 ## Workflow 2: CTF / Pentest Session
@@ -58,14 +58,14 @@ aicl_run nmap -sV -Pn 10.10.10.10
 3. Ask pentest agent for parser-based next steps:
 
 ```bash
-python -m apps.orchestrator.main "nmap recon on 10.10.10.10" --project htb-machine
+bash scripts/aicl.sh "nmap recon on 10.10.10.10" --project htb-machine
 ```
 
 4. End session and generate writeup:
 
 ```bash
 aicl_session_end "Initial foothold not achieved"
-python -m apps.orchestrator.main "writeup project htb-machine" --project htb-machine
+bash scripts/aicl.sh "writeup project htb-machine" --project htb-machine
 ```
 
 5. Run log maintenance (compression + retention):
@@ -78,13 +78,13 @@ make maintain-logs
 1. Index full project notes:
 
 ```bash
-python -m apps.orchestrator.main "index: project" --project htb-machine
+bash scripts/aicl.sh "index: project" --project htb-machine
 ```
 
 2. Query similar historical patterns:
 
 ```bash
-python -m apps.orchestrator.main "retrieve smb anonymous + web upload chain" --project htb-machine
+bash scripts/aicl.sh "retrieve smb anonymous + web upload chain" --project htb-machine
 ```
 
 3. Reuse retrieval output in next pentest route prompts to accelerate enumeration decisions.

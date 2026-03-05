@@ -6,6 +6,4 @@ if [[ ! -d .venv ]]; then
   exit 1
 fi
 
-# shellcheck disable=SC1091
-source .venv/bin/activate
-python -m apps.orchestrator.main --serve
+exec .venv/bin/python -m apps.orchestrator.main --serve

@@ -45,6 +45,9 @@ scripts/
 ```
 
 ## Quick Start (WSL)
+Use `bash scripts/aicl.sh ...` or `.venv/bin/python ...` for CLI commands.  
+Do not use bare `python` if your system default is Python 2.7.
+
 1. Copy env file:
 ```bash
 cp .env.example .env
@@ -64,9 +67,8 @@ bash scripts/bootstrap.sh
 
 4. Test CLI router:
 ```bash
-source .venv/bin/activate
-python -m apps.orchestrator.main "Summarize OSPF and generate flashcards"
-python -m apps.orchestrator.main "nmap recon on 10.10.10.10"
+bash scripts/aicl.sh "Summarize OSPF and generate flashcards"
+bash scripts/aicl.sh "nmap recon on 10.10.10.10"
 ```
 
 5. Run API:
@@ -130,7 +132,7 @@ curl -sS -X POST http://127.0.0.1:8080/sessions/end -H 'content-type: applicatio
 
 To force report generation for a specific session:
 ```bash
-python -m apps.orchestrator.main "writeup session:20260305-120001-abc123" --project demo
+bash scripts/aicl.sh "writeup session:20260305-120001-abc123" --project demo
 ```
 
 ## Logs
@@ -182,7 +184,7 @@ make check-changelog
 Regression dataset lives in `automation/evals/prompt_regression.json`.
 Run:
 ```bash
-python scripts/run_prompt_regression.py --min-pass-rate 90
+.venv/bin/python scripts/run_prompt_regression.py --min-pass-rate 90
 ```
 Outputs are written to `data/projects/_evals/`.
 

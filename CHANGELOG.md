@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.4] - 2026-03-05
+### Added
+- Python-version-safe CLI wrapper: `scripts/aicl.sh` (always runs `.venv/bin/python -m apps.orchestrator.main`).
+
+### Changed
+- `scripts/run_dev.sh`, `scripts/verify_all.sh`, and `Makefile` now use `.venv/bin/python` directly to avoid system `python` ambiguity.
+- README/testing/usage docs now use `bash scripts/aicl.sh ...` for orchestrator CLI examples.
+- Added explicit Quick Start note warning against bare `python` when default interpreter is Python 2.7.
+
 ## [0.3.3] - 2026-03-05
 ### Added
 - Command log maintenance utility with per-day compression and retention pruning (`libs/tools/capture/log_maintenance.py`).
