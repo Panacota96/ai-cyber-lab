@@ -8,6 +8,7 @@ from typing import Any
 
 from apps.orchestrator.config import data_root
 from libs.logs import get_logger
+from libs.docs.schema_validator import validate_note_payload
 
 logger = get_logger(__name__)
 
@@ -26,6 +27,7 @@ def _project_root(project: str) -> Path:
 def write_project_note(project: str, section: str, payload: dict[str, Any]) -> dict[str, str]:
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     section_slug = _slug(section)
+    validate_note_payload(section_slug, payload)
     folder = _project_root(project) / section_slug
     folder.mkdir(parents=True, exist_ok=True)
 

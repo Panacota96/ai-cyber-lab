@@ -28,6 +28,8 @@ libs/
   tools/                # Command wrappers/parsers/capture scripts
   memory/               # Qdrant + RAG helpers
   docs/                 # Markdown writer + report templates
+automation/
+  schemas/              # JSON schemas used to validate generated note payloads
 data/
   knowledge/            # Knowledge documents for indexing
   projects/             # Generated project outputs
@@ -145,6 +147,11 @@ make verify
 
 This executes compile checks, `pytest`, prompt regression, and changelog policy checks.  
 Detailed testing procedure is in [docs/TESTING_ROADMAP.md](docs/TESTING_ROADMAP.md).
+
+## Note Schema Validation
+- Generated note payloads are validated before being written to disk.
+- Section schemas live in `automation/schemas/` (`study`, `pentest`, `report`, `knowledge`, `research`).
+- Toggle validation with `AICL_VALIDATE_NOTES=true|false` (default: `true`).
 
 ## Make Targets
 ```bash

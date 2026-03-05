@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Knowledge Note",
+  "type": "object",
+  "required": [
+    "title",
+    "timestamp_utc"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "query": {
+      "type": "string"
+    },
+    "folder": {
+      "type": "string"
+    },
+    "chunks_indexed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "record_id": {
+      "type": "string"
+    },
+    "stored_text": {
+      "type": "string"
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "next_steps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "results"
+      ]
+    },
+    {
+      "required": [
+        "chunks_indexed"
+      ]
+    },
+    {
+      "required": [
+        "record_id",
+        "stored_text"
+      ]
+    },
+    {
+      "required": [
+        "error",
+        "next_steps"
+      ]
+    }
+  ],
+  "additionalProperties": true
+}

@@ -228,6 +228,7 @@ def handle_report(user_input: str, project: str) -> str:
     evidence = _build_evidence_map(rows)
     payload = {
         "title": "Report Generation",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "query": user_input,
         "session_id": session_id,
         "log_lines_used": len(rows),

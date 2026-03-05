@@ -12,6 +12,18 @@ def data_root() -> Path:
     return Path(os.getenv("AICL_DATA_ROOT", "./data")).resolve()
 
 
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def schema_root() -> Path:
+    return Path(os.getenv("AICL_SCHEMA_ROOT", str(repo_root() / "automation" / "schemas"))).resolve()
+
+
+def validate_notes() -> bool:
+    return os.getenv("AICL_VALIDATE_NOTES", "true").lower() == "true"
+
+
 def default_project() -> str:
     return os.getenv("AICL_PROJECT", "default")
 

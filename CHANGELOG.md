@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.2] - 2026-03-05
+### Added
+- Section-level JSON schemas for generated notes:
+  - `automation/schemas/study_note.schema.json`
+  - `automation/schemas/pentest_note.schema.json`
+  - `automation/schemas/report_note.schema.json`
+  - `automation/schemas/knowledge_note.schema.json`
+  - `automation/schemas/research_note.schema.json`
+- Central schema validation module (`libs/docs/schema_validator.py`) with fail-fast errors.
+- Deterministic pentest fixture tests that validate recommendations, warnings, and evidence pointers without live tools (`tests/test_pentest_agent.py`).
+- Schema validation tests for note writer contracts (`tests/test_note_schema_validation.py`).
+
+### Changed
+- `write_project_note` now enforces schema validation before writing JSON/Markdown.
+- Report metadata payload now includes `timestamp_utc`.
+- Pentest planning payload now always includes `tool_warnings` for schema consistency.
+- Environment configuration now exposes `AICL_SCHEMA_ROOT` and `AICL_VALIDATE_NOTES`.
+- README now documents note schema validation behavior and controls.
+
 ## [0.3.1] - 2026-03-05
 ### Added
 - Full testing roadmap documentation with step-by-step commands, expected outputs, smoke tests, and failure debug guidance (`docs/TESTING_ROADMAP.md`).

@@ -8,10 +8,12 @@ This backlog is prioritized for your operational goals: dependable study automat
 - Central JSON troubleshooting log exists with 1MB hard cap.
 - Tests cover parser behavior, API contracts, and report generation.
 - Prompt regression suite exists for routing stability.
+- Note payloads are schema-validated before write.
+- Pentest behavior has deterministic fixture tests independent of live tools.
 
 ## Priority 0 (Immediate)
 
-### 1) Add deterministic fixtures for pentest agent
+### 1) Add deterministic fixtures for pentest agent (Completed 2026-03-05)
 Why:
 - Current pentest logic depends on installed tools and optional active scan mode.
 
@@ -23,7 +25,7 @@ Success criteria:
 - CI passes on machines without recon binaries installed.
 - Recommendation text remains stable across refactors.
 
-### 2) Add strict schema validation for generated notes
+### 2) Add strict schema validation for generated notes (Completed 2026-03-05)
 Why:
 - Notes are produced automatically and should remain machine-consumable.
 
