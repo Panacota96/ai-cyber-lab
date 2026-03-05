@@ -28,12 +28,33 @@ Expected outcome:
 - Process exits with code `0`.
 - Console prints `Verification completed successfully.`
 
+## Full Container Smoke Campaign
+Run:
+
+```bash
+make smoke-compose
+```
+
+Variants:
+
+```bash
+bash scripts/smoke_compose.sh --with-ui
+bash scripts/smoke_compose.sh --with-ui --with-exegol
+```
+
+Expected outcome:
+- Core services build and start.
+- Orchestrator and tool-exec health endpoints return `200`.
+- Route, runtime, and report smoke checks pass.
+- Script exits `0` with `Smoke test finished successfully.`
+
 ## Layered Testing Matrix
 
 | Layer | Command | Purpose | Expected |
 |---|---|---|---|
 | Bootstrap | `bash scripts/bootstrap.sh` | Build local venv and install package | `.venv` exists and install ends without errors |
 | Dependencies | `cd infra && docker compose up -d qdrant ollama` | Start memory and local model endpoints | Containers are running |
+| Full container smoke | `make smoke-compose` | Validate compose build + core health + route/report/runtime checks | Script exits `0` |
 | API readiness | `curl -sS http://127.0.0.1:<PORT>/ready` | Check orchestrator dependency health | JSON with `status` and `dependencies` |
 | Tool-exec readiness | `curl -sS http://127.0.0.1:8082/health` | Check execution microservice is up | `{"status":"ok"}` |
 | Tool capabilities | `curl -sS http://127.0.0.1:8082/capabilities` | Verify runtime/container mapping and allowed tools | JSON includes `mode`, `allowed_tools`, `container_status` |

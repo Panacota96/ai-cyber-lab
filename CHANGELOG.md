@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.6] - 2026-03-05
+### Added
+- Full Docker smoke harness (`scripts/smoke_compose.sh`) for build/start/health/route/runtime/report checks.
+- New `make smoke-compose` command for one-step container smoke validation.
+- Free tools catalog for documentation, note-taking, and certification learning (`docs/FREE_TOOLS_STACK.md`), including:
+  - SysReptor
+  - Pentest-Notes
+  - BookStack
+  - HedgeDoc
+  - Logseq
+  - TriliumNext
+  - Anki + FSRS
+  - Moodle
+  - Exegol
+
+### Changed
+- README/testing docs now include container smoke workflow and smoke flags (`--with-ui`, `--with-exegol`).
+- Usage playbook now links to the free-tools stack guide.
+
 ## [0.3.5] - 2026-03-05
 ### Added
 - New tool execution microservice (`apps/tool_exec/main.py`) with:

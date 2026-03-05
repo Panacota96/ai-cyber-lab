@@ -14,6 +14,7 @@ The default orchestrator path uses deterministic keyword routing. Enable model-b
 ## Documentation Index
 - [Testing Roadmap](docs/TESTING_ROADMAP.md)
 - [Usage Playbook](docs/USAGE_PLAYBOOK.md)
+- [Free Tools Stack](docs/FREE_TOOLS_STACK.md)
 - [Robustness Next Steps](docs/ROBUSTNESS_NEXT_STEPS.md)
 
 ## Safety
@@ -185,6 +186,16 @@ make verify
 This executes compile checks, `pytest`, prompt regression, and changelog policy checks.  
 Detailed testing procedure is in [docs/TESTING_ROADMAP.md](docs/TESTING_ROADMAP.md).
 
+Run full container smoke campaign:
+```bash
+make smoke-compose
+```
+
+Optional smoke flags:
+```bash
+bash scripts/smoke_compose.sh --with-ui --with-exegol
+```
+
 ## Note Schema Validation
 - Generated note payloads are validated before being written to disk.
 - Section schemas live in `automation/schemas/` (`study`, `pentest`, `report`, `knowledge`, `research`).
@@ -203,6 +214,7 @@ make start-session PROJECT=demo OPERATOR=david
 make end-session PROJECT=demo SUMMARY="done"
 make logs
 make maintain-logs
+make smoke-compose
 make eval
 make test
 make verify

@@ -1,4 +1,4 @@
-.PHONY: up up-ui up-exegol down dev ui tool-exec route format logs maintain-logs eval start-session end-session test verify check-changelog
+.PHONY: up up-ui up-exegol down dev ui tool-exec route format logs maintain-logs smoke-compose eval start-session end-session test verify check-changelog
 
 up:
 	cd infra && docker compose up -d qdrant ollama tools-core py2-runner py3-runner tool-exec orchestrator
@@ -41,6 +41,9 @@ maintain-logs:
 		--log-dir "$${AICL_SESSION_LOG_DIR:-data/projects/_logs}" \
 		--compress-after-days "$${AICL_SESSION_LOG_COMPRESS_AFTER_DAYS:-1}" \
 		--retention-days "$${AICL_SESSION_LOG_RETENTION_DAYS:-30}"
+
+smoke-compose:
+	bash scripts/smoke_compose.sh
 
 eval:
 	.venv/bin/python scripts/run_prompt_regression.py

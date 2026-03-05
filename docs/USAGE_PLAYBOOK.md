@@ -2,6 +2,8 @@
 
 This maps each code area to your intended outcomes: certification study, CTF execution, pentest documentation, and reusable knowledge.
 
+For external free tools that complement this workflow, see [FREE_TOOLS_STACK.md](FREE_TOOLS_STACK.md).
+
 ## Component Map
 
 | Path | Purpose | When You Use It |
