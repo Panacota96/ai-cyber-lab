@@ -55,7 +55,7 @@ services:
       AICL_DOCKER_PY2_CONTAINER: aicl-py2-runner
       AICL_DOCKER_PY3_CONTAINER: aicl-py3-runner
       AICL_DOCKER_EXEGOL_CONTAINER: aicl-exegol
-      AICL_ALLOWED_TOOLS: nmap,ffuf,gobuster,nikto,whatweb,sqlmap,nuclei,python2,python3,pip,pip2,pytest,uv
+      AICL_ALLOWED_TOOLS: nmap,ffuf,gobuster,whatweb,sqlmap,nuclei,python2,python3,pip,pip2,pytest,uv
       AICL_LOG_DIR: /workspace/logs
       AICL_LOG_FILE: aicl.log
     depends_on:
@@ -79,7 +79,7 @@ services:
     restart: unless-stopped
 
   exegol:
-    image: nwodtuhs/exegol:latest
+    image: nwodtuhs/exegol:free
     container_name: aicl-exegol
     profiles: ["exegol"]
     command: ["bash", "-lc", "tail -f /dev/null"]

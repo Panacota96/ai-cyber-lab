@@ -40,7 +40,12 @@ Variants:
 ```bash
 bash scripts/smoke_compose.sh --with-ui
 bash scripts/smoke_compose.sh --with-ui --with-exegol
+bash scripts/smoke_compose.sh --with-ui --strict-exegol
 ```
+
+Notes:
+- `--with-exegol` validates Exegol wiring and starts the Exegol container only if the image is already cached locally.
+- `--strict-exegol` forces full Exegol pull/start validation (first run can take significant time and bandwidth).
 
 Expected outcome:
 - Core services build and start.

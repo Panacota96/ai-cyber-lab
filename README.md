@@ -194,7 +194,11 @@ make smoke-compose
 Optional smoke flags:
 ```bash
 bash scripts/smoke_compose.sh --with-ui --with-exegol
+bash scripts/smoke_compose.sh --with-ui --strict-exegol
 ```
+
+`--with-exegol` now performs a bounded Exegol check by default (no forced first-time multi-GB pull).
+Use `--strict-exegol` when you want full Exegol image pull/start validation.
 
 ## Note Schema Validation
 - Generated note payloads are validated before being written to disk.

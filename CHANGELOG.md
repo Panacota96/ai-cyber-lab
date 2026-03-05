@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.7] - 2026-03-05
+### Changed
+- `scripts/smoke_compose.sh` now supports `--strict-exegol` and treats `--with-exegol` as a bounded check by default (avoids forced first-run multi-GB pulls).
+- Smoke script now validates that the Exegol service is declared in compose and only starts Exegol automatically when strict mode is enabled or image is already cached.
+- Fixed Exegol compose image tag to `nwodtuhs/exegol:free`.
+- Removed unavailable `nikto` package from Debian image build/install lists and command allowlist defaults.
+- Updated README and testing roadmap with explicit Exegol smoke variants and expected behavior.
+
 ## [0.3.6] - 2026-03-05
 ### Added
 - Full Docker smoke harness (`scripts/smoke_compose.sh`) for build/start/health/route/runtime/report checks.

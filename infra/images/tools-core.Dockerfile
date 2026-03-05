@@ -15,7 +15,6 @@ RUN apt-get update && \
       python3-pip \
       nmap \
       gobuster \
-      nikto \
       sqlmap \
       whatweb && \
     (apt-get install -y --no-install-recommends ffuf || true) && \

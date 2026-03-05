@@ -8,9 +8,12 @@ TOOL_EXEC_URL="${AICL_TOOL_EXEC_URL:-http://127.0.0.1:8082}"
 PROJECT="${AICL_SMOKE_PROJECT:-smoke-compose}"
 WITH_UI=0
 WITH_EXEGOL=0
+EXEGOL_STRICT=0
 KEEP_UP=0
 SKIP_BUILD=0
 FAILURES=0
+EXEGOL_IMAGE="${AICL_EXEGOL_IMAGE:-nwodtuhs/exegol:free}"
+EXEGOL_IMAGE_PRESENT=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -20,6 +23,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-exegol)
       WITH_EXEGOL=1
+      shift
+      ;;
+    --strict-exegol)
+      WITH_EXEGOL=1
+      EXEGOL_STRICT=1
       shift
       ;;
     --keep-up)
@@ -32,11 +40,15 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: bash scripts/smoke_compose.sh [--with-ui] [--with-exegol] [--keep-up] [--skip-build]"
+      echo "Usage: bash scripts/smoke_compose.sh [--with-ui] [--with-exegol] [--strict-exegol] [--keep-up] [--skip-build]"
       exit 2
       ;;
   esac
 done
+
+if docker image inspect "$EXEGOL_IMAGE" >/dev/null 2>&1; then
+  EXEGOL_IMAGE_PRESENT=1
+fi
 
 COMPOSE_ARGS=()
 if [[ "$WITH_UI" -eq 1 ]]; then
@@ -51,7 +63,10 @@ if [[ "$WITH_UI" -eq 1 ]]; then
   SERVICES+=(ui-web)
 fi
 if [[ "$WITH_EXEGOL" -eq 1 ]]; then
-  SERVICES+=(exegol)
+  # Default mode avoids pulling the full Exegol image on first run.
+  if [[ "$EXEGOL_STRICT" -eq 1 || "$EXEGOL_IMAGE_PRESENT" -eq 1 ]]; then
+    SERVICES+=(exegol)
+  fi
 fi
 
 run_step() {
@@ -118,7 +133,17 @@ if [[ "$WITH_UI" -eq 1 ]]; then
 fi
 
 if [[ "$WITH_EXEGOL" -eq 1 ]]; then
-  run_step "exegol container running" bash -lc "docker ps --format '{{.Names}}' | grep -q '^aicl-exegol$'"
+  run_step "exegol service declared" bash -lc "cd '$INFRA_DIR' && docker compose config --services | grep -q '^exegol$'"
+  if [[ "$EXEGOL_STRICT" -eq 1 ]]; then
+    run_step "exegol compose up (strict)" compose_cmd up -d exegol
+    run_step "exegol container running" bash -lc "docker ps --format '{{.Names}}' | grep -q '^aicl-exegol$'"
+  elif [[ "$EXEGOL_IMAGE_PRESENT" -eq 1 ]]; then
+    run_step "exegol compose up (cached image)" compose_cmd up -d exegol
+    run_step "exegol container running" bash -lc "docker ps --format '{{.Names}}' | grep -q '^aicl-exegol$'"
+  else
+    echo "SKIP: exegol runtime start (image $EXEGOL_IMAGE not present)."
+    echo "      Run with --strict-exegol to pull/start Exegol in this smoke test."
+  fi
 fi
 
 if [[ "$FAILURES" -gt 0 ]]; then

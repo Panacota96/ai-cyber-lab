@@ -49,7 +49,7 @@ class RunResponse(BaseModel):
 def _allowed_tools() -> set[str]:
     raw = os.getenv(
         "AICL_ALLOWED_TOOLS",
-        "nmap,ffuf,gobuster,nikto,whatweb,sqlmap,nuclei,python2,python3,pip,pip2,pytest,uv",
+        "nmap,ffuf,gobuster,whatweb,sqlmap,nuclei,python2,python3,pip,pip2,pytest,uv",
     )
     return {item.strip() for item in raw.split(",") if item.strip()}
 
