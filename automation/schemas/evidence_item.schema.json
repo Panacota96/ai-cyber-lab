@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence Item",
+  "type": "object",
+  "required": ["id", "type", "path", "created_utc"],
+  "properties": {
+    "id": {"type": "string"},
+    "type": {"type": "string", "enum": ["screenshot", "command-output", "pcap", "artifact", "note"]},
+    "path": {"type": "string"},
+    "created_utc": {"type": "string", "format": "date-time"},
+    "hash": {"type": "string"},
+    "note": {"type": "string"}
+  }
+}

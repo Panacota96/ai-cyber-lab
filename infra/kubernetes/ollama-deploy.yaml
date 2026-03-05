@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aicl-ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aicl-ollama
+  template:
+    metadata:
+      labels:
+        app: aicl-ollama
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          ports:
+            - containerPort: 11434
+          volumeMounts:
+            - name: ollama-models
+              mountPath: /root/.ollama
+      volumes:
+        - name: ollama-models
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aicl-ollama
+spec:
+  selector:
+    app: aicl-ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434

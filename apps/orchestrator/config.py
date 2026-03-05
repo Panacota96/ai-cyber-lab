@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def data_root() -> Path:
+    return Path(os.getenv("AICL_DATA_ROOT", "./data")).resolve()
+
+
+def default_project() -> str:
+    return os.getenv("AICL_PROJECT", "default")
+
+
+def qdrant_url() -> str:
+    return os.getenv("AICL_QDRANT_URL", "http://localhost:6333")
+
+
+def qdrant_collection() -> str:
+    return os.getenv("AICL_QDRANT_COLLECTION", "aicl_knowledge")
+
+
+def vector_size() -> int:
+    return int(os.getenv("AICL_VECTOR_SIZE", "256"))
+
+
+def ollama_url() -> str:
+    return os.getenv("AICL_OLLAMA_URL", "http://localhost:11434")
+
+
+def ollama_model() -> str:
+    return os.getenv("AICL_OLLAMA_MODEL", "llama3.1:8b")
+
+
+def ollama_embed_model() -> str:
+    return os.getenv("AICL_OLLAMA_EMBED_MODEL", "nomic-embed-text")
+
+
+def api_host() -> str:
+    return os.getenv("AICL_API_HOST", "0.0.0.0")
+
+
+def api_port() -> int:
+    return int(os.getenv("AICL_API_PORT", "8080"))
+
+
+def log_dir() -> Path:
+    return Path(os.getenv("AICL_LOG_DIR", "./logs")).resolve()
+
+
+def log_file() -> str:
+    return os.getenv("AICL_LOG_FILE", "aicl.log")
+
+
+def log_path() -> Path:
+    return log_dir() / log_file()
+
+
+def log_max_bytes() -> int:
+    return int(os.getenv("AICL_LOG_MAX_BYTES", str(1024 * 1024)))
+
+
+def log_level() -> str:
+    return os.getenv("AICL_LOG_LEVEL", "INFO")
