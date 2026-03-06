@@ -1,10 +1,10 @@
 FROM node:20-bookworm
 
-# Enable contrib repository for tools like nikto (using the new deb822 format)
-RUN sed -i 's/Components: main/Components: main contrib/' /etc/apt/sources.list.d/debian.sources
-
 # Install an expanded suite of recon and enumeration tools
 RUN apt-get update && apt-get install -y \
+    build-essential \
+    python3 \
+    sqlite3 \
     nmap \
     dirb \
     dnsutils \
@@ -16,7 +16,6 @@ RUN apt-get update && apt-get install -y \
     whois \
     gobuster \
     ffuf \
-    nikto \
     whatweb \
     ldap-utils \
     && rm -rf /var/lib/apt/lists/*

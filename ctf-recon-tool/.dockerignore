@@ -1,0 +1,17 @@
+node_modules
+.next
+out
+build
+data
+*.db
+*.sqlite
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+README.md
+walkthrough.md
+implementation_plan.md
+task.md
+CORTEX_METADATA.json
+CORTEX_CONVERSATION_HISTORY.json

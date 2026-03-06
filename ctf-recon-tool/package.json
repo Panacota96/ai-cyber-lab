@@ -1,5 +1,5 @@
 {
-  "name": "ctf-recon-tool",
+  "name": "helms-paladin",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -11,7 +11,10 @@
   "dependencies": {
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "better-sqlite3": "^11.5.0",
+    "lucide-react": "^0.460.0",
+    "multer": "^1.4.5-lts.1"
   },
   "devDependencies": {
     "eslint": "^9",
