@@ -11,7 +11,7 @@ import uvicorn
 from fastapi import FastAPI, File, Form, Query, UploadFile
 from fastapi.responses import HTMLResponse
 
-from apps.orchestrator.config import api_host, orchestrator_url, ui_port
+from apps.orchestrator.config import api_host, api_key, orchestrator_url, proposal_providers, ui_port
 
 app = FastAPI(title="AI Cyber Lab UI", version="0.3.0")
 
@@ -21,14 +21,15 @@ app = FastAPI(title="AI Cyber Lab UI", version="0.3.0")
 # -----------------------------
 def _fetch_json(method: str, path: str, payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
     url = f"{orchestrator_url().rstrip('/')}{path}"
+    headers = _api_headers()
     try:
         with httpx.Client(timeout=25.0) as client:
             if method == "GET":
-                resp = client.get(url)
+                resp = client.get(url, headers=headers)
             elif method == "PATCH":
-                resp = client.patch(url, json=payload or {})
+                resp = client.patch(url, json=payload or {}, headers=headers)
             else:
-                resp = client.post(url, json=payload or {})
+                resp = client.post(url, json=payload or {}, headers=headers)
         try:
             return resp.status_code, resp.json()
         except Exception:
@@ -40,9 +41,10 @@ def _fetch_json(method: str, path: str, payload: dict[str, Any] | None = None) -
 def _post_upload(path: str, data: dict[str, str], file_name: str, content: bytes, content_type: str) -> tuple[int, dict[str, Any]]:
     url = f"{orchestrator_url().rstrip('/')}{path}"
     files = {"screenshot": (file_name, content, content_type)}
+    headers = _api_headers()
     try:
         with httpx.Client(timeout=40.0) as client:
-            resp = client.post(url, data=data, files=files)
+            resp = client.post(url, data=data, files=files, headers=headers)
         try:
             return resp.status_code, resp.json()
         except Exception:
@@ -56,6 +58,13 @@ def _post_upload(path: str, data: dict[str, str], file_name: str, content: bytes
 # -----------------------------
 def _escape(value: Any) -> str:
     return html.escape(str(value))
+
+
+def _api_headers() -> dict[str, str]:
+    key = api_key()
+    if not key:
+        return {}
+    return {"X-API-Key": key}
 
 
 def _pretty(value: Any) -> str:
@@ -540,6 +549,10 @@ def _render_proposals(
             cmd = item.get("cmd", [])
             if not isinstance(cmd, list):
                 continue
+            quality = item.get("quality", {}) if isinstance(item.get("quality"), dict) else {}
+            score = quality.get("score", "n/a")
+            grade = quality.get("grade", "n/a")
+            recommended = bool(quality.get("recommended"))
             cmd_json = _escape(json.dumps(cmd, ensure_ascii=True))
             providers = ", ".join(item.get("providers", [])) if isinstance(item.get("providers"), list) else ""
             ensemble_cards += f"""
@@ -550,8 +563,11 @@ def _render_proposals(
                 {_status_chip(str(item.get('risk', 'medium')))}
                 <span class='chip'>providers: {_escape(providers or 'n/a')}</span>
                 <span class='chip'>consensus: {_escape('yes' if item.get('consensus') else 'no')}</span>
+                <span class='chip'>quality: {_escape(score)} ({_escape(grade)})</span>
+                <span class='chip {'good' if recommended else 'warn'}'>recommended: {_escape('yes' if recommended else 'review')}</span>
               </div>
               <p class='small'>{_escape(item.get('rationale', ''))}</p>
+              <p class='small'>{_escape(str(quality.get('explanation', '')))}</p>
               <form method='post' action='/ui/jobs/create'>
                 <input type='hidden' name='project' value='{_escape(project)}'/>
                 <input type='hidden' name='session_id' value='{_escape(sid)}'/>
@@ -580,7 +596,7 @@ def _render_proposals(
           <select name='purpose'><option value='recon'>recon</option><option value='scanning'>scanning</option><option value='cracking'>cracking</option></select>
           <label>Aggressiveness</label>
           <select name='profile'><option value='stealth'>stealth</option><option value='balanced' selected>balanced</option><option value='aggressive'>aggressive</option></select>
-          <label>Providers (comma-separated)</label><input name='providers' value='codex,claude,gemini'/>
+          <label>Providers (comma-separated)</label><input name='providers' value='{_escape(",".join(proposal_providers()))}'/>
           <label>Discoveries (one per line)</label>
           <textarea name='discoveries' placeholder='80/tcp open http'></textarea>
           <button type='submit'>Generate Proposals</button>
@@ -589,7 +605,7 @@ def _render_proposals(
       <section class='panel'>
         <h2>Review Workflow</h2>
         <p class='small'>Default is human-readable cards. Switch to JSON view when you need raw payload details.</p>
-        <p class='small'>Ensemble commands appear below with provider consensus and one-click queue/confirm.</p>
+        <p class='small'>Ensemble commands include deterministic quality scoring (feasibility/safety/evidence-fit/novelty).</p>
       </section>
     </div>
     <section class='panel'><h2>Ensemble (Manual Review)</h2><div class='gallery'>{ensemble_cards or '<p class=\"small\">Generate a proposal to view ensemble commands.</p>'}</div></section>

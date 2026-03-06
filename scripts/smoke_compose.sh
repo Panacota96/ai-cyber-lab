@@ -9,6 +9,7 @@ UI_HOST_PORT="${AICL_UI_HOST_PORT:-8091}"
 API_URL="${AICL_API_URL:-http://127.0.0.1:${API_HOST_PORT}}"
 TOOL_EXEC_URL="${AICL_TOOL_EXEC_URL:-http://127.0.0.1:${TOOL_EXEC_HOST_PORT}}"
 PROJECT="${AICL_SMOKE_PROJECT:-smoke-compose}"
+AICL_API_KEY="${AICL_API_KEY:-}"
 WITH_UI=0
 WITH_EXEGOL=0
 EXEGOL_STRICT=0
@@ -17,6 +18,11 @@ SKIP_BUILD=0
 FAILURES=0
 EXEGOL_IMAGE="${AICL_EXEGOL_IMAGE:-nwodtuhs/exegol:free}"
 EXEGOL_IMAGE_PRESENT=0
+
+CURL_AUTH_ARGS=()
+if [[ -n "${AICL_API_KEY}" ]]; then
+  CURL_AUTH_ARGS=(-H "X-API-Key: ${AICL_API_KEY}")
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -114,16 +120,19 @@ run_step "tool-exec health" curl -fsS "$TOOL_EXEC_URL/health"
 run_step "tool-exec capabilities" curl -fsS "$TOOL_EXEC_URL/capabilities"
 
 run_step "route study request" curl -fsS -X POST "$API_URL/route" \
+  "${CURL_AUTH_ARGS[@]}" \
   -H "content-type: application/json" \
   -d "{\"project\":\"$PROJECT\",\"user_input\":\"Summarize CCNA OSPF and create flashcards\"}"
 
 run_step "route pentest request" curl -fsS -X POST "$API_URL/route" \
+  "${CURL_AUTH_ARGS[@]}" \
   -H "content-type: application/json" \
   -d "{\"project\":\"$PROJECT\",\"user_input\":\"nmap recon on 10.10.10.10\"}"
 
 run_step "graph query endpoint" curl -fsS "$API_URL/graph/query?project=$PROJECT&q=10.10.10.10&include_pending=true"
 
 run_step "proposal ensemble endpoint" curl -fsS -X POST "$API_URL/proposals/commands" \
+  "${CURL_AUTH_ARGS[@]}" \
   -H "content-type: application/json" \
   -d "{\"project\":\"$PROJECT\",\"target\":\"10.10.10.10\",\"purpose\":\"recon\",\"profile\":\"balanced\",\"discoveries\":[\"80/tcp open http\"]}"
 

@@ -4,17 +4,27 @@ import argparse
 import hashlib
 import json
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, File, Form, Query, UploadFile
+from fastapi import FastAPI, File, Form, Header, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from apps.agents.knowledge_agent import knowledge_diagnostics
-from apps.orchestrator.config import api_host, api_port, data_root, job_worker_enabled, log_dir
+from apps.orchestrator.config import (
+    api_host,
+    api_key,
+    api_port,
+    data_root,
+    job_worker_enabled,
+    log_dir,
+    route_rate_limit_per_minute,
+)
 from apps.orchestrator.deps import readiness
 from apps.orchestrator.graph import run_orchestrator
 from libs.command_planner import build_command_plan
@@ -203,16 +213,98 @@ def _log_index(limit: int = 50) -> list[dict[str, Any]]:
     return rows[: max(1, min(limit, 500))]
 
 
+_ROUTE_RATE_LOCK = Lock()
+_ROUTE_RATE_STATE: dict[str, tuple[float, int]] = {}
+_RATE_WINDOW_SEC = 60.0
+
+
+def _require_api_key(
+    *,
+    provided: str | None,
+    component: str,
+    operation: str,
+) -> JSONResponse | None:
+    expected = api_key()
+    if not expected:
+        return None
+    if (provided or "").strip() == expected:
+        return None
+    return JSONResponse(
+        status_code=401,
+        content=api_error(
+            error_code="API_KEY_REQUIRED",
+            component=component,
+            operation=operation,
+            message="missing or invalid API key",
+        ),
+    )
+
+
+def _client_identity(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _enforce_route_rate_limit(request: Request) -> JSONResponse | None:
+    limit = route_rate_limit_per_minute()
+    if limit <= 0:
+        return None
+
+    now = time.monotonic()
+    key = _client_identity(request)
+    with _ROUTE_RATE_LOCK:
+        window_start, count = _ROUTE_RATE_STATE.get(key, (now, 0))
+        if now - window_start >= _RATE_WINDOW_SEC:
+            window_start, count = now, 0
+        count += 1
+        _ROUTE_RATE_STATE[key] = (window_start, count)
+        if count <= limit:
+            return None
+        retry_after = max(1, int(_RATE_WINDOW_SEC - (now - window_start)))
+
+    return JSONResponse(
+        status_code=429,
+        headers={"Retry-After": str(retry_after)},
+        content=api_error(
+            error_code="ROUTE_RATE_LIMITED",
+            component="orchestrator",
+            operation="route",
+            message="route rate limit exceeded",
+            details={"limit_per_minute": limit, "retry_after_sec": retry_after},
+        ),
+    )
+
+
 @app.on_event("startup")
 def _startup() -> None:
+    logger.info(
+        "orchestrator startup begin",
+        extra={"event": "orchestrator_startup_begin", "component": "orchestrator", "operation": "startup"},
+    )
     init_db()
     if job_worker_enabled():
         WORKER.start()
+    logger.info(
+        "orchestrator startup complete",
+        extra={"event": "orchestrator_startup_complete", "component": "orchestrator", "operation": "startup"},
+    )
 
 
 @app.on_event("shutdown")
 def _shutdown() -> None:
+    logger.info(
+        "orchestrator shutdown begin",
+        extra={"event": "orchestrator_shutdown_begin", "component": "orchestrator", "operation": "shutdown"},
+    )
     WORKER.stop()
+    logger.info(
+        "orchestrator shutdown complete",
+        extra={"event": "orchestrator_shutdown_complete", "component": "orchestrator", "operation": "shutdown"},
+    )
 
 
 @app.get("/health")
@@ -238,7 +330,18 @@ def ready() -> dict[str, object]:
 
 
 @app.post("/route")
-def route(req: RouteRequest) -> RouteResponse:
+def route(
+    req: RouteRequest,
+    request: Request,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> RouteResponse:
+    denied = _require_api_key(provided=x_api_key, component="orchestrator", operation="route")
+    if denied is not None:
+        return denied
+    limited = _enforce_route_rate_limit(request)
+    if limited is not None:
+        return limited
+
     trace_id = req.trace_id or new_trace_id()
     token = set_trace_id(trace_id)
     logger.info(
@@ -357,7 +460,14 @@ def proposals_commands(req: ProposalRequest) -> dict[str, Any]:
 
 
 @app.post("/jobs")
-def jobs_create(req: JobCreateRequest) -> dict[str, Any]:
+def jobs_create(
+    req: JobCreateRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    denied = _require_api_key(provided=x_api_key, component="jobs", operation="create")
+    if denied is not None:
+        return denied
+
     session_id = req.session_id
     if not session_id:
         current = get_current_session(req.project) or {}
@@ -392,7 +502,13 @@ def jobs_create(req: JobCreateRequest) -> dict[str, Any]:
 
 
 @app.post("/jobs/{job_id}/confirm")
-def jobs_confirm(job_id: str) -> Any:
+def jobs_confirm(
+    job_id: str,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> Any:
+    denied = _require_api_key(provided=x_api_key, component="jobs", operation="confirm")
+    if denied is not None:
+        return denied
     row = confirm_job(job_id)
     if row is None:
         return JSONResponse(
@@ -409,7 +525,13 @@ def jobs_confirm(job_id: str) -> Any:
 
 
 @app.post("/jobs/{job_id}/cancel")
-def jobs_cancel(job_id: str) -> Any:
+def jobs_cancel(
+    job_id: str,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> Any:
+    denied = _require_api_key(provided=x_api_key, component="jobs", operation="cancel")
+    if denied is not None:
+        return denied
     row = cancel_job(job_id)
     if row is None:
         return JSONResponse(
@@ -499,7 +621,14 @@ def facts_review_queue(
 
 
 @app.post("/facts/review/{fact_id}/approve")
-def facts_approve(fact_id: str, req: FactReviewRequest) -> Any:
+def facts_approve(
+    fact_id: str,
+    req: FactReviewRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> Any:
+    denied = _require_api_key(provided=x_api_key, component="facts", operation="approve")
+    if denied is not None:
+        return denied
     row = review_fact_status(fact_id, status="approved", reviewer=req.reviewer)
     if row is None:
         return JSONResponse(
@@ -516,7 +645,14 @@ def facts_approve(fact_id: str, req: FactReviewRequest) -> Any:
 
 
 @app.post("/facts/review/{fact_id}/reject")
-def facts_reject(fact_id: str, req: FactReviewRequest) -> Any:
+def facts_reject(
+    fact_id: str,
+    req: FactReviewRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> Any:
+    denied = _require_api_key(provided=x_api_key, component="facts", operation="reject")
+    if denied is not None:
+        return denied
     row = review_fact_status(fact_id, status="rejected", reviewer=req.reviewer)
     if row is None:
         return JSONResponse(
@@ -533,7 +669,14 @@ def facts_reject(fact_id: str, req: FactReviewRequest) -> Any:
 
 
 @app.patch("/facts/review/{fact_id}")
-def facts_patch(fact_id: str, req: FactPatchRequest) -> Any:
+def facts_patch(
+    fact_id: str,
+    req: FactPatchRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> Any:
+    denied = _require_api_key(provided=x_api_key, component="facts", operation="patch")
+    if denied is not None:
+        return denied
     row = patch_fact(
         fact_id,
         confidence=req.confidence,
@@ -650,7 +793,13 @@ def graph_timeline(
 
 
 @app.post("/exports/session")
-def export_session(req: SessionExportRequest) -> dict[str, Any]:
+def export_session(
+    req: SessionExportRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    denied = _require_api_key(provided=x_api_key, component="exports", operation="session")
+    if denied is not None:
+        return denied
     return export_session_bundle(
         project=req.project,
         session_id=req.session_id,
@@ -659,12 +808,24 @@ def export_session(req: SessionExportRequest) -> dict[str, Any]:
 
 
 @app.post("/exports/project")
-def export_project(req: ProjectExportRequest) -> dict[str, Any]:
+def export_project(
+    req: ProjectExportRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    denied = _require_api_key(provided=x_api_key, component="exports", operation="project")
+    if denied is not None:
+        return denied
     return export_project_bundle(project=req.project, include_pending_facts=req.include_pending_facts)
 
 
 @app.post("/findings")
-def findings_create(req: FindingCreateRequest) -> dict[str, Any]:
+def findings_create(
+    req: FindingCreateRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    denied = _require_api_key(provided=x_api_key, component="findings", operation="create")
+    if denied is not None:
+        return denied
     row = create_finding(
         project=_slug(req.project),
         session_id=req.session_id,
@@ -696,7 +857,14 @@ def findings_list(
 
 
 @app.patch("/findings/{finding_id}")
-def findings_patch(finding_id: str, req: FindingUpdateRequest) -> Any:
+def findings_patch(
+    finding_id: str,
+    req: FindingUpdateRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> Any:
+    denied = _require_api_key(provided=x_api_key, component="findings", operation="patch")
+    if denied is not None:
+        return denied
     row = update_finding(
         finding_id,
         status=req.status,
@@ -736,7 +904,12 @@ async def evidence_upload(
     report_section: str = Form(default=""),
     tags: str = Form(default=""),
     screenshot: UploadFile = File(...),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ) -> dict[str, Any]:
+    denied = _require_api_key(provided=x_api_key, component="evidence", operation="upload")
+    if denied is not None:
+        return denied
+
     raw = await screenshot.read()
     sha256 = hashlib.sha256(raw).hexdigest()
     safe_project = _slug(project)
@@ -775,7 +948,14 @@ async def evidence_upload(
 
 
 @app.post("/evidence/{evidence_id}/link")
-def evidence_link(evidence_id: str, req: EvidenceLinkRequest) -> Any:
+def evidence_link(
+    evidence_id: str,
+    req: EvidenceLinkRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> Any:
+    denied = _require_api_key(provided=x_api_key, component="evidence", operation="link")
+    if denied is not None:
+        return denied
     row = link_evidence(evidence_id, finding_id=req.finding_id, report_section=req.report_section)
     if row is None:
         return JSONResponse(
@@ -887,7 +1067,13 @@ def diagnostics(project: str = Query(default="default")) -> dict[str, object]:
 
 
 @app.post("/sessions/start")
-def api_start_session(req: SessionStartRequest) -> dict[str, object]:
+def api_start_session(
+    req: SessionStartRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, object]:
+    denied = _require_api_key(provided=x_api_key, component="session", operation="start")
+    if denied is not None:
+        return denied
     try:
         session = start_session(req.project, operator=req.operator)
     except Exception as exc:
@@ -912,7 +1098,13 @@ def api_start_session(req: SessionStartRequest) -> dict[str, object]:
 
 
 @app.post("/sessions/end")
-def api_end_session(req: SessionEndRequest) -> dict[str, object]:
+def api_end_session(
+    req: SessionEndRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, object]:
+    denied = _require_api_key(provided=x_api_key, component="session", operation="end")
+    if denied is not None:
+        return denied
     try:
         session = end_session(req.project, session_id=req.session_id, summary=req.summary)
     except FileNotFoundError as exc:

@@ -51,7 +51,7 @@ Success criteria:
 
 ## Priority 1 (Near-Term)
 
-### 4) Add auth/rate controls for local API
+### 4) Add auth/rate controls for local API (Completed 2026-03-06)
 Why:
 - Even local APIs can be accidentally exposed from WSL host networking.
 

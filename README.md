@@ -22,6 +22,7 @@ Graph backend modes:
 - [Free Tools Stack](docs/FREE_TOOLS_STACK.md)
 - [Robustness Next Steps](docs/ROBUSTNESS_NEXT_STEPS.md)
 - [Future Improvements](docs/FUTURE_IMPROVEMENTS.md)
+- [Pilot Offer Playbook](docs/PILOT_OFFER.md)
 
 ## Safety
 Use only on systems and labs you are explicitly authorized to test (HTB/THM/PortSwigger labs, internal approved environments, CTF targets).
@@ -61,6 +62,20 @@ Do not use bare `python` if your system default is Python 2.7.
 1. Copy env file:
 ```bash
 cp .env.example .env
+```
+
+Recommended for zero external AI cost:
+```bash
+export AICL_LOCAL_ONLY_MODE=true
+export AICL_PROPOSAL_PROVIDERS=ollama
+export AICL_USE_LLM_ROUTER=true
+export AICL_TOOL_PROFILE=web
+```
+
+Optional API hardening:
+```bash
+export AICL_API_KEY=change-me
+export AICL_ROUTE_RATE_LIMIT_PER_MIN=30
 ```
 
 2. Start core container stack:

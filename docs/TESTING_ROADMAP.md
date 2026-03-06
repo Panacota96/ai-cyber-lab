@@ -11,6 +11,7 @@ Verify that routing, agents, sessions, reports, knowledge memory, and troublesho
 - `.env` created from `.env.example`.
 - If `8080` is occupied, set `AICL_API_PORT=8090` (or another free port).
 - Use `bash scripts/aicl.sh ...` or `.venv/bin/python ...` for CLI tests. Avoid bare `python` if your system default is Python 2.7.
+- If `AICL_API_KEY` is set, include header `X-API-Key: <key>` for mutating API checks (`/route`, session start/end, jobs/findings/evidence writes).
 
 ## Quality Gate (One Command)
 Run:
@@ -75,7 +76,7 @@ Expected outcome:
 | Full container smoke | `make smoke-compose` | Validate compose build + core health + route/report/runtime checks | Script exits `0` |
 | API readiness | `curl -sS http://127.0.0.1:<PORT>/ready` | Check orchestrator dependency health | JSON with `status` and `dependencies` |
 | Tool-exec readiness | `curl -sS http://127.0.0.1:8082/health` | Check execution microservice is up | `{"status":"ok"}` |
-| Tool capabilities | `curl -sS http://127.0.0.1:8082/capabilities` | Verify runtime/container mapping and allowed tools | JSON includes `mode`, `allowed_tools`, `container_status` |
+| Tool capabilities | `curl -sS http://127.0.0.1:8082/capabilities` | Verify runtime/container mapping and allowed tools | JSON includes `mode`, `tool_profile`, `allowed_tools`, `available_profiles`, `container_status` |
 | Unit + contracts | `make test` | Validate parser behavior and API/session contracts | `N passed` |
 | Prompt routing | `make eval` | Guard routing behavior from regression | Pass rate >= configured threshold |
 | Troubleshooting log | `curl -sS "http://127.0.0.1:<PORT>/logs?lines=200"` | Confirm structured events are available | JSON with `stats` and `lines` |

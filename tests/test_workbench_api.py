@@ -252,4 +252,34 @@ def test_command_proposals_contract(monkeypatch, tmp_path):
     assert "proposal_id" in body
     assert "providers" in body
     assert "ensemble" in body
+    assert "quality_summary" in body
+    assert "quality_threshold" in body
     assert isinstance(body["manual_review_required"], bool)
+    assert isinstance(body["quality_summary"], dict)
+    if body["ensemble"]:
+        first = body["ensemble"][0]
+        assert "quality" in first
+        assert {"score", "grade", "recommended"}.issubset(set(first["quality"].keys()))
+
+
+def test_command_proposals_local_only_mode_uses_ollama(monkeypatch, tmp_path):
+    monkeypatch.setenv("AICL_LOCAL_ONLY_MODE", "true")
+    monkeypatch.setenv("AICL_PROPOSAL_PROVIDERS", "codex,claude,gemini")
+    client = _build_client(monkeypatch, tmp_path)
+
+    resp = client.post(
+        "/proposals/commands",
+        json={
+            "project": "demo",
+            "target": "10.10.10.10",
+            "purpose": "recon",
+            "profile": "balanced",
+            "providers": [],
+            "discoveries": [],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["operating_mode"] == "local_only"
+    assert len(body["providers"]) >= 1
+    assert body["providers"][0]["provider"] == "ollama"

@@ -10,6 +10,29 @@ cp .env.example .env
 bash scripts/bootstrap.sh
 ```
 
+Local-only AI mode (no paid providers):
+
+```bash
+export AICL_LOCAL_ONLY_MODE=true
+export AICL_PROPOSAL_PROVIDERS=ollama
+export AICL_USE_LLM_ROUTER=true
+```
+
+Optional API guardrails:
+
+```bash
+export AICL_API_KEY=change-me
+export AICL_ROUTE_RATE_LIMIT_PER_MIN=30
+```
+
+Optional tool profiles (inspired by larger pentest tool stacks):
+
+```bash
+export AICL_TOOL_PROFILE=web      # web-focused workflow
+# export AICL_TOOL_PROFILE=ad      # AD/internal workflow
+# export AICL_TOOL_PROFILE=expanded
+```
+
 Start services with UI:
 
 ```bash

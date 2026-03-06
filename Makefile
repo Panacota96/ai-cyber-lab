@@ -1,4 +1,4 @@
-.PHONY: up up-ui up-exegol down dev ui tool-exec route pentest-start format logs maintain-logs bundle-logs smoke-compose eval start-session end-session test verify check-changelog
+.PHONY: up up-ui up-exegol down dev ui tool-exec route pentest-start pilot-roi format logs maintain-logs bundle-logs smoke-compose eval start-session end-session test verify check-changelog
 
 up:
 	cd infra && docker compose up -d qdrant neo4j ollama tools-core py2-runner py3-runner tool-exec orchestrator
@@ -26,6 +26,15 @@ route:
 
 pentest-start:
 	bash scripts/start_pentest_target.sh "$(TARGET)" "$(PORTS)" "$(PROJECT)"
+
+pilot-roi:
+	.venv/bin/python scripts/pilot_roi.py \
+		--engagements-per-week "$(ENGAGEMENTS_PER_WEEK)" \
+		--hours-per-report-now "$(HOURS_PER_REPORT_NOW)" \
+		--hours-per-report-with-aicl "$(HOURS_PER_REPORT_WITH_AICL)" \
+		--hourly-rate-usd "$(HOURLY_RATE_USD)" \
+		--setup-fee-usd "$${SETUP_FEE_USD:-0}" \
+		--monthly-support-usd "$${MONTHLY_SUPPORT_USD:-0}"
 
 start-session:
 	.venv/bin/python -m apps.orchestrator.main --start-session --project "$(PROJECT)" --operator "$(OPERATOR)"

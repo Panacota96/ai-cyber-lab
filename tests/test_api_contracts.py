@@ -42,6 +42,34 @@ def test_route_contract_includes_trace_id(monkeypatch, tmp_path):
     assert len(body["trace_id"]) >= 12
 
 
+def test_route_requires_api_key_when_configured(monkeypatch, tmp_path):
+    monkeypatch.setenv("AICL_API_KEY", "secret")
+    client = _build_client(monkeypatch, tmp_path)
+
+    denied = client.post("/route", json={"user_input": "Summarize CCNA OSPF", "project": "demo"})
+    assert denied.status_code == 401
+    assert denied.json().get("error_code") == "API_KEY_REQUIRED"
+
+    allowed = client.post(
+        "/route",
+        json={"user_input": "Summarize CCNA OSPF", "project": "demo"},
+        headers={"X-API-Key": "secret"},
+    )
+    assert allowed.status_code == 200
+
+
+def test_route_rate_limit_contract(monkeypatch, tmp_path):
+    monkeypatch.setenv("AICL_ROUTE_RATE_LIMIT_PER_MIN", "1")
+    client = _build_client(monkeypatch, tmp_path)
+
+    first = client.post("/route", json={"user_input": "Summarize OSPF", "project": "demo"})
+    assert first.status_code == 200
+
+    second = client.post("/route", json={"user_input": "Summarize EIGRP", "project": "demo"})
+    assert second.status_code == 429
+    assert second.json().get("error_code") == "ROUTE_RATE_LIMITED"
+
+
 def test_session_lifecycle_contract(monkeypatch, tmp_path):
     client = _build_client(monkeypatch, tmp_path)
 

@@ -1,18 +1,40 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import uuid
 from typing import Any
 
-from apps.orchestrator.config import proposal_max_commands, proposal_providers, proposal_timeout_sec
+import httpx
+
+from apps.orchestrator.config import (
+    local_only_mode,
+    ollama_model,
+    ollama_url,
+    proposal_max_commands,
+    proposal_providers,
+    proposal_quality_threshold,
+    proposal_timeout_sec,
+)
 from libs.command_planner import build_command_plan
 from libs.logs import get_logger
 
 logger = get_logger(__name__)
 
 RISK_WEIGHT = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+TOKEN_RE = re.compile(r"[a-z0-9._/-]+")
+DANGEROUS_TOKENS = {
+    "rm",
+    "mkfs",
+    "dd",
+    "shutdown",
+    "reboot",
+    "killall",
+    "iptables",
+    "route",
+}
 
 
 def _safe_profile(aggressiveness: str) -> str:
@@ -23,7 +45,10 @@ def _safe_profile(aggressiveness: str) -> str:
 
 
 def _provider_list() -> list[str]:
-    allowed = {"codex", "claude", "gemini"}
+    if local_only_mode():
+        return ["ollama"]
+
+    allowed = {"codex", "claude", "gemini", "ollama"}
     out = [p for p in proposal_providers() if p in allowed]
     return out or ["codex", "claude", "gemini"]
 
@@ -135,7 +160,20 @@ def _run_subprocess(cmd: list[str], timeout: int) -> tuple[int, str, str]:
     return proc.returncode, proc.stdout or "", proc.stderr or ""
 
 
+def _run_ollama_provider(*, prompt: str, timeout_sec: int) -> tuple[str, str]:
+    response = httpx.post(
+        f"{ollama_url().rstrip('/')}/api/generate",
+        json={"model": ollama_model(), "prompt": prompt, "stream": False},
+        timeout=max(5, timeout_sec),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return str(payload.get("response", "")), ""
+
+
 def _provider_command(provider: str, prompt: str) -> list[str]:
+    if provider == "ollama":
+        return []
     if provider == "codex":
         return [
             "codex",
@@ -181,17 +219,6 @@ def _run_provider(
     timeout_sec: int,
     max_cmds: int,
 ) -> dict[str, Any]:
-    binary = shutil.which(provider)
-    if not binary:
-        return {
-            "provider": provider,
-            "status": "unavailable",
-            "error": f"{provider} CLI not found in PATH",
-            "commands": [],
-            "notes": [],
-            "raw": "",
-        }
-
     prompt = _prompt_template(
         project=project,
         target=target,
@@ -200,39 +227,75 @@ def _run_provider(
         discoveries=discoveries,
         provider=provider,
     )
-    cmd = _provider_command(provider, prompt)
-    if not cmd:
-        return {
-            "provider": provider,
-            "status": "failed",
-            "error": "unsupported provider",
-            "commands": [],
-            "notes": [],
-            "raw": "",
-        }
 
-    try:
-        rc, stdout, stderr = _run_subprocess(cmd, timeout=timeout_sec)
-    except subprocess.TimeoutExpired:
-        return {
-            "provider": provider,
-            "status": "timeout",
-            "error": f"timeout after {timeout_sec}s",
-            "commands": [],
-            "notes": [],
-            "raw": "",
-        }
-    except Exception as exc:
-        return {
-            "provider": provider,
-            "status": "failed",
-            "error": str(exc),
-            "commands": [],
-            "notes": [],
-            "raw": "",
-        }
+    if provider == "ollama":
+        try:
+            raw_text, stderr = _run_ollama_provider(prompt=prompt, timeout_sec=timeout_sec)
+            rc = 0
+        except httpx.TimeoutException:
+            return {
+                "provider": provider,
+                "status": "timeout",
+                "error": f"timeout after {timeout_sec}s",
+                "commands": [],
+                "notes": [],
+                "raw": "",
+            }
+        except Exception as exc:
+            return {
+                "provider": provider,
+                "status": "failed",
+                "error": str(exc),
+                "commands": [],
+                "notes": [],
+                "raw": "",
+            }
+        raw_text = (raw_text or "").strip()
+    else:
+        binary = shutil.which(provider)
+        if not binary:
+            return {
+                "provider": provider,
+                "status": "unavailable",
+                "error": f"{provider} CLI not found in PATH",
+                "commands": [],
+                "notes": [],
+                "raw": "",
+            }
 
-    raw_text = (stdout or "").strip()
+        cmd = _provider_command(provider, prompt)
+        if not cmd:
+            return {
+                "provider": provider,
+                "status": "failed",
+                "error": "unsupported provider",
+                "commands": [],
+                "notes": [],
+                "raw": "",
+            }
+
+        try:
+            rc, raw_text, stderr = _run_subprocess(cmd, timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            return {
+                "provider": provider,
+                "status": "timeout",
+                "error": f"timeout after {timeout_sec}s",
+                "commands": [],
+                "notes": [],
+                "raw": "",
+            }
+        except Exception as exc:
+            return {
+                "provider": provider,
+                "status": "failed",
+                "error": str(exc),
+                "commands": [],
+                "notes": [],
+                "raw": "",
+            }
+        raw_text = (raw_text or "").strip()
+
     payload = _extract_json_blob(raw_text)
     if rc != 0:
         return {
@@ -276,6 +339,153 @@ def _max_risk(risks: list[str]) -> str:
         return "medium"
     best = max(risks, key=lambda x: RISK_WEIGHT.get(_normalize_risk(x), 2))
     return _normalize_risk(best)
+
+
+def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    return max(lo, min(hi, value))
+
+
+def _tokenize(text: str) -> set[str]:
+    return {tok for tok in TOKEN_RE.findall((text or "").lower()) if len(tok) >= 2}
+
+
+def _primary_tool(cmd: list[str]) -> str:
+    if not cmd:
+        return ""
+    return str(cmd[0]).strip().lower()
+
+
+def _feasibility_score(cmd: list[str]) -> float:
+    if not cmd:
+        return 0.0
+    tool = _primary_tool(cmd)
+    base = 0.9 if shutil.which(tool) else 0.45
+    if tool in {"python", "python3", "bash", "sh"}:
+        base = max(base, 0.8)
+    if len(cmd) >= 16:
+        base -= 0.1
+    return _clamp(base)
+
+
+def _safety_score(cmd: list[str], risk: str) -> float:
+    norm_risk = _normalize_risk(risk)
+    base = {"low": 0.95, "medium": 0.75, "high": 0.45, "critical": 0.2}.get(norm_risk, 0.75)
+    cmd_tokens = _tokenize(" ".join(cmd))
+    if cmd_tokens.intersection(DANGEROUS_TOKENS):
+        base -= 0.5
+    return _clamp(base)
+
+
+def _evidence_fit_score(cmd: list[str], discoveries: list[str]) -> float:
+    if not discoveries:
+        return 0.65
+
+    cmd_tokens = _tokenize(" ".join(cmd))
+    if not cmd_tokens:
+        return 0.0
+
+    discovery_tokens = _tokenize(" ".join(discoveries[:30]))
+    if not discovery_tokens:
+        return 0.4
+
+    overlap = cmd_tokens.intersection(discovery_tokens)
+    ratio = len(overlap) / max(1, len(cmd_tokens))
+    return _clamp(0.35 + (ratio * 0.9))
+
+
+def _novelty_scores(items: list[dict[str, Any]]) -> dict[str, float]:
+    counts: dict[str, int] = {}
+    for item in items:
+        tool = _primary_tool(item.get("cmd", []))
+        if not tool:
+            continue
+        counts[tool] = counts.get(tool, 0) + 1
+
+    out: dict[str, float] = {}
+    for item in items:
+        cmd = item.get("cmd", [])
+        fp = _fingerprint(cmd if isinstance(cmd, list) else [])
+        tool = _primary_tool(cmd if isinstance(cmd, list) else [])
+        count = counts.get(tool, 1)
+        score = 1.0 if count <= 1 else max(0.45, 1.0 - (0.2 * (count - 1)))
+        out[fp] = score
+    return out
+
+
+def _grade(score: float) -> str:
+    if score >= 85:
+        return "A"
+    if score >= 70:
+        return "B"
+    if score >= 55:
+        return "C"
+    return "D"
+
+
+def _apply_quality_scoring(
+    items: list[dict[str, Any]],
+    discoveries: list[str],
+    threshold: int,
+) -> list[dict[str, Any]]:
+    novelty_by_fp = _novelty_scores(items)
+    scored: list[dict[str, Any]] = []
+
+    for item in items:
+        cmd = item.get("cmd", [])
+        if not isinstance(cmd, list):
+            cmd = []
+        risk = str(item.get("risk", "medium"))
+        fp = _fingerprint(cmd)
+        feasibility = _feasibility_score(cmd)
+        safety = _safety_score(cmd, risk)
+        evidence_fit = _evidence_fit_score(cmd, discoveries)
+        novelty = novelty_by_fp.get(fp, 0.6)
+        total = (0.35 * feasibility) + (0.35 * safety) + (0.2 * evidence_fit) + (0.1 * novelty)
+        score = round(total * 100, 1)
+        recommended = bool(score >= threshold and _normalize_risk(risk) != "critical" and safety >= 0.5)
+
+        next_item = dict(item)
+        next_item["quality"] = {
+            "score": score,
+            "grade": _grade(score),
+            "recommended": recommended,
+            "feasibility": round(feasibility, 3),
+            "safety": round(safety, 3),
+            "evidence_fit": round(evidence_fit, 3),
+            "novelty": round(novelty, 3),
+            "explanation": (
+                "weighted score: feasibility 35%, safety 35%, evidence-fit 20%, novelty 10%"
+            ),
+        }
+        scored.append(next_item)
+
+    scored.sort(
+        key=lambda x: (
+            float(x.get("quality", {}).get("score", 0.0)),
+            int(x.get("provider_count", 0)),
+            -RISK_WEIGHT.get(_normalize_risk(str(x.get("risk", "medium"))), 2),
+            str(x.get("title", "")),
+        ),
+        reverse=True,
+    )
+    return scored
+
+
+def _quality_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    if not items:
+        return {"count": 0, "recommended": 0, "avg_score": 0.0, "grade_mix": {}}
+    scores = [float(i.get("quality", {}).get("score", 0.0)) for i in items]
+    recommended = sum(1 for i in items if bool(i.get("quality", {}).get("recommended")))
+    grade_mix: dict[str, int] = {}
+    for item in items:
+        grade = str(item.get("quality", {}).get("grade", "D"))
+        grade_mix[grade] = grade_mix.get(grade, 0) + 1
+    return {
+        "count": len(items),
+        "recommended": recommended,
+        "avg_score": round(sum(scores) / len(scores), 2),
+        "grade_mix": grade_mix,
+    }
 
 
 def _ensemble(provider_results: list[dict[str, Any]], max_cmds: int) -> list[dict[str, Any]]:
@@ -342,11 +552,15 @@ def generate_command_proposals(
     discoveries: list[str] | None = None,
     providers: list[str] | None = None,
 ) -> dict[str, Any]:
-    selected = providers or _provider_list()
+    if local_only_mode():
+        selected = ["ollama"]
+    else:
+        selected = providers or _provider_list()
     safe_profile = _safe_profile(aggressiveness)
     notes = discoveries or []
     timeout_sec = max(5, proposal_timeout_sec())
     max_cmds = max(1, proposal_max_commands())
+    quality_threshold = max(1, min(100, proposal_quality_threshold()))
 
     provider_results = [
         _run_provider(
@@ -390,6 +604,9 @@ def generate_command_proposals(
         ][:max_cmds]
         fallback_used = True
 
+    ensemble = _apply_quality_scoring(ensemble, discoveries=notes, threshold=quality_threshold)[:max_cmds]
+    quality_summary = _quality_summary(ensemble)
+
     proposal_id = uuid.uuid4().hex
     out = {
         "proposal_id": proposal_id,
@@ -397,6 +614,9 @@ def generate_command_proposals(
         "target": target,
         "purpose": purpose,
         "profile": safe_profile,
+        "operating_mode": "local_only" if local_only_mode() else "mixed",
+        "quality_threshold": quality_threshold,
+        "quality_summary": quality_summary,
         "providers": provider_results,
         "ensemble": ensemble,
         "manual_review_required": True,
@@ -416,6 +636,7 @@ def generate_command_proposals(
                 "providers_requested": selected,
                 "providers_ok": [x.get("provider") for x in provider_results if x.get("status") == "ok"],
                 "ensemble_count": len(ensemble),
+                "recommended_count": quality_summary.get("recommended", 0),
                 "fallback_used": fallback_used,
             },
         },

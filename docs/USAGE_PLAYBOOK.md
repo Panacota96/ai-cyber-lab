@@ -11,6 +11,7 @@ For an operator-first quick runbook, see [HOW_TO_USE.md](HOW_TO_USE.md).
 |---|---|---|
 | `apps/orchestrator/main.py` | FastAPI + CLI entrypoint (`/route`, `/health`, `/ready`, `/logs`, `/diagnostics`, session APIs) | Daily operations and automation integration |
 | `apps/tool_exec/main.py` | Tool execution API (`/run`, `/capabilities`) with allowlist and runtime-target routing | Containerized command execution without host dependency |
+| `libs/tools/tool_profiles.py` | Curated tool profiles (`baseline`, `web`, `ad`, `expanded`) and allowlist resolution | Scale allowed-tool set by engagement type while staying explicit |
 | `apps/ui/main.py` | Web dashboard for route/session/log/report actions | Avoid raw API/curl workflows |
 | `libs/proposals.py` | Local CLI adapters + ensemble proposals (`/proposals/commands`) | Compare Codex/Claude/Gemini command ideas before execution |
 | `libs/graph_backend.py` | Graph backend abstraction (`sqlite` fallback, optional `neo4j`) | Dynamic relationship graph at larger scale |
@@ -28,6 +29,7 @@ For an operator-first quick runbook, see [HOW_TO_USE.md](HOW_TO_USE.md).
 | `libs/tools/capture/log_maintenance.py` | Compresses/prunes session logs by policy | Keep long-running log storage controlled |
 | `scripts/collect_troubleshoot_bundle.sh` | Captures docker/API/app/system evidence into one archive | Incident triage and support handoff |
 | `scripts/start_pentest_target.sh` | End-to-end target kickoff automation (session + recon + route + report) | Fast CTF machine start with consistent artifacts |
+| `scripts/pilot_roi.py` | ROI calculator for paid pilot packaging | Price setup/support using measurable time savings |
 | `libs/sessions.py` | Session lifecycle persistence | Scoped evidence and report generation |
 | `libs/logs.py` | Central JSON logging + enforced 1MB cap | Troubleshooting and observability |
 | `libs/memory/qdrant_client.py`, `libs/memory/rag.py` | Vector memory and retrieval helpers | Building long-term knowledge base |

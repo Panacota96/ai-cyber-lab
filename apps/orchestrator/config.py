@@ -61,6 +61,10 @@ def ollama_model() -> str:
     return os.getenv("AICL_OLLAMA_MODEL", "llama3.1:8b")
 
 
+def ollama_router_model() -> str:
+    return os.getenv("AICL_OLLAMA_ROUTER_MODEL", ollama_model())
+
+
 def ollama_embed_model() -> str:
     return os.getenv("AICL_OLLAMA_EMBED_MODEL", "nomic-embed-text")
 
@@ -150,7 +154,17 @@ def proposal_max_commands() -> int:
     return int(os.getenv("AICL_PROPOSAL_MAX_COMMANDS", "8"))
 
 
+def proposal_quality_threshold() -> int:
+    return int(os.getenv("AICL_PROPOSAL_QUALITY_THRESHOLD", "70"))
+
+
+def local_only_mode() -> bool:
+    return os.getenv("AICL_LOCAL_ONLY_MODE", "false").lower() == "true"
+
+
 def proposal_providers() -> list[str]:
+    if local_only_mode():
+        return ["ollama"]
     raw = os.getenv("AICL_PROPOSAL_PROVIDERS", "codex,claude,gemini")
     out = [x.strip().lower() for x in raw.split(",") if x.strip()]
     return out or ["codex", "claude", "gemini"]
@@ -182,6 +196,14 @@ def ui_port() -> int:
 
 def orchestrator_url() -> str:
     return os.getenv("AICL_ORCHESTRATOR_URL", f"http://127.0.0.1:{api_port()}")
+
+
+def api_key() -> str:
+    return os.getenv("AICL_API_KEY", "").strip()
+
+
+def route_rate_limit_per_minute() -> int:
+    return int(os.getenv("AICL_ROUTE_RATE_LIMIT_PER_MIN", "30"))
 
 
 def job_worker_enabled() -> bool:

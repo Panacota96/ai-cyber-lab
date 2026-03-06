@@ -11,7 +11,7 @@ from apps.agents.pentest_agent import handle_pentest
 from apps.agents.report_agent import handle_report
 from apps.agents.research_agent import handle_research
 from apps.agents.study_agent import handle_study
-from apps.orchestrator.config import default_project, ollama_model, ollama_url, use_llm_router
+from apps.orchestrator.config import default_project, ollama_router_model, ollama_url, use_llm_router
 from libs.logs import get_logger
 from libs.trace import trace_event
 
@@ -74,7 +74,7 @@ def _llm_route(user_input: str) -> Route:
         with httpx.Client(timeout=8.0) as client:
             response = client.post(
                 f"{ollama_url().rstrip('/')}/api/generate",
-                json={"model": ollama_model(), "prompt": prompt, "stream": False},
+                json={"model": ollama_router_model(), "prompt": prompt, "stream": False},
             )
             response.raise_for_status()
             data = response.json()

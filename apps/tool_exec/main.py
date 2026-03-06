@@ -23,6 +23,7 @@ from apps.orchestrator.config import (
 )
 from libs.errors import api_error
 from libs.logs import get_logger, setup_logging
+from libs.tools.tool_profiles import allowed_tools, available_profiles, selected_profile
 
 setup_logging()
 logger = get_logger(__name__)
@@ -47,11 +48,7 @@ class RunResponse(BaseModel):
 
 
 def _allowed_tools() -> set[str]:
-    raw = os.getenv(
-        "AICL_ALLOWED_TOOLS",
-        "nmap,ffuf,gobuster,whatweb,sqlmap,nuclei,john,hashcat,hydra,python2,python3,pip,pip2,pytest,uv",
-    )
-    return {item.strip() for item in raw.split(",") if item.strip()}
+    return allowed_tools()
 
 
 def _tool_exec_mode() -> str:
@@ -240,6 +237,8 @@ def health() -> dict[str, str]:
 def capabilities() -> dict[str, Any]:
     return {
         "mode": _tool_exec_mode(),
+        "tool_profile": selected_profile(),
+        "available_profiles": available_profiles(),
         "allowed_tools": sorted(_allowed_tools()),
         "tool_container_map": _parse_container_map(),
         "container_status": _container_status(),

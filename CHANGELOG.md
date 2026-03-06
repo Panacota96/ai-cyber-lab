@@ -2,6 +2,39 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.5.2] - 2026-03-06
+### Added
+- Local-only AI operating controls in config/env:
+  - `AICL_LOCAL_ONLY_MODE`
+  - `AICL_OLLAMA_ROUTER_MODEL`
+  - `AICL_PROPOSAL_QUALITY_THRESHOLD`
+  - `AICL_API_KEY`
+  - `AICL_ROUTE_RATE_LIMIT_PER_MIN`
+- New proposal quality-scoring pipeline in `libs/proposals.py`:
+  - deterministic scores for feasibility, safety, evidence-fit, novelty
+  - per-command quality metadata (`score`, `grade`, `recommended`)
+  - proposal-level `quality_summary`
+  - local Ollama provider path and local-only enforcement
+- API guardrails in orchestrator:
+  - optional API key checks for mutating endpoints
+  - in-memory `/route` rate limiting with `429` + `Retry-After`
+- New profitability/pilot assets:
+  - `scripts/pilot_roi.py` ROI calculator
+  - `make pilot-roi` target
+  - `docs/PILOT_OFFER.md`
+- New tool profile system inspired by external pentest tool collections:
+  - `libs/tools/tool_profiles.py`
+  - profile metadata exposed by `/capabilities`
+  - shared allowlist resolution in tool-exec and CLI execution paths
+  - `docs/TOOL_PROFILE_INSPIRATION.md`
+
+### Changed
+- Proposals UI now displays command quality score/grade/recommended status and quality rationale.
+- UI backend calls now send `X-API-Key` automatically when configured.
+- `scripts/start_pentest_target.sh` and `scripts/smoke_compose.sh` now pass `X-API-Key` when set.
+- Updated docs and env templates (`README.md`, `docs/HOW_TO_USE.md`, `docs/USAGE_PLAYBOOK.md`, `docs/TESTING_ROADMAP.md`, `.env.example`) for local-only mode, API guardrails, and tool profiles.
+- `docs/ROBUSTNESS_NEXT_STEPS.md` now marks API auth/rate controls as completed on `2026-03-06`.
+
 ## [0.5.1] - 2026-03-06
 ### Added
 - New strategic backlog and roadmap document: `docs/FUTURE_IMPROVEMENTS.md`.

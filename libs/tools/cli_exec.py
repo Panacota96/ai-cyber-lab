@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shlex
 import subprocess
 import time
@@ -11,6 +10,7 @@ import httpx
 
 from apps.orchestrator.config import exec_backend, tool_exec_timeout_s, tool_exec_url
 from libs.logs import get_logger
+from libs.tools.tool_profiles import allowed_tools
 
 logger = get_logger(__name__)
 
@@ -24,11 +24,7 @@ class CmdResult:
 
 
 def _allowed_tools() -> set[str]:
-    raw = os.getenv(
-        "AICL_ALLOWED_TOOLS",
-        "nmap,ffuf,gobuster,whatweb,sqlmap,nuclei,python2,python3,pip,pip2,pytest,uv",
-    )
-    return {x.strip() for x in raw.split(",") if x.strip()}
+    return allowed_tools()
 
 
 def _require_allowed(cmd: Sequence[str]) -> None:
