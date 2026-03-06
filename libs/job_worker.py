@@ -10,6 +10,8 @@ import httpx
 
 from apps.orchestrator.config import data_root, tool_exec_timeout_s, tool_exec_url
 from libs.logs import get_logger
+from libs.tools.parsers.httpx_parser import parse_httpx_output
+from libs.tools.parsers.nuclei_parser import parse_nuclei_findings
 from libs.workbench_db import add_facts, claim_next_queued_job, complete_job
 
 logger = get_logger(__name__)
@@ -134,6 +136,50 @@ def _facts_from_output(
                 server = line.split(":", 1)[-1].strip()
                 add_entity("service", server, 0.82, "curl", {"header": "server"})
                 add_relation("host", host, "serves", "service", server, 0.82, "curl", {"header": "server"})
+
+    if "httpx" in joined:
+        for row in parse_httpx_output(stdout):
+            url = str(row.get("url", "")).strip()
+            if not url:
+                continue
+            status = int(row.get("status", 0))
+            title = str(row.get("title", "")).strip()
+            tags = row.get("tags", []) if isinstance(row.get("tags"), list) else []
+
+            add_entity("url", url, 0.88, "httpx", {"status": status, "title": title, "tags": tags})
+            add_relation("host", host, "responds_at", "url", url, 0.88, "httpx", {"status": status})
+            if status > 0:
+                add_entity("http_status", str(status), 0.84, "httpx", {"url": url})
+                add_relation("url", url, "returns_status", "http_status", str(status), 0.84, "httpx", {})
+            if title:
+                add_entity("web_title", title, 0.72, "httpx", {"url": url})
+                add_relation("url", url, "has_title", "web_title", title, 0.72, "httpx", {})
+            for tag in tags[:8]:
+                add_entity("technology", str(tag), 0.7, "httpx", {"url": url})
+                add_relation("url", url, "uses_technology", "technology", str(tag), 0.7, "httpx", {})
+
+    if "nuclei" in joined:
+        for finding in parse_nuclei_findings(stdout):
+            target_url = str(finding.get("target", "")).strip()
+            template_id = str(finding.get("template_id", "")).strip()
+            severity = str(finding.get("severity", "info")).strip().lower()
+            if not target_url or not template_id:
+                continue
+            finding_node = f"{template_id}@{target_url}"
+            add_entity(
+                "vulnerability",
+                finding_node,
+                0.86,
+                "nuclei",
+                {
+                    "template_id": template_id,
+                    "severity": severity,
+                    "protocol": finding.get("protocol", ""),
+                },
+            )
+            add_relation("url", target_url, "has_finding", "vulnerability", finding_node, 0.86, "nuclei", {})
+            add_relation("vulnerability", finding_node, "severity", "level", severity, 0.8, "nuclei", {})
+            add_relation("host", host, "mentions", "url", target_url, 0.65, "nuclei", {})
 
     for url in _URL_RE.findall(stdout):
         add_entity("url", url, 0.74, "regex", {"pattern": "url"})

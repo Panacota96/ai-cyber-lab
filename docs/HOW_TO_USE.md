@@ -63,6 +63,7 @@ xdg-open http://127.0.0.1:8091
 Main pages:
 - `/ui/recon`: target planning + command queue/confirm
 - `/ui/proposals`: Codex/Claude/Gemini proposals + ensemble review
+- `/ui/playbooks`: staged web playbooks + stage approval + profitability metrics
 - `/ui/cracking`: cracking plans (authorized labs only)
 - `/ui/docs`: findings + evidence upload
 - `/ui/graph`: discoveries graph + fact review
@@ -92,10 +93,14 @@ UI readability:
    - generate provider proposals
    - compare Codex/Claude/Gemini side-by-side
    - execute only reviewed ensemble commands
-5. Go to `/ui/reports` and `/ui/sessions`:
+6. Go to `/ui/playbooks`:
+   - generate a staged web playbook (`discover -> fingerprint -> content-enum -> vuln-validate -> report-draft`)
+   - approve/reject stages with human oversight
+   - record engagement metrics (`revenue_usd`, `cost_usd`, `hours_saved`) to track ROI
+7. Go to `/ui/reports` and `/ui/sessions`:
    - generate report
    - export session/project bundles (JSON + MD + HTML)
-6. End session in `/ui/sessions`.
+8. End session in `/ui/sessions`.
 
 ## 4) Typical Pentest Workflow (CLI)
 One-command kickoff:

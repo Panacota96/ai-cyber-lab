@@ -39,24 +39,33 @@ from libs.graph_backend import (
 )
 from libs.job_worker import WORKER, job_worker_status
 from libs.logs import get_logger, log_stats, read_recent_logs, setup_logging
+from libs.playbooks import build_web_playbook
 from libs.proposals import generate_command_proposals
 from libs.sessions import end_session, get_current_session, start_session
 from libs.trace import new_trace_id, reset_trace_id, set_trace_id, trace_diagnostics, trace_event
 from libs.workbench_db import (
     add_evidence,
+    approve_playbook_stage,
     cancel_job,
     confirm_job,
     create_finding,
     create_job,
+    create_playbook,
     get_job,
+    get_playbook,
     init_db,
     link_evidence,
+    list_engagement_metrics,
     list_evidence,
     list_facts,
     list_findings,
     list_jobs,
+    list_playbooks,
     patch_fact,
+    profitability_summary,
     project_sessions,
+    record_engagement_metric,
+    reject_playbook_stage,
     review_fact_status,
     session_timeline,
     update_finding,
@@ -107,6 +116,34 @@ class ProposalRequest(BaseModel):
     profile: str = "balanced"
     discoveries: list[str] = Field(default_factory=list)
     providers: list[str] = Field(default_factory=list)
+    stage: str = ""
+
+
+class PlaybookWebCreateRequest(BaseModel):
+    project: str = Field(..., min_length=1)
+    target: str = Field(..., min_length=1)
+    objective: str = ""
+    profile: str = "balanced"
+    session_id: str | None = None
+    discoveries: list[str] = Field(default_factory=list)
+
+
+class PlaybookStageDecisionRequest(BaseModel):
+    reviewer: str = "operator"
+    auto_confirm: bool = True
+    reason: str = ""
+
+
+class EngagementMetricRequest(BaseModel):
+    project: str = Field(..., min_length=1)
+    metric_name: str = Field(..., min_length=1)
+    metric_value: float
+    playbook_id: str | None = None
+    session_id: str | None = None
+    metric_date: str = ""
+    unit: str = ""
+    notes: str = ""
+    tags: list[str] = Field(default_factory=list)
 
 
 class JobCreateRequest(BaseModel):
@@ -442,6 +479,7 @@ def proposals_commands(req: ProposalRequest) -> dict[str, Any]:
         aggressiveness=req.profile.strip().lower() or "balanced",
         discoveries=req.discoveries,
         providers=[x.strip().lower() for x in req.providers if x.strip()],
+        stage=req.stage.strip().lower(),
     )
     logger.info(
         "proposal ensemble generated",
@@ -457,6 +495,186 @@ def proposals_commands(req: ProposalRequest) -> dict[str, Any]:
         },
     )
     return out
+
+
+@app.post("/playbooks/web")
+def playbooks_create_web(
+    req: PlaybookWebCreateRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    denied = _require_api_key(provided=x_api_key, component="playbooks", operation="create_web")
+    if denied is not None:
+        return denied
+
+    safe_project = _slug(req.project)
+    session_id = req.session_id
+    if not session_id:
+        current = get_current_session(safe_project) or {}
+        session_id = str(current.get("session_id")) if current.get("session_id") else None
+
+    payload = build_web_playbook(
+        project=safe_project,
+        target=req.target,
+        profile=req.profile,
+        objective=req.objective,
+        discoveries=req.discoveries,
+    )
+    created = create_playbook(
+        project=safe_project,
+        target=str(payload.get("target", req.target)).strip(),
+        category="web",
+        objective=str(payload.get("objective", req.objective)).strip(),
+        profile=str(payload.get("profile", req.profile)).strip().lower(),
+        session_id=session_id,
+        stages=payload.get("stages", []),
+        metadata={
+            "source": "orchestrator:/playbooks/web",
+            "discoveries": req.discoveries,
+            **(payload.get("metadata", {}) if isinstance(payload.get("metadata"), dict) else {}),
+        },
+    )
+    logger.info(
+        "web playbook created",
+        extra={
+            "event": "playbook_created",
+            "details": {
+                "project": safe_project,
+                "playbook_id": created.get("playbook_id"),
+                "target": created.get("target"),
+                "stages": len(created.get("stages", [])),
+            },
+        },
+    )
+    return created
+
+
+@app.get("/playbooks")
+def playbooks_list(
+    project: str = Query(..., min_length=1),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> dict[str, Any]:
+    rows = list_playbooks(_slug(project), status=status.strip().lower() if status else None, limit=limit)
+    return {"project": _slug(project), "count": len(rows), "playbooks": rows}
+
+
+@app.get("/playbooks/{playbook_id}")
+def playbooks_get(playbook_id: str) -> Any:
+    row = get_playbook(playbook_id)
+    if row is None:
+        return JSONResponse(
+            status_code=404,
+            content=api_error(
+                error_code="PLAYBOOK_NOT_FOUND",
+                component="playbooks",
+                operation="get",
+                message="playbook not found",
+                details={"playbook_id": playbook_id},
+            ),
+        )
+    return row
+
+
+@app.post("/playbooks/{playbook_id}/stages/{stage_id}/approve")
+def playbooks_stage_approve(
+    playbook_id: str,
+    stage_id: str,
+    req: PlaybookStageDecisionRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> Any:
+    denied = _require_api_key(provided=x_api_key, component="playbooks", operation="approve_stage")
+    if denied is not None:
+        return denied
+    row = approve_playbook_stage(
+        playbook_id=playbook_id,
+        stage_id=stage_id,
+        reviewer=req.reviewer,
+        auto_confirm=req.auto_confirm,
+    )
+    if row is None:
+        return JSONResponse(
+            status_code=404,
+            content=api_error(
+                error_code="PLAYBOOK_STAGE_NOT_FOUND",
+                component="playbooks",
+                operation="approve_stage",
+                message="playbook stage not found",
+                details={"playbook_id": playbook_id, "stage_id": stage_id},
+            ),
+        )
+    return {"playbook_id": playbook_id, "stage": row, "playbook": get_playbook(playbook_id) or {}}
+
+
+@app.post("/playbooks/{playbook_id}/stages/{stage_id}/reject")
+def playbooks_stage_reject(
+    playbook_id: str,
+    stage_id: str,
+    req: PlaybookStageDecisionRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> Any:
+    denied = _require_api_key(provided=x_api_key, component="playbooks", operation="reject_stage")
+    if denied is not None:
+        return denied
+    row = reject_playbook_stage(
+        playbook_id=playbook_id,
+        stage_id=stage_id,
+        reviewer=req.reviewer,
+        reason=req.reason,
+    )
+    if row is None:
+        return JSONResponse(
+            status_code=404,
+            content=api_error(
+                error_code="PLAYBOOK_STAGE_NOT_FOUND",
+                component="playbooks",
+                operation="reject_stage",
+                message="playbook stage not found",
+                details={"playbook_id": playbook_id, "stage_id": stage_id},
+            ),
+        )
+    return {"playbook_id": playbook_id, "stage": row, "playbook": get_playbook(playbook_id) or {}}
+
+
+@app.post("/metrics/engagement")
+def metrics_create(
+    req: EngagementMetricRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
+    denied = _require_api_key(provided=x_api_key, component="metrics", operation="create")
+    if denied is not None:
+        return denied
+    return record_engagement_metric(
+        project=_slug(req.project),
+        metric_name=req.metric_name,
+        metric_value=req.metric_value,
+        playbook_id=req.playbook_id,
+        session_id=req.session_id,
+        metric_date=req.metric_date,
+        unit=req.unit,
+        notes=req.notes,
+        tags=req.tags,
+    )
+
+
+@app.get("/metrics/engagement")
+def metrics_list(
+    project: str = Query(..., min_length=1),
+    playbook_id: str | None = Query(default=None),
+    metric_name: str | None = Query(default=None),
+    limit: int = Query(default=1000, ge=1, le=5000),
+) -> dict[str, Any]:
+    rows = list_engagement_metrics(
+        _slug(project),
+        playbook_id=playbook_id.strip() if playbook_id else None,
+        metric_name=metric_name.strip().lower() if metric_name else None,
+        limit=limit,
+    )
+    return {"project": _slug(project), "count": len(rows), "metrics": rows}
+
+
+@app.get("/metrics/profitability")
+def metrics_profitability(project: str = Query(..., min_length=1)) -> dict[str, Any]:
+    return profitability_summary(_slug(project))
 
 
 @app.post("/jobs")

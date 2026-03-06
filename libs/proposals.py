@@ -44,6 +44,13 @@ def _safe_profile(aggressiveness: str) -> str:
     return "balanced"
 
 
+def _safe_stage(stage: str) -> str:
+    text = (stage or "").strip().lower()
+    if text in {"discover", "fingerprint", "content-enum", "vuln-validate", "report-draft"}:
+        return text
+    return ""
+
+
 def _provider_list() -> list[str]:
     if local_only_mode():
         return ["ollama"]
@@ -130,10 +137,12 @@ def _prompt_template(
     target: str,
     purpose: str,
     aggressiveness: str,
+    stage: str,
     discoveries: list[str],
     provider: str,
 ) -> str:
     discoveries_block = "\n".join(f"- {d}" for d in discoveries[:20]) or "- none"
+    stage_line = stage or "general"
     return (
         "You are assisting authorized CTF/lab pentesting only.\n"
         "Return STRICT JSON only with this exact shape:\n"
@@ -143,9 +152,10 @@ def _prompt_template(
         f"Project: {project}\n"
         f"Target: {target}\n"
         f"Purpose: {purpose}\n"
+        f"Stage: {stage_line}\n"
         f"Aggressiveness: {aggressiveness}\n"
         f"Current discoveries:\n{discoveries_block}\n"
-        "Focus on recon/enumeration/validation commands with clear rationale and expected artifacts."
+        "Focus on stage-appropriate recon/enumeration/validation commands with clear rationale and expected artifacts."
     )
 
 
@@ -215,6 +225,7 @@ def _run_provider(
     target: str,
     purpose: str,
     aggressiveness: str,
+    stage: str,
     discoveries: list[str],
     timeout_sec: int,
     max_cmds: int,
@@ -224,6 +235,7 @@ def _run_provider(
         target=target,
         purpose=purpose,
         aggressiveness=aggressiveness,
+        stage=stage,
         discoveries=discoveries,
         provider=provider,
     )
@@ -422,13 +434,36 @@ def _grade(score: float) -> str:
     return "D"
 
 
+def _quality_weights(stage: str, purpose: str) -> dict[str, float]:
+    safe_stage = _safe_stage(stage)
+    safe_purpose = (purpose or "").strip().lower()
+
+    if safe_stage == "discover":
+        return {"feasibility": 0.4, "safety": 0.3, "evidence_fit": 0.2, "novelty": 0.1}
+    if safe_stage == "fingerprint":
+        return {"feasibility": 0.35, "safety": 0.35, "evidence_fit": 0.2, "novelty": 0.1}
+    if safe_stage == "content-enum":
+        return {"feasibility": 0.35, "safety": 0.3, "evidence_fit": 0.25, "novelty": 0.1}
+    if safe_stage == "vuln-validate":
+        return {"feasibility": 0.25, "safety": 0.45, "evidence_fit": 0.2, "novelty": 0.1}
+    if safe_stage == "report-draft":
+        return {"feasibility": 0.45, "safety": 0.35, "evidence_fit": 0.15, "novelty": 0.05}
+    if safe_purpose in {"cracking", "password", "hash"}:
+        return {"feasibility": 0.3, "safety": 0.45, "evidence_fit": 0.15, "novelty": 0.1}
+    return {"feasibility": 0.35, "safety": 0.35, "evidence_fit": 0.2, "novelty": 0.1}
+
+
 def _apply_quality_scoring(
     items: list[dict[str, Any]],
     discoveries: list[str],
     threshold: int,
+    purpose: str,
+    stage: str,
 ) -> list[dict[str, Any]]:
     novelty_by_fp = _novelty_scores(items)
     scored: list[dict[str, Any]] = []
+    weights = _quality_weights(stage=stage, purpose=purpose)
+    min_safety = 0.6 if _safe_stage(stage) == "vuln-validate" else 0.5
 
     for item in items:
         cmd = item.get("cmd", [])
@@ -440,9 +475,16 @@ def _apply_quality_scoring(
         safety = _safety_score(cmd, risk)
         evidence_fit = _evidence_fit_score(cmd, discoveries)
         novelty = novelty_by_fp.get(fp, 0.6)
-        total = (0.35 * feasibility) + (0.35 * safety) + (0.2 * evidence_fit) + (0.1 * novelty)
+        total = (
+            (weights["feasibility"] * feasibility)
+            + (weights["safety"] * safety)
+            + (weights["evidence_fit"] * evidence_fit)
+            + (weights["novelty"] * novelty)
+        )
         score = round(total * 100, 1)
-        recommended = bool(score >= threshold and _normalize_risk(risk) != "critical" and safety >= 0.5)
+        recommended = bool(
+            score >= threshold and _normalize_risk(risk) != "critical" and safety >= min_safety
+        )
 
         next_item = dict(item)
         next_item["quality"] = {
@@ -454,8 +496,10 @@ def _apply_quality_scoring(
             "evidence_fit": round(evidence_fit, 3),
             "novelty": round(novelty, 3),
             "explanation": (
-                "weighted score: feasibility 35%, safety 35%, evidence-fit 20%, novelty 10%"
+                "weighted score by stage"
             ),
+            "weights": weights,
+            "stage": _safe_stage(stage) or "general",
         }
         scored.append(next_item)
 
@@ -551,12 +595,14 @@ def generate_command_proposals(
     aggressiveness: str,
     discoveries: list[str] | None = None,
     providers: list[str] | None = None,
+    stage: str = "",
 ) -> dict[str, Any]:
     if local_only_mode():
         selected = ["ollama"]
     else:
         selected = providers or _provider_list()
     safe_profile = _safe_profile(aggressiveness)
+    safe_stage = _safe_stage(stage)
     notes = discoveries or []
     timeout_sec = max(5, proposal_timeout_sec())
     max_cmds = max(1, proposal_max_commands())
@@ -569,6 +615,7 @@ def generate_command_proposals(
             target=target,
             purpose=purpose,
             aggressiveness=safe_profile,
+            stage=safe_stage,
             discoveries=notes,
             timeout_sec=timeout_sec,
             max_cmds=max_cmds,
@@ -604,7 +651,13 @@ def generate_command_proposals(
         ][:max_cmds]
         fallback_used = True
 
-    ensemble = _apply_quality_scoring(ensemble, discoveries=notes, threshold=quality_threshold)[:max_cmds]
+    ensemble = _apply_quality_scoring(
+        ensemble,
+        discoveries=notes,
+        threshold=quality_threshold,
+        purpose=purpose,
+        stage=safe_stage,
+    )[:max_cmds]
     quality_summary = _quality_summary(ensemble)
 
     proposal_id = uuid.uuid4().hex
@@ -613,6 +666,7 @@ def generate_command_proposals(
         "project": project,
         "target": target,
         "purpose": purpose,
+        "stage": safe_stage,
         "profile": safe_profile,
         "operating_mode": "local_only" if local_only_mode() else "mixed",
         "quality_threshold": quality_threshold,
@@ -632,6 +686,7 @@ def generate_command_proposals(
                 "project": project,
                 "target": target,
                 "purpose": purpose,
+                "stage": safe_stage,
                 "profile": safe_profile,
                 "providers_requested": selected,
                 "providers_ok": [x.get("provider") for x in provider_results if x.get("status") == "ok"],

@@ -217,6 +217,7 @@ bash scripts/start_pentest_target.sh 10.10.10.10
 The UI now provides purpose-specific pages:
 - `http://127.0.0.1:8091/ui/recon` (target input, command planning, queue+confirm execution)
 - `http://127.0.0.1:8091/ui/proposals` (Codex/Claude/Gemini proposals + ensemble review)
+- `http://127.0.0.1:8091/ui/playbooks` (staged web playbooks + stage approvals + profitability KPIs)
 - `http://127.0.0.1:8091/ui/cracking` (authorized lab cracking command planning + queue)
 - `http://127.0.0.1:8091/ui/docs` (finding creation + screenshot upload/tag/link)
 - `http://127.0.0.1:8091/ui/sessions` (session lifecycle + timeline)
@@ -229,6 +230,16 @@ Each page supports `Readable View` (default) and `JSON View` toggles for operato
 - Planner:
   - `POST /planner/commands`
   - `POST /proposals/commands`
+- Playbooks:
+  - `POST /playbooks/web`
+  - `GET /playbooks`
+  - `GET /playbooks/{playbook_id}`
+  - `POST /playbooks/{playbook_id}/stages/{stage_id}/approve`
+  - `POST /playbooks/{playbook_id}/stages/{stage_id}/reject`
+- Profitability metrics:
+  - `POST /metrics/engagement`
+  - `GET /metrics/engagement`
+  - `GET /metrics/profitability`
 - Jobs:
   - `POST /jobs`
   - `POST /jobs/{job_id}/confirm`

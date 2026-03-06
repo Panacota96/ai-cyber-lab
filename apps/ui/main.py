@@ -123,6 +123,7 @@ def _layout(
         ("recon", "/ui/recon", "Recon"),
         ("graph", "/ui/graph", "Graph"),
         ("proposals", "/ui/proposals", "Proposals"),
+        ("playbooks", "/ui/playbooks", "Playbooks"),
         ("cracking", "/ui/cracking", "Cracking"),
         ("docs", "/ui/docs", "Docs"),
         ("sessions", "/ui/sessions", "Sessions"),
@@ -594,6 +595,15 @@ def _render_proposals(
           <label>Target (IP/FQDN)</label><input name='target' required placeholder='10.10.10.10'/>
           <label>Purpose</label>
           <select name='purpose'><option value='recon'>recon</option><option value='scanning'>scanning</option><option value='cracking'>cracking</option></select>
+          <label>Stage</label>
+          <select name='stage'>
+            <option value=''>general</option>
+            <option value='discover'>discover</option>
+            <option value='fingerprint'>fingerprint</option>
+            <option value='content-enum'>content-enum</option>
+            <option value='vuln-validate'>vuln-validate</option>
+            <option value='report-draft'>report-draft</option>
+          </select>
           <label>Aggressiveness</label>
           <select name='profile'><option value='stealth'>stealth</option><option value='balanced' selected>balanced</option><option value='aggressive'>aggressive</option></select>
           <label>Providers (comma-separated)</label><input name='providers' value='{_escape(",".join(proposal_providers()))}'/>
@@ -695,6 +705,122 @@ def _render_cracking(
     <section class='panel'><h2>Recent Cracking Jobs</h2>{_table(['Status','Target','Command','Updated'], job_rows)}</section>
     """
     return _layout("cracking", project, body, flash=flash, detail=detail, view=view)
+
+
+def _render_playbooks(project: str, flash: str = "", detail: Any | None = None, view: str = "html") -> str:
+    _, playbooks_resp = _fetch_json("GET", f"/playbooks?project={project}&limit=50")
+    _, metrics_resp = _fetch_json("GET", f"/metrics/engagement?project={project}&limit=200")
+    _, profitability = _fetch_json("GET", f"/metrics/profitability?project={project}")
+
+    playbooks = playbooks_resp.get("playbooks", []) if isinstance(playbooks_resp, dict) else []
+    metrics = metrics_resp.get("metrics", []) if isinstance(metrics_resp, dict) else []
+    kpis = profitability.get("kpis", {}) if isinstance(profitability, dict) else {}
+    sid = _session_id(project)
+
+    playbook_cards = ""
+    for pb in playbooks[:30]:
+        stage_rows = []
+        for stage in pb.get("stages", []):
+            if not isinstance(stage, dict):
+                continue
+            playbook_id = str(pb.get("playbook_id", ""))
+            stage_id = str(stage.get("stage_id", ""))
+            approve_form = (
+                f"<form method='post' action='/ui/playbooks/stage/approve' style='display:inline'>"
+                f"<input type='hidden' name='project' value='{_escape(project)}'/>"
+                f"<input type='hidden' name='playbook_id' value='{_escape(playbook_id)}'/>"
+                f"<input type='hidden' name='stage_id' value='{_escape(stage_id)}'/>"
+                "<input type='hidden' name='reviewer' value='ui'/>"
+                "<input type='hidden' name='auto_confirm' value='1'/>"
+                f"<input type='hidden' name='view' value='{_escape(view)}'/>"
+                "<button type='submit'>Approve + Queue</button></form>"
+            )
+            reject_form = (
+                f"<form method='post' action='/ui/playbooks/stage/reject' style='display:inline'>"
+                f"<input type='hidden' name='project' value='{_escape(project)}'/>"
+                f"<input type='hidden' name='playbook_id' value='{_escape(playbook_id)}'/>"
+                f"<input type='hidden' name='stage_id' value='{_escape(stage_id)}'/>"
+                "<input type='hidden' name='reviewer' value='ui'/>"
+                "<input type='hidden' name='reason' value='rejected from UI review'/>"
+                f"<input type='hidden' name='view' value='{_escape(view)}'/>"
+                "<button class='secondary' type='submit'>Reject</button></form>"
+            )
+            stage_rows.append(
+                [
+                    _escape(stage.get("stage_order", "")),
+                    _escape(stage.get("title", "")),
+                    _status_chip(str(stage.get("status", "pending"))),
+                    _escape(stage.get("stage_key", "")),
+                    _escape(len(stage.get("commands_json", [])) if isinstance(stage.get("commands_json"), list) else 0),
+                    f"{approve_form} {reject_form}",
+                ]
+            )
+
+        playbook_cards += (
+            "<section class='panel'>"
+            f"<h2>{_escape(pb.get('target', 'target'))} {_status_chip(str(pb.get('status', 'draft')))}</h2>"
+            f"<p class='small'>objective: {_escape(pb.get('objective', ''))}</p>"
+            f"<p class='small'>playbook id: {_escape(pb.get('playbook_id', ''))}</p>"
+            f"{_table(['#', 'Stage', 'Status', 'Key', 'Commands', 'Actions'], stage_rows)}"
+            "</section>"
+        )
+
+    metric_rows = []
+    for row in metrics[:120]:
+        metric_rows.append(
+            [
+                _escape(row.get("metric_date", "")),
+                _escape(row.get("metric_name", "")),
+                _escape(row.get("metric_value", "")),
+                _escape(row.get("unit", "")),
+                _escape(row.get("playbook_id", "")),
+            ]
+        )
+
+    body = f"""
+    <div class='grid'>
+      <section class='panel'>
+        <h2>Create Web Playbook</h2>
+        <form method='post' action='/ui/playbooks/create'>
+          <input type='hidden' name='view' value='{_escape(view)}'/>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Session ID (optional)</label><input name='session_id' value='{_escape(sid)}'/>
+          <label>Target (IP/FQDN)</label><input name='target' required placeholder='10.10.10.10'/>
+          <label>Objective</label><input name='objective' value='web recon + validation'/>
+          <label>Profile</label>
+          <select name='profile'><option value='stealth'>stealth</option><option value='balanced' selected>balanced</option><option value='aggressive'>aggressive</option></select>
+          <label>Discoveries (one per line)</label><textarea name='discoveries' placeholder='80/tcp open http'></textarea>
+          <button type='submit'>Create Playbook</button>
+        </form>
+      </section>
+      <section class='panel'>
+        <h2>Profitability KPIs</h2>
+        <div class='row'>
+          <span class='chip'>Revenue USD: {_escape(kpis.get('revenue_usd', 0))}</span>
+          <span class='chip'>Cost USD: {_escape(kpis.get('cost_usd', 0))}</span>
+          <span class='chip'>Gross Profit USD: {_escape(kpis.get('gross_profit_usd', 0))}</span>
+          <span class='chip'>ROI %: {_escape(kpis.get('roi_pct', 'n/a'))}</span>
+          <span class='chip'>Hours Saved: {_escape(kpis.get('hours_saved', 0))}</span>
+        </div>
+        <form method='post' action='/ui/metrics/create'>
+          <input type='hidden' name='view' value='{_escape(view)}'/>
+          <label>Project</label><input name='project' value='{_escape(project)}'/>
+          <label>Playbook ID (optional)</label><input name='playbook_id'/>
+          <label>Session ID (optional)</label><input name='session_id' value='{_escape(sid)}'/>
+          <label>Metric Name</label><input name='metric_name' value='revenue_usd' required/>
+          <label>Metric Value</label><input name='metric_value' value='0' required/>
+          <label>Unit</label><input name='unit' placeholder='usd,hours,count'/>
+          <label>Date (YYYY-MM-DD)</label><input name='metric_date' placeholder='2026-03-06'/>
+          <label>Notes</label><input name='notes' placeholder='pilot invoice #1'/>
+          <label>Tags (comma-separated)</label><input name='tags' placeholder='pilot,invoice'/>
+          <button type='submit'>Record Metric</button>
+        </form>
+      </section>
+    </div>
+    <section class='panel'><h2>Playbooks</h2>{playbook_cards or '<p class="small">No playbooks yet.</p>'}</section>
+    <section class='panel'><h2>Engagement Metrics</h2>{_table(['Date','Name','Value','Unit','Playbook'], metric_rows)}</section>
+    """
+    return _layout("playbooks", project, body, flash=flash, detail=detail, view=view)
 
 
 def _render_docs(project: str, flash: str = "", detail: Any | None = None, view: str = "html") -> str:
@@ -1013,6 +1139,7 @@ def ui_proposals_generate(
     project: str = Form(...),
     target: str = Form(...),
     purpose: str = Form("recon"),
+    stage: str = Form(""),
     profile: str = Form("balanced"),
     providers: str = Form("codex,claude,gemini"),
     discoveries: str = Form(""),
@@ -1027,6 +1154,7 @@ def ui_proposals_generate(
             "project": project,
             "target": target,
             "purpose": purpose,
+            "stage": stage,
             "profile": profile,
             "providers": provider_list,
             "discoveries": disc,
@@ -1039,6 +1167,113 @@ def ui_proposals_generate(
         proposal=out if code == 200 else None,
         view=view,
     )
+
+
+@app.get("/ui/playbooks", response_class=HTMLResponse)
+def page_playbooks(project: str = Query(default="demo"), view: str = Query(default="html")) -> str:
+    return _render_playbooks(project=project, view=view)
+
+
+@app.post("/ui/playbooks/create", response_class=HTMLResponse)
+def ui_playbooks_create(
+    project: str = Form(...),
+    target: str = Form(...),
+    objective: str = Form(""),
+    profile: str = Form("balanced"),
+    session_id: str = Form(""),
+    discoveries: str = Form(""),
+    view: str = Form("html"),
+) -> str:
+    disc = [x.strip() for x in discoveries.splitlines() if x.strip()]
+    code, out = _fetch_json(
+        "POST",
+        "/playbooks/web",
+        {
+            "project": project,
+            "target": target,
+            "objective": objective,
+            "profile": profile,
+            "session_id": session_id or None,
+            "discoveries": disc,
+        },
+    )
+    return _render_playbooks(project=project, flash=f"/playbooks/web status={code}", detail=out, view=view)
+
+
+@app.post("/ui/playbooks/stage/approve", response_class=HTMLResponse)
+def ui_playbook_stage_approve(
+    project: str = Form(...),
+    playbook_id: str = Form(...),
+    stage_id: str = Form(...),
+    reviewer: str = Form("ui"),
+    auto_confirm: int = Form(1),
+    view: str = Form("html"),
+) -> str:
+    code, out = _fetch_json(
+        "POST",
+        f"/playbooks/{playbook_id}/stages/{stage_id}/approve",
+        {"reviewer": reviewer, "auto_confirm": bool(auto_confirm), "reason": ""},
+    )
+    return _render_playbooks(
+        project=project,
+        flash=f"/playbooks/{playbook_id}/stages/{stage_id}/approve status={code}",
+        detail=out,
+        view=view,
+    )
+
+
+@app.post("/ui/playbooks/stage/reject", response_class=HTMLResponse)
+def ui_playbook_stage_reject(
+    project: str = Form(...),
+    playbook_id: str = Form(...),
+    stage_id: str = Form(...),
+    reviewer: str = Form("ui"),
+    reason: str = Form("rejected from UI review"),
+    view: str = Form("html"),
+) -> str:
+    code, out = _fetch_json(
+        "POST",
+        f"/playbooks/{playbook_id}/stages/{stage_id}/reject",
+        {"reviewer": reviewer, "auto_confirm": False, "reason": reason},
+    )
+    return _render_playbooks(
+        project=project,
+        flash=f"/playbooks/{playbook_id}/stages/{stage_id}/reject status={code}",
+        detail=out,
+        view=view,
+    )
+
+
+@app.post("/ui/metrics/create", response_class=HTMLResponse)
+def ui_metrics_create(
+    project: str = Form(...),
+    metric_name: str = Form(...),
+    metric_value: float = Form(...),
+    playbook_id: str = Form(""),
+    session_id: str = Form(""),
+    metric_date: str = Form(""),
+    unit: str = Form(""),
+    notes: str = Form(""),
+    tags: str = Form(""),
+    view: str = Form("html"),
+) -> str:
+    tag_list = [x.strip() for x in tags.split(",") if x.strip()]
+    code, out = _fetch_json(
+        "POST",
+        "/metrics/engagement",
+        {
+            "project": project,
+            "metric_name": metric_name,
+            "metric_value": metric_value,
+            "playbook_id": playbook_id or None,
+            "session_id": session_id or None,
+            "metric_date": metric_date,
+            "unit": unit,
+            "notes": notes,
+            "tags": tag_list,
+        },
+    )
+    return _render_playbooks(project=project, flash=f"/metrics/engagement status={code}", detail=out, view=view)
 
 
 @app.post("/ui/facts/{fact_id}/approve", response_class=HTMLResponse)
@@ -1143,6 +1378,8 @@ def ui_jobs_create(
             return _render_cracking(project=project, flash="No command provided", view=view)
         if page == "proposals":
             return _render_proposals(project=project, flash="No command provided", view=view)
+        if page == "playbooks":
+            return _render_playbooks(project=project, flash="No command provided", view=view)
         return _render_recon(project=project, flash="No command provided", view=view)
 
     create_code, created = _fetch_json(
@@ -1173,6 +1410,8 @@ def ui_jobs_create(
         return _render_cracking(project=project, flash=flash, detail=detail, view=view)
     if page == "proposals":
         return _render_proposals(project=project, flash=flash, detail=detail, view=view)
+    if page == "playbooks":
+        return _render_playbooks(project=project, flash=flash, detail=detail, view=view)
     return _render_recon(project=project, flash=flash, detail=detail, view=view)
 
 

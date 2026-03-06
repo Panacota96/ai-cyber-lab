@@ -14,9 +14,10 @@ For an operator-first quick runbook, see [HOW_TO_USE.md](HOW_TO_USE.md).
 | `libs/tools/tool_profiles.py` | Curated tool profiles (`baseline`, `web`, `ad`, `expanded`) and allowlist resolution | Scale allowed-tool set by engagement type while staying explicit |
 | `apps/ui/main.py` | Web dashboard for route/session/log/report actions | Avoid raw API/curl workflows |
 | `libs/proposals.py` | Local CLI adapters + ensemble proposals (`/proposals/commands`) | Compare Codex/Claude/Gemini command ideas before execution |
+| `libs/playbooks.py` | Staged web playbook templates (`discover` to `report-draft`) | Semi-autonomous execution with explicit human approvals |
 | `libs/graph_backend.py` | Graph backend abstraction (`sqlite` fallback, optional `neo4j`) | Dynamic relationship graph at larger scale |
 | `libs/command_planner.py` | Profile-based command plan generator (`stealth/balanced/aggressive`) | Recon/cracking command suggestion by target |
-| `libs/workbench_db.py` | SQLite index for sessions/jobs/findings/evidence/facts | Timeline, traceability, and cross-session querying |
+| `libs/workbench_db.py` | SQLite index for sessions/jobs/findings/evidence/facts/playbooks/metrics | Timeline, traceability, and profitability tracking |
 | `libs/job_worker.py` | Queue worker that executes confirmed jobs via tool-exec | Queue+confirm command execution model |
 | `apps/orchestrator/graph.py` | Router logic (keyword or optional LLM) and agent dispatch | Route tuning and regression checks |
 | `apps/orchestrator/deps.py` | Dependency probing for Qdrant/Ollama/Langfuse | Troubleshooting and readiness checks |

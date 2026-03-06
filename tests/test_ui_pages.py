@@ -21,6 +21,7 @@ def test_ui_pages_render_without_backend(monkeypatch):
         "/",
         "/ui/recon",
         "/ui/proposals",
+        "/ui/playbooks",
         "/ui/cracking",
         "/ui/docs",
         "/ui/sessions",

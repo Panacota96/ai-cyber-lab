@@ -2,6 +2,46 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.5.3] - 2026-03-06
+### Added
+- New staged web playbook generation module: `libs/playbooks.py`.
+  - Stage model: `discover`, `fingerprint`, `content-enum`, `vuln-validate`, `report-draft`.
+  - Deterministic command batches built from planner patterns (`nmap`, `httpx`, `whatweb`, `ffuf`, `nuclei`).
+- New workbench persistence for semi-autonomous execution and profitability tracking:
+  - `playbooks` table
+  - `playbook_stages` table
+  - `engagement_metrics` table
+- New DB helpers in `libs/workbench_db.py`:
+  - `create_playbook`, `get_playbook`, `list_playbooks`, `list_playbook_stages`
+  - `approve_playbook_stage`, `reject_playbook_stage`
+  - `record_engagement_metric`, `list_engagement_metrics`, `profitability_summary`
+- New orchestrator APIs:
+  - `POST /playbooks/web`
+  - `GET /playbooks`
+  - `GET /playbooks/{playbook_id}`
+  - `POST /playbooks/{playbook_id}/stages/{stage_id}/approve`
+  - `POST /playbooks/{playbook_id}/stages/{stage_id}/reject`
+  - `POST /metrics/engagement`
+  - `GET /metrics/engagement`
+  - `GET /metrics/profitability`
+- New parsers:
+  - `libs/tools/parsers/httpx_parser.py`
+  - `libs/tools/parsers/nuclei_parser.py`
+- New tests:
+  - `tests/test_playbooks.py`
+  - `tests/test_playbooks_metrics_db.py`
+
+### Changed
+- Proposal scoring now accepts optional stage context (`stage`) and applies stage-aware quality weights in `libs/proposals.py`.
+- `POST /proposals/commands` now accepts the `stage` field.
+- Job worker fact extraction now parses `httpx` and `nuclei` output into structured entities/relations.
+- UI now includes a dedicated Playbooks workspace:
+  - new page `/ui/playbooks`
+  - stage approval/rejection controls
+  - engagement metrics capture and KPI visibility
+- UI proposal form now includes stage selection for better recommendation quality alignment.
+- `tests/test_ui_pages.py` now includes coverage for `/ui/playbooks`.
+
 ## [0.5.2] - 2026-03-06
 ### Added
 - Local-only AI operating controls in config/env:
