@@ -1,9 +1,0 @@
-*   Trying 154.57.164.76:30092...
-* Connected to 154.57.164.76 (154.57.164.76) port 30092 (#0)
-> HEAD / HTTP/1.1
-> Host: 154.57.164.76:30092
-> User-Agent: curl/7.88.1
-> Accept: */*
-> 
-* Received HTTP/0.9 when not allowed
-* Closing connection 0

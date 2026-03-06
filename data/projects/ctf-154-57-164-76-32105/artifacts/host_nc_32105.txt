@@ -1,2 +1,0 @@
-[2026-03-05T21:31:44+01:00] host nc check
-154-57-164-76.static.isp.htb.systems [154.57.164.76] 32105 (?) : Connection refused

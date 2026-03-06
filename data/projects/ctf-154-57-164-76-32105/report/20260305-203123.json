@@ -1,9 +1,0 @@
-{
-  "title": "Report Generation",
-  "timestamp_utc": "2026-03-05T20:31:23.476900+00:00",
-  "query": "generate markdown report and writeup from project notes",
-  "session_id": null,
-  "log_lines_used": 3,
-  "evidence_items": 0,
-  "output": "/workspace/data/projects/ctf-154-57-164-76-32105/report/auto_report.md"
-}

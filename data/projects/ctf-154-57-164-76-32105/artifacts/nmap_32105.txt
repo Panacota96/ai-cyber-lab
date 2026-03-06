@@ -1,9 +1,0 @@
-# Nmap 7.93 scan initiated Thu Mar  5 20:28:14 2026 as: nmap -sC -sV -Pn -p 32105 -oN /workspace/data/projects/ctf-154-57-164-76-32105/artifacts/nmap_32105.txt 154.57.164.76
-Nmap scan report for 154-57-164-76.static.isp.htb.systems (154.57.164.76)
-Host is up (0.012s latency).
-
-PORT      STATE  SERVICE VERSION
-32105/tcp closed unknown
-
-Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
-# Nmap done at Thu Mar  5 20:28:20 2026 -- 1 IP address (1 host up) scanned in 5.97 seconds

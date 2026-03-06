@@ -1,0 +1,6 @@
+[2026-03-06T23:11:40.712Z] [INFO] Received command execution request: ping -c 4 8.8.8.8
+[2026-03-06T23:11:43.779Z] [INFO] Command 1772838700723zavyhfp completed successfully | Meta: {"command":"ping -c 4 8.8.8.8"}
+[2026-03-06T23:12:06.144Z] [INFO] Received command execution request: ping -c 4 http://challenge01.root-me.org/web-serveur/ch1/
+[2026-03-06T23:12:06.166Z] [ERROR] Command 1772838726148vz6elvq failed | Meta: {"command":"ping -c 4 http://challenge01.root-me.org/web-serveur/ch1/","error":{}}
+[2026-03-06T23:12:34.330Z] [INFO] Received command execution request: ping -c 4 challenge01.root-me.org
+[2026-03-06T23:12:37.388Z] [INFO] Command 17728387543341lu5k2u completed successfully | Meta: {"command":"ping -c 4 challenge01.root-me.org"}

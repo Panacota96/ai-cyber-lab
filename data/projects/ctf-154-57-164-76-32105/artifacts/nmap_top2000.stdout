@@ -1,8 +1,0 @@
-Starting Nmap 7.93 ( https://nmap.org ) at 2026-03-05 20:38 UTC
-Nmap scan report for 154-57-164-76.static.isp.htb.systems (154.57.164.76)
-Host is up (0.013s latency).
-Not shown: 1866 filtered tcp ports (no-response), 133 closed tcp ports (reset)
-PORT     STATE SERVICE
-8008/tcp open  http
-
-Nmap done: 1 IP address (1 host up) scanned in 1.51 seconds

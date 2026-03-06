@@ -1,1 +1,0 @@
-"""Tool execution microservice package."""

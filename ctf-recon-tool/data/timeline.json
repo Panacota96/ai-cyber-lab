@@ -1,0 +1,26 @@
+[
+  {
+    "type": "command",
+    "command": "ping -c 4 8.8.8.8",
+    "status": "success",
+    "output": "PING 8.8.8.8 (8.8.8.8) 56(84) bytes of data.\n64 bytes from 8.8.8.8: icmp_seq=1 ttl=63 time=7.45 ms\n64 bytes from 8.8.8.8: icmp_seq=2 ttl=63 time=8.92 ms\n64 bytes from 8.8.8.8: icmp_seq=3 ttl=63 time=3.68 ms\n64 bytes from 8.8.8.8: icmp_seq=4 ttl=63 time=4.13 ms\n\n--- 8.8.8.8 ping statistics ---\n4 packets transmitted, 4 received, 0% packet loss, time 3004ms\nrtt min/avg/max/mdev = 3.684/6.048/8.921/2.206 ms\n",
+    "id": "1772838700723zavyhfp",
+    "timestamp": "2026-03-06T23:11:40.723Z"
+  },
+  {
+    "type": "command",
+    "command": "ping -c 4 http://challenge01.root-me.org/web-serveur/ch1/",
+    "status": "failed",
+    "output": "Command failed: ping -c 4 http://challenge01.root-me.org/web-serveur/ch1/\nping: http://challenge01.root-me.org/web-serveur/ch1/: Name or service not known\n",
+    "id": "1772838726148vz6elvq",
+    "timestamp": "2026-03-06T23:12:06.148Z"
+  },
+  {
+    "type": "command",
+    "command": "ping -c 4 challenge01.root-me.org",
+    "status": "success",
+    "output": "PING challenge01.root-me.org (212.129.38.224) 56(84) bytes of data.\n64 bytes from 212.129.38.224 (212.129.38.224): icmp_seq=1 ttl=63 time=4.89 ms\n64 bytes from 212.129.38.224 (212.129.38.224): icmp_seq=2 ttl=63 time=5.58 ms\n64 bytes from 212.129.38.224 (212.129.38.224): icmp_seq=3 ttl=63 time=7.13 ms\n64 bytes from 212.129.38.224 (212.129.38.224): icmp_seq=4 ttl=63 time=8.46 ms\n\n--- challenge01.root-me.org ping statistics ---\n4 packets transmitted, 4 received, 0% packet loss, time 3005ms\nrtt min/avg/max/mdev = 4.887/6.513/8.455/1.384 ms\n",
+    "id": "17728387543341lu5k2u",
+    "timestamp": "2026-03-06T23:12:34.334Z"
+  }
+]

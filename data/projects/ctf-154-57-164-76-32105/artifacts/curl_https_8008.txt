@@ -1,6 +1,0 @@
-*   Trying 154.57.164.76:8008...
-* Connected to 154.57.164.76 (154.57.164.76) port 8008 (#0)
-* ALPN: offers h2,http/1.1
-} [5 bytes data]
-* TLSv1.3 (OUT), TLS handshake, Client hello (1):
-} [512 bytes data]
