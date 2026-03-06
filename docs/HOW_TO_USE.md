@@ -61,7 +61,7 @@ xdg-open http://127.0.0.1:8091
 ```
 
 Main pages:
-- `/ui/recon`: target planning + command queue/confirm
+- `/ui/recon`: adaptive target planning + selectable recon options + queue/confirm
 - `/ui/proposals`: Codex/Claude/Gemini proposals + ensemble review
 - `/ui/playbooks`: staged web playbooks + stage approval + profitability metrics
 - `/ui/cracking`: cracking plans (authorized labs only)

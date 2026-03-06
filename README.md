@@ -215,7 +215,7 @@ bash scripts/start_pentest_target.sh 10.10.10.10
 
 ## Workbench UI (Multi-Page)
 The UI now provides purpose-specific pages:
-- `http://127.0.0.1:8091/ui/recon` (target input, command planning, queue+confirm execution)
+- `http://127.0.0.1:8091/ui/recon` (adaptive command planning with option checklist, memory dedupe, queue controls)
 - `http://127.0.0.1:8091/ui/proposals` (Codex/Claude/Gemini proposals + ensemble review)
 - `http://127.0.0.1:8091/ui/playbooks` (staged web playbooks + stage approvals + profitability KPIs)
 - `http://127.0.0.1:8091/ui/cracking` (authorized lab cracking command planning + queue)

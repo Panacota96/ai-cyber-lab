@@ -107,6 +107,10 @@ class PlannerRequest(BaseModel):
     purpose: str = "recon"
     profile: str = "balanced"
     discoveries: list[str] = Field(default_factory=list)
+    session_id: str | None = None
+    selected_options: list[str] = Field(default_factory=list)
+    allow_repeat: bool = False
+    max_commands: int = Field(default=12, ge=1, le=50)
 
 
 class ProposalRequest(BaseModel):
@@ -447,23 +451,47 @@ def route(
 
 @app.post("/planner/commands")
 def planner_commands(req: PlannerRequest) -> dict[str, Any]:
+    safe_project = _slug(req.project)
+    planner_session_id = req.session_id
+    if not planner_session_id:
+        current = get_current_session(safe_project) or {}
+        planner_session_id = str(current.get("session_id", "")).strip() or None
+
+    executed_commands: list[list[str]] = []
+    if planner_session_id:
+        jobs = list_jobs(safe_project, limit=2000, session_id=planner_session_id)
+        for job in jobs:
+            status = str(job.get("status", "")).strip().lower()
+            if status not in {"queued", "running", "completed"}:
+                continue
+            cmd = job.get("command_json", [])
+            if isinstance(cmd, list) and cmd:
+                executed_commands.append([str(x) for x in cmd if str(x).strip()])
+
     out = build_command_plan(
-        project=req.project,
+        project=safe_project,
         target_input=req.target,
         purpose=req.purpose,
         profile=req.profile,
         discoveries=req.discoveries,
+        selected_options=req.selected_options,
+        executed_commands=executed_commands,
+        allow_repeat=req.allow_repeat,
+        max_commands=req.max_commands,
     )
+    out["session_id"] = planner_session_id or ""
     logger.info(
         "planner generated commands",
         extra={
             "event": "planner_generated",
             "details": {
-                "project": req.project,
+                "project": safe_project,
                 "target": out.get("target", ""),
                 "purpose": req.purpose,
                 "profile": req.profile,
                 "commands": len(out.get("commands", [])),
+                "suppressed": len(out.get("suppressed_commands", [])),
+                "memory_hits": int(out.get("memory_hits", 0)),
             },
         },
     )

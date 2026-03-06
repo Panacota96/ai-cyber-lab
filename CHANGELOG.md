@@ -2,6 +2,39 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.5.4] - 2026-03-06
+### Added
+- Adaptive recon planner in `libs/command_planner.py`:
+  - stage-aware workflow (`host-discovery`, `service-enum`, `web-enum`, `vuln-validate`)
+  - explicit option catalog with selectable IDs (`web-content-dirs`, `web-vuln-validate`, etc.)
+  - conditional suggestions based on discoveries (e.g. web enum only after web signal)
+  - session-memory de-dup support via executed command fingerprints
+  - suppression reporting (`suppressed_commands`, `memory_hits`)
+- New planner unit tests:
+  - `tests/test_command_planner.py`
+
+### Changed
+- `POST /planner/commands` request now supports:
+  - `session_id`
+  - `selected_options`
+  - `allow_repeat`
+  - `max_commands`
+- `POST /planner/commands` now includes richer response metadata:
+  - `workflow_stage`
+  - `signals`
+  - `selection_summary`
+  - `available_options`
+  - `suppressed_commands`
+  - `memory_hits`
+- Recon UI (`/ui/recon`) now provides:
+  - option checklist for recon workflow selection
+  - explicit queue mode selector (`manual` vs `queue_safe`)
+  - allow-repeat toggle and max-command control
+  - suppressed-command visibility and memory-hit indicators
+- Graph fact review submit handling is hardened:
+  - fixed malformed hidden `include_pending` value rendering
+  - approve/reject handlers now parse `include_pending` safely from string flags
+
 ## [0.5.3] - 2026-03-06
 ### Added
 - New staged web playbook generation module: `libs/playbooks.py`.

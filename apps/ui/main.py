@@ -231,6 +231,18 @@ def _session_id(project: str) -> str:
     return str(current.get("session_id", ""))
 
 
+def _as_bool_flag(value: Any) -> bool:
+    text = str(value).strip().lower()
+    return text in {"1", "true", "yes", "on"}
+
+
+def _as_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
 # -----------------------------
 # page renderers
 # -----------------------------
@@ -239,6 +251,7 @@ def _render_recon(
     flash: str = "",
     detail: Any | None = None,
     plan: dict[str, Any] | None = None,
+    form_state: dict[str, Any] | None = None,
     view: str = "html",
 ) -> str:
     _, jobs_resp = _fetch_json("GET", f"/jobs?project={project}&limit=40")
@@ -247,6 +260,133 @@ def _render_recon(
     jobs = jobs_resp.get("jobs", []) if isinstance(jobs_resp, dict) else []
     facts = facts_resp.get("facts", []) if isinstance(facts_resp, dict) else []
     sid = _session_id(project)
+    form_state = form_state or {}
+
+    purpose = str(form_state.get("purpose", "recon"))
+    profile = str(form_state.get("profile", "balanced"))
+    target = str(form_state.get("target", ""))
+    discoveries_text = str(form_state.get("discoveries", ""))
+    selected_option_ids = {
+        str(x).strip() for x in form_state.get("selected_options", []) if str(x).strip()
+    }
+    allow_repeat = bool(form_state.get("allow_repeat", False))
+    max_commands = _as_int(form_state.get("max_commands", 12), 12)
+    queue_mode = str(form_state.get("queue_mode", "manual"))
+
+    default_option_rows = [
+        {
+            "id": "host-discovery-fast",
+            "label": "Host Discovery (Top Ports)",
+            "description": "Fast top-ports baseline",
+            "stage": "host-discovery",
+            "risk": "low",
+            "default_selected": False,
+        },
+        {
+            "id": "host-discovery-full",
+            "label": "Host Discovery (Full TCP)",
+            "description": "Comprehensive full TCP discovery",
+            "stage": "host-discovery",
+            "risk": "medium",
+            "default_selected": True,
+        },
+        {
+            "id": "service-default",
+            "label": "Service Enumeration",
+            "description": "Nmap service/version + default scripts",
+            "stage": "service-enum",
+            "risk": "low",
+            "default_selected": True,
+        },
+        {
+            "id": "web-probe",
+            "label": "Web Probe",
+            "description": "httpx probe for status/title/tech hints",
+            "stage": "web-fingerprint",
+            "risk": "low",
+            "default_selected": True,
+        },
+        {
+            "id": "web-fingerprint",
+            "label": "Web Fingerprint",
+            "description": "whatweb stack baseline",
+            "stage": "web-fingerprint",
+            "risk": "low",
+            "default_selected": True,
+        },
+        {
+            "id": "web-content-light",
+            "label": "Web Content Enum (Light)",
+            "description": "ffuf with common wordlist",
+            "stage": "web-content-enum",
+            "risk": "medium",
+            "default_selected": True,
+        },
+        {
+            "id": "web-content-deep",
+            "label": "Web Content Enum (Deep)",
+            "description": "ffuf with larger raft list",
+            "stage": "web-content-enum",
+            "risk": "medium",
+            "default_selected": False,
+        },
+        {
+            "id": "web-content-dirs",
+            "label": "Dirb Enumeration",
+            "description": "dirb directory brute-force",
+            "stage": "web-content-enum",
+            "risk": "medium",
+            "default_selected": False,
+        },
+        {
+            "id": "web-vuln-validate",
+            "label": "Web Validation Scan",
+            "description": "nuclei validation templates",
+            "stage": "vuln-validate",
+            "risk": "medium",
+            "default_selected": False,
+        },
+        {
+            "id": "smb-enum",
+            "label": "SMB Enumeration",
+            "description": "enum4linux when SMB ports are present",
+            "stage": "service-enum",
+            "risk": "medium",
+            "default_selected": False,
+        },
+        {
+            "id": "ssh-enum",
+            "label": "SSH Enumeration",
+            "description": "SSH algorithm and host-key metadata",
+            "stage": "service-enum",
+            "risk": "low",
+            "default_selected": False,
+        },
+    ]
+    available_options = (
+        plan.get("available_options", [])
+        if isinstance(plan, dict) and isinstance(plan.get("available_options"), list)
+        else default_option_rows
+    )
+
+    option_rows = ""
+    for option in available_options:
+        if not isinstance(option, dict):
+            continue
+        option_id = str(option.get("id", "")).strip()
+        if not option_id:
+            continue
+        default_checked = bool(option.get("default_selected", False))
+        checked = option_id in selected_option_ids or (not selected_option_ids and default_checked)
+        option_rows += (
+            "<div class='card'>"
+            f"<label><input type='checkbox' name='selected_options' value='{_escape(option_id)}'"
+            f"{' checked' if checked else ''}/> {_escape(option.get('label', option_id))}</label>"
+            f"<div class='small'>stage: {_escape(option.get('stage', 'recon'))} | "
+            f"risk: {_escape(option.get('risk', 'medium'))}</div>"
+            f"<div class='small'>{_escape(option.get('description', ''))}</div>"
+            "</div>"
+        )
 
     cards = ""
     if isinstance(plan, dict):
@@ -260,8 +400,11 @@ def _render_recon(
               <div class='row'>
                 {_status_chip(str(cmd.get('risk','low')))}
                 <span class='chip'>timeout {int(cmd.get('timeout_sec',120))}s</span>
+                <span class='chip'>stage: {_escape(cmd.get('stage','recon'))}</span>
+                <span class='chip'>option: {_escape(cmd.get('option_id','n/a'))}</span>
               </div>
               <p class='small'>{_escape(cmd.get('rationale',''))}</p>
+              <p class='small'>why: {_escape(cmd.get('why',''))}</p>
               <form method='post' action='/ui/jobs/create'>
                 <input type='hidden' name='project' value='{_escape(project)}'/>
                 <input type='hidden' name='session_id' value='{_escape(sid)}'/>
@@ -277,6 +420,19 @@ def _render_recon(
               </form>
             </div>
             """
+
+    suppressed_rows = []
+    if isinstance(plan, dict):
+        for item in plan.get("suppressed_commands", []):
+            if not isinstance(item, dict):
+                continue
+            suppressed_rows.append(
+                [
+                    _escape(item.get("title", "")),
+                    _escape(item.get("reason", "")),
+                    _escape(" ".join(item.get("cmd", [])) if isinstance(item.get("cmd"), list) else ""),
+                ]
+            )
 
     job_rows = []
     for item in jobs[:30]:
@@ -309,17 +465,35 @@ def _render_recon(
     body = f"""
     <div class='grid'>
       <section class='panel'>
-        <h2>Generate Recon Plan</h2>
+        <h2>Generate Adaptive Recon Plan</h2>
         <form method='post' action='/ui/recon/plan'>
           <input type='hidden' name='view' value='{_escape(view)}'/>
+          <input type='hidden' name='session_id' value='{_escape(sid)}'/>
           <label>Project</label><input name='project' value='{_escape(project)}'/>
-          <label>Target (IP/FQDN)</label><input name='target' required placeholder='10.10.10.10'/>
+          <label>Target (IP/FQDN)</label><input name='target' required placeholder='10.10.10.10' value='{_escape(target)}'/>
           <label>Purpose</label>
-          <select name='purpose'><option value='recon'>recon</option><option value='scanning'>scanning</option></select>
+          <select name='purpose'>
+            <option value='recon'{' selected' if purpose == 'recon' else ''}>recon</option>
+            <option value='scanning'{' selected' if purpose == 'scanning' else ''}>scanning</option>
+            <option value='enum'{' selected' if purpose == 'enum' else ''}>enum</option>
+          </select>
           <label>Profile</label>
-          <select name='profile'><option value='stealth'>stealth</option><option value='balanced' selected>balanced</option><option value='aggressive'>aggressive</option></select>
+          <select name='profile'>
+            <option value='stealth'{' selected' if profile == 'stealth' else ''}>stealth</option>
+            <option value='balanced'{' selected' if profile == 'balanced' else ''}>balanced</option>
+            <option value='aggressive'{' selected' if profile == 'aggressive' else ''}>aggressive</option>
+          </select>
+          <label>Queue Mode</label>
+          <select name='queue_mode'>
+            <option value='manual'{' selected' if queue_mode == 'manual' else ''}>manual (recommended)</option>
+            <option value='queue_safe'{' selected' if queue_mode == 'queue_safe' else ''}>queue low/medium automatically</option>
+          </select>
+          <label>Max Commands</label><input name='max_commands' value='{_escape(max_commands)}'/>
+          <label><input type='checkbox' name='allow_repeat' value='1'{' checked' if allow_repeat else ''}/> Allow repeated commands from this session</label>
           <label>Discoveries (one per line)</label>
-          <textarea name='discoveries' placeholder='80/tcp open http'></textarea>
+          <textarea name='discoveries' placeholder='80/tcp open http'>{_escape(discoveries_text)}</textarea>
+          <label>Available Options</label>
+          <div class='gallery'>{option_rows}</div>
           <button type='submit'>Generate Commands</button>
         </form>
       </section>
@@ -339,7 +513,16 @@ def _render_recon(
         </form>
       </section>
     </div>
-    <section class='panel'><h2>Planned Commands</h2><div class='gallery'>{cards or '<p class="small">Generate plan to view command cards.</p>'}</div></section>
+    <section class='panel'>
+      <h2>Planned Commands</h2>
+      <div class='row'>
+        <span class='chip'>workflow_stage: {_escape(plan.get('workflow_stage','n/a') if isinstance(plan, dict) else 'n/a')}</span>
+        <span class='chip'>memory_hits: {_escape(plan.get('memory_hits',0) if isinstance(plan, dict) else 0)}</span>
+        <span class='chip'>suppressed: {_escape(len(plan.get('suppressed_commands',[])) if isinstance(plan, dict) and isinstance(plan.get('suppressed_commands'), list) else 0)}</span>
+      </div>
+      <div class='gallery'>{cards or '<p class="small">Generate plan to view command cards.</p>'}</div>
+    </section>
+    <section class='panel'><h2>Suppressed Commands</h2>{_table(['Command','Reason','Cmd'], suppressed_rows)}</section>
     <section class='panel'><h2>Recent Jobs</h2>{_table(['Status','Purpose','Target','Command','Updated'], job_rows)}</section>
     <section class='panel'><h2>Approved Facts Snapshot</h2>{_table(['Status','Kind','Discovery','Source','Confidence'], fact_rows)}</section>
     """
@@ -382,9 +565,9 @@ def _render_graph(
         fact_id = str(f.get("fact_id", ""))
         actions = (
             f"<form method='post' action='/ui/facts/{_escape(fact_id)}/approve' style='display:inline'>"
-            f"<input type='hidden' name='project' value='{_escape(project)}'/><input type='hidden' name='session_id' value='{_escape(session_id)}'/><input type='hidden' name='include_pending' value={'1' if include_pending else '0'}/><input type='hidden' name='focus_kind' value='{_escape(focus_kind)}'/><input type='hidden' name='min_confidence' value='{_escape(min_confidence)}'/><input type='hidden' name='view' value='{_escape(view)}'/><button type='submit'>Approve</button></form> "
+            f"<input type='hidden' name='project' value='{_escape(project)}'/><input type='hidden' name='session_id' value='{_escape(session_id)}'/><input type='hidden' name='include_pending' value='{'1' if include_pending else '0'}'/><input type='hidden' name='focus_kind' value='{_escape(focus_kind)}'/><input type='hidden' name='min_confidence' value='{_escape(min_confidence)}'/><input type='hidden' name='view' value='{_escape(view)}'/><button type='submit'>Approve</button></form> "
             f"<form method='post' action='/ui/facts/{_escape(fact_id)}/reject' style='display:inline'>"
-            f"<input type='hidden' name='project' value='{_escape(project)}'/><input type='hidden' name='session_id' value='{_escape(session_id)}'/><input type='hidden' name='include_pending' value={'1' if include_pending else '0'}/><input type='hidden' name='focus_kind' value='{_escape(focus_kind)}'/><input type='hidden' name='min_confidence' value='{_escape(min_confidence)}'/><input type='hidden' name='view' value='{_escape(view)}'/><button class='secondary' type='submit'>Reject</button></form>"
+            f"<input type='hidden' name='project' value='{_escape(project)}'/><input type='hidden' name='session_id' value='{_escape(session_id)}'/><input type='hidden' name='include_pending' value='{'1' if include_pending else '0'}'/><input type='hidden' name='focus_kind' value='{_escape(focus_kind)}'/><input type='hidden' name='min_confidence' value='{_escape(min_confidence)}'/><input type='hidden' name='view' value='{_escape(view)}'/><button class='secondary' type='submit'>Reject</button></form>"
         )
         review_rows.append(
             [
@@ -1092,20 +1275,94 @@ def ui_recon_plan(
     target: str = Form(...),
     purpose: str = Form("recon"),
     profile: str = Form("balanced"),
+    session_id: str = Form(""),
     discoveries: str = Form(""),
+    selected_options: list[str] = Form(default_factory=list),
+    allow_repeat: str = Form(default=""),
+    max_commands: int = Form(12),
+    queue_mode: str = Form("manual"),
     view: str = Form("html"),
 ) -> str:
     disc = [x.strip() for x in discoveries.splitlines() if x.strip()]
+    allow_repeat_flag = _as_bool_flag(allow_repeat)
+    form_state = {
+        "target": target,
+        "purpose": purpose,
+        "profile": profile,
+        "discoveries": discoveries,
+        "selected_options": selected_options,
+        "allow_repeat": allow_repeat_flag,
+        "max_commands": max_commands,
+        "queue_mode": queue_mode,
+    }
     code, out = _fetch_json(
         "POST",
         "/planner/commands",
-        {"project": project, "target": target, "purpose": purpose, "profile": profile, "discoveries": disc},
+        {
+            "project": project,
+            "target": target,
+            "purpose": purpose,
+            "profile": profile,
+            "session_id": session_id or None,
+            "discoveries": disc,
+            "selected_options": selected_options,
+            "allow_repeat": allow_repeat_flag,
+            "max_commands": max_commands,
+        },
     )
+    detail: Any = out
+    flash = f"/planner/commands status={code}"
+    if code == 200 and queue_mode == "queue_safe" and isinstance(out, dict):
+        sid = session_id.strip() or _session_id(project)
+        queued = 0
+        skipped = 0
+        errors: list[dict[str, Any]] = []
+        for cmd_item in out.get("commands", []):
+            if not isinstance(cmd_item, dict):
+                continue
+            risk = str(cmd_item.get("risk", "medium")).strip().lower()
+            if risk in {"high", "critical"}:
+                skipped += 1
+                continue
+            cmd = cmd_item.get("cmd", [])
+            if not isinstance(cmd, list) or not cmd:
+                continue
+            create_code, created = _fetch_json(
+                "POST",
+                "/jobs",
+                {
+                    "project": project,
+                    "cmd": cmd,
+                    "timeout_sec": int(cmd_item.get("timeout_sec", 120)),
+                    "session_id": sid or None,
+                    "purpose": str(out.get("purpose", purpose)),
+                    "profile": str(out.get("profile", profile)),
+                    "target": str(out.get("target", target)),
+                    "plan_id": str(out.get("plan_id", "")),
+                    "auto_confirm": False,
+                },
+            )
+            if create_code != 200 or not isinstance(created, dict):
+                errors.append({"cmd": cmd, "create": created})
+                continue
+            job_id = str(created.get("job_id", "")).strip()
+            if not job_id:
+                errors.append({"cmd": cmd, "create": created})
+                continue
+            confirm_code, confirmed = _fetch_json("POST", f"/jobs/{job_id}/confirm", {})
+            if confirm_code == 200:
+                queued += 1
+            else:
+                errors.append({"job_id": job_id, "confirm": confirmed})
+
+        flash = f"/planner/commands status={code} | auto-queued={queued} | skipped_high_risk={skipped}"
+        detail = {"plan": out, "queue": {"queued": queued, "skipped_high_risk": skipped, "errors": errors}}
     return _render_recon(
         project=project,
-        flash=f"/planner/commands status={code}",
-        detail=out,
+        flash=flash,
+        detail=detail,
         plan=out if code == 200 else None,
+        form_state=form_state,
         view=view,
     )
 
@@ -1281,7 +1538,7 @@ def ui_fact_approve(
     fact_id: str,
     project: str = Form(...),
     session_id: str = Form(""),
-    include_pending: int = Form(1),
+    include_pending: str = Form("1"),
     focus_kind: str = Form(""),
     min_confidence: float = Form(0.6),
     view: str = Form("html"),
@@ -1290,7 +1547,7 @@ def ui_fact_approve(
     return _render_graph(
         project=project,
         session_id=session_id,
-        include_pending=bool(include_pending),
+        include_pending=_as_bool_flag(include_pending),
         flash=f"approve fact status={code}",
         detail=out,
         focus_kind=focus_kind,
@@ -1304,7 +1561,7 @@ def ui_fact_reject(
     fact_id: str,
     project: str = Form(...),
     session_id: str = Form(""),
-    include_pending: int = Form(1),
+    include_pending: str = Form("1"),
     focus_kind: str = Form(""),
     min_confidence: float = Form(0.6),
     view: str = Form("html"),
@@ -1313,7 +1570,7 @@ def ui_fact_reject(
     return _render_graph(
         project=project,
         session_id=session_id,
-        include_pending=bool(include_pending),
+        include_pending=_as_bool_flag(include_pending),
         flash=f"reject fact status={code}",
         detail=out,
         focus_kind=focus_kind,
