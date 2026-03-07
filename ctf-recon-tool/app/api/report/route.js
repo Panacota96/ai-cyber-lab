@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSession, getTimeline as getTimelineEvents } from '@/lib/db';
 import { labReport, executiveSummary, technicalWalkthrough, ctfSolution } from '@/lib/report-formats';
+import { isValidSessionId } from '@/lib/security';
 
 const FORMATS = {
   'lab-report': labReport,
@@ -14,7 +15,7 @@ export async function GET(request) {
   const sessionId = searchParams.get('sessionId');
   const format = searchParams.get('format') || 'lab-report';
 
-  if (!sessionId) {
+  if (!sessionId || !isValidSessionId(sessionId)) {
     return NextResponse.json({ error: 'Session ID required' }, { status: 400 });
   }
 

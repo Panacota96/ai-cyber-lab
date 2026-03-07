@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { getTimeline, getSession } from '@/lib/db';
+import { isApiTokenValid, isValidSessionId } from '@/lib/security';
 
 const COACH_SYSTEM_PROMPT = `You are CTF-Coach, an expert CTF machine coach with a phase-driven methodology.
 You will receive a session timeline of executed commands, their outputs, notes, and screenshots.
@@ -32,6 +33,33 @@ Your response MUST follow this exact format:
 
 ---
 Be concise, direct, and technical. Never fabricate command outputs. If the session is empty, suggest starting with a full port scan.`;
+
+const COACH_SKILL_FOCUS = {
+  'enum-target': `Focus on enumeration depth and breadth first.
+- Prioritize attack-surface expansion and service-specific checks.
+- Recommend commands that reveal the highest-value next signal quickly.`,
+  'web-solve': `Focus on web exploitation paths.
+- Prioritize HTTP stack fingerprinting, content discovery, auth/session analysis, and high-probability web vulns.
+- Recommend actionable payloads and follow-up checks for web findings.`,
+  privesc: `Focus on privilege escalation.
+- Prioritize local privilege escalation vectors relevant to the current access level.
+- Recommend commands that confirm exploitable misconfigurations quickly.`,
+  'crypto-solve': `Focus on cryptography challenge workflows.
+- Prioritize identifying encoding/cipher class and fastest practical break path.
+- Recommend verification commands/scripts to confirm recovered plaintext/flag.`,
+  'pwn-solve': `Focus on binary exploitation.
+- Prioritize triage (protections, vuln class, primitives) and shortest reliable exploit chain.
+- Recommend concrete commands/scripts for validation and exploitation.`,
+  'reversing-solve': `Focus on reverse engineering.
+- Prioritize static triage, control-flow extraction, and key-check logic reconstruction.
+- Recommend commands that isolate the verification routine quickly.`,
+  stego: `Focus on steganography analysis.
+- Prioritize metadata, trailing data, embedded payload checks, and LSB workflows.
+- Recommend commands in order of highest expected signal.`,
+  'analyze-file': `Focus on forensic file triage.
+- Prioritize type verification, metadata/strings extraction, entropy/embedded objects, and type-specific checks.
+- Recommend exact commands to classify and extract high-value artifacts.`,
+};
 
 const STREAM_HEADERS = {
   'Content-Type': 'text/plain; charset=utf-8',
@@ -79,12 +107,12 @@ function makeStream(generatorFn) {
   );
 }
 
-async function* streamClaude(userMessage, apiKey) {
+async function* streamClaude(userMessage, apiKey, systemPrompt) {
   const client = new Anthropic({ apiKey: apiKey || process.env.ANTHROPIC_API_KEY });
   const stream = client.messages.stream({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
-    system: COACH_SYSTEM_PROMPT,
+    system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }],
   });
   for await (const event of stream) {
@@ -94,20 +122,20 @@ async function* streamClaude(userMessage, apiKey) {
   }
 }
 
-async function* streamGemini(userMessage, apiKey) {
+async function* streamGemini(userMessage, apiKey, systemPrompt) {
   const { GoogleGenAI } = await import('@google/genai');
   const ai = new GoogleGenAI({ apiKey: apiKey || process.env.GEMINI_API_KEY });
   const response = await ai.models.generateContentStream({
     model: 'gemini-2.5-flash',
     contents: userMessage,
-    config: { systemInstruction: COACH_SYSTEM_PROMPT, maxOutputTokens: 1024 },
+    config: { systemInstruction: systemPrompt, maxOutputTokens: 1024 },
   });
   for await (const chunk of response) {
     if (chunk.text) yield chunk.text;
   }
 }
 
-async function* streamOpenAI(userMessage, apiKey) {
+async function* streamOpenAI(userMessage, apiKey, systemPrompt) {
   const OpenAI = (await import('openai')).default;
   const client = new OpenAI({ apiKey: apiKey || process.env.OPENAI_API_KEY });
   const stream = await client.chat.completions.create({
@@ -115,7 +143,7 @@ async function* streamOpenAI(userMessage, apiKey) {
     max_tokens: 1024,
     stream: true,
     messages: [
-      { role: 'system', content: COACH_SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage },
     ],
   });
@@ -127,10 +155,16 @@ async function* streamOpenAI(userMessage, apiKey) {
 
 export async function POST(request) {
   try {
-    const { sessionId, provider = 'claude', apiKey = '' } = await request.json();
-    if (!sessionId) {
+    if (!isApiTokenValid(request)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const { sessionId, provider = 'claude', apiKey = '', skill = 'enum-target' } = await request.json();
+    if (!sessionId || !isValidSessionId(sessionId)) {
       return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
     }
+
+    const skillFocus = COACH_SKILL_FOCUS[skill] || COACH_SKILL_FOCUS['enum-target'];
+    const systemPrompt = `${COACH_SYSTEM_PROMPT}\n\nSkill Focus (${skill}):\n${skillFocus}`;
 
     const session = getSession(sessionId);
     const events = getTimeline(sessionId);
@@ -151,16 +185,16 @@ Based on this timeline, what is the single best next action to take?`;
     if (provider === 'gemini') {
       const key = apiKey || process.env.GEMINI_API_KEY;
       if (!key) return NextResponse.json({ error: 'Gemini API key required.' }, { status: 503 });
-      return makeStream(() => streamGemini(userMessage, key));
+      return makeStream(() => streamGemini(userMessage, key, systemPrompt));
     }
     if (provider === 'openai') {
       const key = apiKey || process.env.OPENAI_API_KEY;
       if (!key) return NextResponse.json({ error: 'OpenAI API key required.' }, { status: 503 });
-      return makeStream(() => streamOpenAI(userMessage, key));
+      return makeStream(() => streamOpenAI(userMessage, key, systemPrompt));
     }
     const key = apiKey || process.env.ANTHROPIC_API_KEY;
     if (!key) return NextResponse.json({ error: 'Anthropic API key required.' }, { status: 503 });
-    return makeStream(() => streamClaude(userMessage, key));
+    return makeStream(() => streamClaude(userMessage, key, systemPrompt));
 
   } catch (error) {
     console.error('[Coach Error]', error);

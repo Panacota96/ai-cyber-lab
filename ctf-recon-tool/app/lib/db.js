@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { requireValidSessionId, resolvePathWithin } from './security';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
@@ -92,6 +93,7 @@ export function listSessions() {
 
 export function getSession(sessionId) {
   try {
+    requireValidSessionId(sessionId);
     return db.prepare('SELECT id, name, target, difficulty, objective FROM sessions WHERE id = ?').get(sessionId);
   } catch (error) {
     console.error(`Error getting session ${sessionId}:`, error);
@@ -101,9 +103,10 @@ export function getSession(sessionId) {
 
 export function createSession(id, name, { target = null, difficulty = 'medium', objective = null } = {}) {
     try {
+        requireValidSessionId(id);
         const stmt = db.prepare('INSERT INTO sessions (id, name, target, difficulty, objective) VALUES (?, ?, ?, ?, ?)');
         stmt.run(id, name, target, difficulty, objective);
-        const screenshotPath = path.join(SESSIONS_DIR, id, 'screenshots');
+        const screenshotPath = resolvePathWithin(SESSIONS_DIR, id, 'screenshots');
         if (!fs.existsSync(screenshotPath)) {
             fs.mkdirSync(screenshotPath, { recursive: true });
         }
@@ -116,6 +119,7 @@ export function createSession(id, name, { target = null, difficulty = 'medium', 
 
 export function deleteSession(sessionId) {
   try {
+    requireValidSessionId(sessionId);
     const deleteEvents = db.prepare('DELETE FROM timeline_events WHERE session_id = ?');
     const deleteWriteup = db.prepare('DELETE FROM writeups WHERE session_id = ?');
     const deletesess = db.prepare('DELETE FROM sessions WHERE id = ?');
@@ -124,7 +128,7 @@ export function deleteSession(sessionId) {
       deleteWriteup.run(sessionId);
       deletesess.run(sessionId);
     })();
-    const screenshotPath = path.join(SESSIONS_DIR, sessionId);
+    const screenshotPath = resolvePathWithin(SESSIONS_DIR, sessionId);
     if (fs.existsSync(screenshotPath)) {
       fs.rmSync(screenshotPath, { recursive: true, force: true });
     }
@@ -137,6 +141,7 @@ export function deleteSession(sessionId) {
 
 export function getTimeline(sessionId = 'default') {
   try {
+    requireValidSessionId(sessionId);
     return db.prepare('SELECT * FROM timeline_events WHERE session_id = ? ORDER BY timestamp ASC').all(sessionId);
   } catch (error) {
     console.error(`Error reading timeline for session ${sessionId}:`, error);
@@ -146,6 +151,7 @@ export function getTimeline(sessionId = 'default') {
 
 export function addTimelineEvent(sessionId = 'default', event) {
   try {
+    requireValidSessionId(sessionId);
     const id = Date.now().toString() + Math.random().toString(36).substring(2, 9);
     const timestamp = new Date().toISOString();
     const tagsJson = event.tags ? JSON.stringify(event.tags) : null;
@@ -179,6 +185,7 @@ export function addTimelineEvent(sessionId = 'default', event) {
 
 export function getCommandHistory(sessionId, limit = 50) {
   try {
+    requireValidSessionId(sessionId);
     return db.prepare(
       `SELECT id, command, status, timestamp FROM timeline_events
        WHERE session_id = ? AND type = 'command'
@@ -192,14 +199,17 @@ export function getCommandHistory(sessionId, limit = 50) {
 
 export function updateTimelineEvent(sessionId = 'default', id, updates) {
     try {
+        requireValidSessionId(sessionId);
         const keys = Object.keys(updates);
+        if (keys.length === 0) return null;
         const setClause = keys.map(k => `${k} = ?`).join(', ');
         const values = Object.values(updates);
         
         const stmt = db.prepare(`UPDATE timeline_events SET ${setClause} WHERE id = ? AND session_id = ?`);
-        stmt.run(...values, id, sessionId);
+        const result = stmt.run(...values, id, sessionId);
+        if (result.changes === 0) return null;
         
-        return db.prepare('SELECT * FROM timeline_events WHERE id = ?').get(id);
+        return db.prepare('SELECT * FROM timeline_events WHERE id = ? AND session_id = ?').get(id, sessionId);
     } catch (error) {
         console.error(`Error updating timeline event for session ${sessionId}:`, error);
         return null;
@@ -208,6 +218,7 @@ export function updateTimelineEvent(sessionId = 'default', id, updates) {
 
 export function deleteTimelineEvent(sessionId, eventId) {
   try {
+    requireValidSessionId(sessionId);
     const result = db.prepare('DELETE FROM timeline_events WHERE id = ? AND session_id = ?').run(eventId, sessionId);
     return result.changes > 0;
   } catch (error) {
@@ -217,7 +228,8 @@ export function deleteTimelineEvent(sessionId, eventId) {
 }
 
 export function getScreenshotDir(sessionId) {
-  const screenshotPath = path.join(SESSIONS_DIR, sessionId, 'screenshots');
+  requireValidSessionId(sessionId);
+  const screenshotPath = resolvePathWithin(SESSIONS_DIR, sessionId, 'screenshots');
   if (!fs.existsSync(screenshotPath)) {
       fs.mkdirSync(screenshotPath, { recursive: true });
   }
@@ -233,12 +245,14 @@ export function logToDb(level, message, metadata = {}) {
 
 export function getWriteup(sessionId) {
   try {
+    requireValidSessionId(sessionId);
     return db.prepare('SELECT * FROM writeups WHERE session_id = ?').get(sessionId);
   } catch (e) { return null; }
 }
 
 export function saveWriteup(sessionId, content, status = 'draft', visibility = 'draft') {
   try {
+    requireValidSessionId(sessionId);
     const id = Date.now().toString();
     // Save version snapshot before upsert
     const existing = getWriteup(sessionId);
@@ -263,6 +277,7 @@ export function saveWriteup(sessionId, content, status = 'draft', visibility = '
 
 export function getWriteupVersions(sessionId) {
   try {
+    requireValidSessionId(sessionId);
     return db.prepare(
       `SELECT id, version_number, visibility, created_at,
               length(content) as char_count
@@ -274,6 +289,13 @@ export function getWriteupVersions(sessionId) {
 export function getWriteupVersion(versionId) {
   try {
     return db.prepare('SELECT * FROM writeup_versions WHERE id = ?').get(versionId);
+  } catch (e) { return null; }
+}
+
+export function getWriteupVersionForSession(sessionId, versionId) {
+  try {
+    requireValidSessionId(sessionId);
+    return db.prepare('SELECT * FROM writeup_versions WHERE id = ? AND session_id = ?').get(versionId, sessionId);
   } catch (e) { return null; }
 }
 
@@ -293,4 +315,3 @@ export function clearLogs() {
 export function vacuumDb() {
   db.exec('VACUUM');
 }
-

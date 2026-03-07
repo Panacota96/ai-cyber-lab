@@ -137,6 +137,30 @@ docker run -p 3000:3000 \
 
 ---
 
+## Security Controls
+
+To reduce risk when exposing the app outside localhost:
+
+- `ENABLE_COMMAND_EXECUTION=true|false`  
+  Defaults to enabled in development, disabled in production.
+- `ENABLE_ADMIN_API=true|false`  
+  Defaults to enabled in development, disabled in production.
+- `APP_API_TOKEN=<secret>`  
+  When set, mutating API routes require header `x-api-token: <secret>`.
+
+Example:
+
+```bash
+docker run -p 3000:3000 \
+  -e NODE_ENV=production \
+  -e ENABLE_COMMAND_EXECUTION=false \
+  -e ENABLE_ADMIN_API=false \
+  -e APP_API_TOKEN=change-me \
+  helms-paladin
+```
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |

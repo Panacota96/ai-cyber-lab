@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { isApiTokenValid } from '@/lib/security';
 
 // ── Skill system prompts (derived from ctf-writeups/.gemini/skills) ─────────
 
@@ -259,6 +260,9 @@ async function* streamOpenAI(reportContent, apiKey, systemPrompt) {
 
 export async function POST(request) {
   try {
+    if (!isApiTokenValid(request)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     const { reportContent, provider = 'claude', apiKey = '', skill = 'enhance' } = await request.json();
     if (!reportContent) {
       return NextResponse.json({ error: 'reportContent is required' }, { status: 400 });
