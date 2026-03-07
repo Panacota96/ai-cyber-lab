@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSession, getTimelineEvents } from '@/lib/db';
+import { getSession, getTimeline as getTimelineEvents } from '@/lib/db';
 import { generateMarkdownReport } from '@/lib/report-gen';
 
 export async function GET(request) {

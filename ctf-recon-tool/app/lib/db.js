@@ -67,6 +67,15 @@ export function listSessions() {
   }
 }
 
+export function getSession(sessionId) {
+  try {
+    return db.prepare('SELECT id, name FROM sessions WHERE id = ?').get(sessionId);
+  } catch (error) {
+    console.error(`Error getting session ${sessionId}:`, error);
+    return null;
+  }
+}
+
 export function createSession(id, name) {
     try {
         const stmt = db.prepare('INSERT INTO sessions (id, name) VALUES (?, ?)');
@@ -81,6 +90,27 @@ export function createSession(id, name) {
         console.error('Error creating session:', error);
         return null;
     }
+}
+
+export function deleteSession(sessionId) {
+  try {
+    const deleteEvents = db.prepare('DELETE FROM timeline_events WHERE session_id = ?');
+    const deleteWriteup = db.prepare('DELETE FROM writeups WHERE session_id = ?');
+    const deletesess = db.prepare('DELETE FROM sessions WHERE id = ?');
+    db.transaction(() => {
+      deleteEvents.run(sessionId);
+      deleteWriteup.run(sessionId);
+      deletesess.run(sessionId);
+    })();
+    const screenshotPath = path.join(SESSIONS_DIR, sessionId);
+    if (fs.existsSync(screenshotPath)) {
+      fs.rmSync(screenshotPath, { recursive: true, force: true });
+    }
+    return true;
+  } catch (error) {
+    console.error(`Error deleting session ${sessionId}:`, error);
+    return false;
+  }
 }
 
 export function getTimeline(sessionId = 'default') {

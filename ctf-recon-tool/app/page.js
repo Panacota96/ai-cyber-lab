@@ -173,6 +173,18 @@ export default function Home() {
     finally { setIsLoading(false); }
   };
 
+  const deleteSession = async () => {
+    if (currentSession === 'default') return;
+    if (!confirm(`Delete session "${sessions.find(s => s.id === currentSession)?.name}"? This cannot be undone.`)) return;
+    try {
+      setIsLoading(true);
+      await fetch(`/api/sessions?id=${currentSession}`, { method: 'DELETE' });
+      setSessions(prev => prev.filter(s => s.id !== currentSession));
+      setCurrentSession('default');
+    } catch (error) { console.error('Failed to delete session', error); }
+    finally { setIsLoading(false); }
+  };
+
   const generateReport = async () => {
     try {
       setIsLoading(true);
@@ -228,6 +240,9 @@ export default function Home() {
             {sessions.map((s, idx) => <option key={`${s.id}-${idx}`} value={s.id}>{s.name}</option>)}
           </select>
           <button className="btn-secondary" onClick={() => setShowNewSessionModal(true)}>+ New Session</button>
+          {currentSession !== 'default' && (
+            <button className="btn-secondary" onClick={deleteSession} style={{ color: 'var(--accent-danger, #f85149)', borderColor: 'var(--accent-danger, #f85149)' }}>Delete Session</button>
+          )}
           <button className="btn-primary" onClick={generateReport} style={{ background: 'var(--accent-secondary)', color: '#fff' }}>Generate Report</button>
         </div>
       </header>
@@ -437,11 +452,11 @@ export default function Home() {
         .suggestion-list { list-style: none; padding-left: 0.5rem; }
         .btn-suggestion { width: 100%; text-align: left; background: transparent; color: var(--text-muted); font-size: 0.8rem; padding: 0.4rem 0.5rem; border-radius: 4px; border: 1px solid transparent; transition: all 0.2s; }
         .btn-suggestion:hover { background: rgba(57, 211, 83, 0.05); border-color: rgba(57, 211, 83, 0.3); color: var(--accent-primary); }
-        .timeline-container { flex-grow: 1; display: flex; flex-direction: column; padding: 1.5rem; position: relative; }
-        .timeline-feed { flex-grow: 1; overflow-y: auto; padding-right: 1rem; margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
+        .timeline-container { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; padding: 1.5rem; position: relative; overflow-x: hidden; }
+        .timeline-feed { flex-grow: 1; overflow-y: auto; overflow-x: hidden; padding-right: 1rem; margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
         .timeline-event { background: rgba(1, 4, 9, 0.4); border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem; }
         .event-command { font-family: var(--font-mono); font-size: 1rem; margin-bottom: 0.5rem; color: #fff; }
-        .event-output { background: rgba(1, 4, 9, 0.8); padding: 1rem; border-radius: 6px; font-size: 0.85rem; max-height: 400px; overflow-y: auto; border-left: 2px solid var(--accent-primary); }
+        .event-output { background: rgba(1, 4, 9, 0.8); padding: 1rem; border-radius: 6px; font-size: 0.85rem; max-height: 400px; overflow-y: auto; border-left: 2px solid var(--accent-primary); white-space: pre-wrap; word-break: break-all; }
         .event-note { font-size: 1.05rem; padding: 0.5rem 1rem; border-left: 3px solid var(--accent-secondary); background: rgba(88, 166, 255, 0.05); }
         .loader { width: 12px; height: 12px; border: 2px solid var(--accent-warning); border-bottom-color: transparent; border-radius: 50%; display: inline-block; animation: rotation 1s linear infinite; }
         @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
