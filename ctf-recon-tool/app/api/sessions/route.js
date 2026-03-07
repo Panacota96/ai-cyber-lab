@@ -8,8 +8,8 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const { id, name } = await request.json();
-    const session = createSession(id, name);
+    const { id, name, target, difficulty, objective } = await request.json();
+    const session = createSession(id, name, { target, difficulty, objective });
     return NextResponse.json(session);
   } catch (error) {
     return NextResponse.json({ error: 'Failed to create session' }, { status: 500 });

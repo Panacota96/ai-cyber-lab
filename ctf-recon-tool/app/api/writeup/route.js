@@ -16,14 +16,14 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    const { sessionId, content, status } = await request.json();
-    
+    const { sessionId, content, status, visibility } = await request.json();
+
     if (!sessionId) {
       return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
     }
 
-    const writeup = saveWriteup(sessionId, content, status);
-    logger.info(`Writeup saved for session ${sessionId}`, { status });
+    const writeup = saveWriteup(sessionId, content, status, visibility);
+    logger.info(`Writeup saved for session ${sessionId}`, { status, visibility });
     return NextResponse.json(writeup);
   } catch (error) {
     logger.error('Error in /api/writeup POST handler', error);

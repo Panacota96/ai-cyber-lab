@@ -33,6 +33,7 @@ db.exec(`
     filename TEXT,
     name TEXT,
     tag TEXT,
+    tags TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
   );
@@ -54,13 +55,35 @@ db.exec(`
     FOREIGN KEY (session_id) REFERENCES sessions(id)
   );
 
+  CREATE TABLE IF NOT EXISTS writeup_versions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    version_number INTEGER NOT NULL,
+    content TEXT,
+    visibility TEXT DEFAULT 'draft',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+  );
+
   -- Ensure default session exists
   INSERT OR IGNORE INTO sessions (id, name) VALUES ('default', 'Default Session');
 `);
 
+// Idempotent column migrations
+const migrations = [
+  `ALTER TABLE writeups ADD COLUMN visibility TEXT DEFAULT 'draft'`,
+  `ALTER TABLE sessions ADD COLUMN target TEXT`,
+  `ALTER TABLE sessions ADD COLUMN difficulty TEXT DEFAULT 'medium'`,
+  `ALTER TABLE sessions ADD COLUMN objective TEXT`,
+  `ALTER TABLE timeline_events ADD COLUMN tags TEXT`,
+];
+for (const sql of migrations) {
+  try { db.exec(sql); } catch (_) { /* column already exists */ }
+}
+
 export function listSessions() {
   try {
-    return db.prepare('SELECT id, name FROM sessions ORDER BY created_at DESC').all();
+    return db.prepare('SELECT id, name, target, difficulty, objective FROM sessions ORDER BY created_at DESC').all();
   } catch (error) {
     console.error('Error listing sessions:', error);
     return [];
@@ -69,23 +92,22 @@ export function listSessions() {
 
 export function getSession(sessionId) {
   try {
-    return db.prepare('SELECT id, name FROM sessions WHERE id = ?').get(sessionId);
+    return db.prepare('SELECT id, name, target, difficulty, objective FROM sessions WHERE id = ?').get(sessionId);
   } catch (error) {
     console.error(`Error getting session ${sessionId}:`, error);
     return null;
   }
 }
 
-export function createSession(id, name) {
+export function createSession(id, name, { target = null, difficulty = 'medium', objective = null } = {}) {
     try {
-        const stmt = db.prepare('INSERT INTO sessions (id, name) VALUES (?, ?)');
-        stmt.run(id, name);
-        // Create screenshot directory for this session
+        const stmt = db.prepare('INSERT INTO sessions (id, name, target, difficulty, objective) VALUES (?, ?, ?, ?, ?)');
+        stmt.run(id, name, target, difficulty, objective);
         const screenshotPath = path.join(SESSIONS_DIR, id, 'screenshots');
         if (!fs.existsSync(screenshotPath)) {
             fs.mkdirSync(screenshotPath, { recursive: true });
         }
-        return { id, name };
+        return { id, name, target, difficulty, objective };
     } catch (error) {
         console.error('Error creating session:', error);
         return null;
@@ -126,10 +148,11 @@ export function addTimelineEvent(sessionId = 'default', event) {
   try {
     const id = Date.now().toString() + Math.random().toString(36).substring(2, 9);
     const timestamp = new Date().toISOString();
-    
+    const tagsJson = event.tags ? JSON.stringify(event.tags) : null;
+
     const stmt = db.prepare(`
-      INSERT INTO timeline_events (id, session_id, type, command, content, status, output, filename, name, tag, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO timeline_events (id, session_id, type, command, content, status, output, filename, name, tag, tags, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -143,13 +166,27 @@ export function addTimelineEvent(sessionId = 'default', event) {
       event.filename || null,
       event.name || null,
       event.tag || null,
+      tagsJson,
       timestamp
     );
 
-    return { ...event, id, timestamp };
+    return { ...event, id, timestamp, tags: event.tags || [] };
   } catch (error) {
     console.error(`Error saving timeline event for session ${sessionId}:`, error);
     return null;
+  }
+}
+
+export function getCommandHistory(sessionId, limit = 50) {
+  try {
+    return db.prepare(
+      `SELECT id, command, status, timestamp FROM timeline_events
+       WHERE session_id = ? AND type = 'command'
+       ORDER BY timestamp DESC LIMIT ?`
+    ).all(sessionId, limit);
+  } catch (error) {
+    console.error(`Error fetching command history for session ${sessionId}:`, error);
+    return [];
   }
 }
 
@@ -167,6 +204,16 @@ export function updateTimelineEvent(sessionId = 'default', id, updates) {
         console.error(`Error updating timeline event for session ${sessionId}:`, error);
         return null;
     }
+}
+
+export function deleteTimelineEvent(sessionId, eventId) {
+  try {
+    const result = db.prepare('DELETE FROM timeline_events WHERE id = ? AND session_id = ?').run(eventId, sessionId);
+    return result.changes > 0;
+  } catch (error) {
+    console.error(`Error deleting timeline event ${eventId}:`, error);
+    return false;
+  }
 }
 
 export function getScreenshotDir(sessionId) {
@@ -190,16 +237,43 @@ export function getWriteup(sessionId) {
   } catch (e) { return null; }
 }
 
-export function saveWriteup(sessionId, content, status = 'draft') {
+export function saveWriteup(sessionId, content, status = 'draft', visibility = 'draft') {
   try {
     const id = Date.now().toString();
+    // Save version snapshot before upsert
+    const existing = getWriteup(sessionId);
+    if (existing) {
+      const lastVersion = db.prepare(
+        'SELECT MAX(version_number) as v FROM writeup_versions WHERE session_id = ?'
+      ).get(sessionId);
+      const versionNum = (lastVersion?.v || 0) + 1;
+      db.prepare(
+        'INSERT INTO writeup_versions (id, session_id, version_number, content, visibility) VALUES (?, ?, ?, ?, ?)'
+      ).run(`${id}-v${versionNum}`, sessionId, versionNum, existing.content, existing.visibility || 'draft');
+    }
     const stmt = db.prepare(`
-      INSERT INTO writeups (id, session_id, content, status, updated_at)
-      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(session_id) DO UPDATE SET content = excluded.content, status = excluded.status, updated_at = CURRENT_TIMESTAMP
+      INSERT INTO writeups (id, session_id, content, status, visibility, updated_at)
+      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(session_id) DO UPDATE SET content = excluded.content, status = excluded.status, visibility = excluded.visibility, updated_at = CURRENT_TIMESTAMP
     `);
-    stmt.run(id, sessionId, content, status);
-    return { id, sessionId, content, status };
+    stmt.run(id, sessionId, content, status, visibility);
+    return { id, sessionId, content, status, visibility };
   } catch (e) { console.error('Error saving writeup', e); return null; }
+}
+
+export function getWriteupVersions(sessionId) {
+  try {
+    return db.prepare(
+      `SELECT id, version_number, visibility, created_at,
+              length(content) as char_count
+       FROM writeup_versions WHERE session_id = ? ORDER BY version_number DESC`
+    ).all(sessionId);
+  } catch (e) { return []; }
+}
+
+export function getWriteupVersion(versionId) {
+  try {
+    return db.prepare('SELECT * FROM writeup_versions WHERE id = ?').get(versionId);
+  } catch (e) { return null; }
 }
 

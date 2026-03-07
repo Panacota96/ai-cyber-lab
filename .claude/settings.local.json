@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(docker build -t helms-paladin .)",
-      "Bash(docker run -p 3000:3000 helms-paladin)"
+      "Bash(docker run -p 3000:3000 helms-paladin)",
+      "Bash(npm install pdfmake @anthropic-ai/sdk)",
+      "Bash(npm run build)",
+      "Bash(docker ps --filter ancestor=helms-paladin --format \"{{.ID}}\")",
+      "Bash(docker ps --format \"{{.ID}}\\\\t{{.Image}}\\\\t{{.Ports}}\")",
+      "Bash(docker stop e0037d811aab)",
+      "Bash(docker run -d -p 3000:3000 helms-paladin)"
     ]
   }
 }

@@ -16,6 +16,11 @@ export async function POST(request) {
       return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
     }
 
+    const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+    if (file.size > MAX_BYTES) {
+      return NextResponse.json({ error: 'File too large. Maximum size is 10MB.' }, { status: 413 });
+    }
+
     const buffer = Buffer.from(await file.arrayBuffer());
     const filename = `${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
     const screenshotDir = getScreenshotDir(sessionId);

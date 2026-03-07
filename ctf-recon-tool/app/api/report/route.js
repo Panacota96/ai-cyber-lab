@@ -1,10 +1,18 @@
 import { NextResponse } from 'next/server';
 import { getSession, getTimeline as getTimelineEvents } from '@/lib/db';
-import { generateMarkdownReport } from '@/lib/report-gen';
+import { labReport, executiveSummary, technicalWalkthrough, ctfSolution } from '@/lib/report-formats';
+
+const FORMATS = {
+  'lab-report': labReport,
+  'executive-summary': executiveSummary,
+  'technical-walkthrough': technicalWalkthrough,
+  'ctf-solution': ctfSolution,
+};
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const sessionId = searchParams.get('sessionId');
+  const format = searchParams.get('format') || 'lab-report';
 
   if (!sessionId) {
     return NextResponse.json({ error: 'Session ID required' }, { status: 400 });
@@ -17,7 +25,8 @@ export async function GET(request) {
     }
 
     const events = getTimelineEvents(sessionId);
-    const report = generateMarkdownReport(session, events);
+    const generator = FORMATS[format] || labReport;
+    const report = generator(session, events);
 
     return NextResponse.json({ report });
   } catch (error) {

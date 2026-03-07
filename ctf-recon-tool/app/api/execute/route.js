@@ -8,7 +8,7 @@ const execAsync = util.promisify(exec);
 
 export async function POST(request) {
   try {
-    const { command, sessionId = 'default' } = await request.json();
+    const { command, sessionId = 'default', timeout = 120000 } = await request.json();
 
     if (!command) {
       logger.warn('Execution attempted without command payload');
@@ -26,7 +26,7 @@ export async function POST(request) {
     });
 
     // 2. We don't await the execution here so we can return the running event
-    executeAndRecord(sessionId, event.id, command);
+    executeAndRecord(sessionId, event.id, command, timeout);
 
     // Return the initial running state to the client
     return NextResponse.json(event);
@@ -36,24 +36,32 @@ export async function POST(request) {
   }
 }
 
-async function executeAndRecord(sessionId, eventId, command) {
+async function executeAndRecord(sessionId, eventId, command, timeout = 120000) {
   try {
     const isWindows = process.platform === 'win32';
-    const shellCommand = isWindows ? `powershell.exe -Command "${command}"` : command;
+    const escapedCommand = isWindows ? command.replace(/"/g, '\\"') : command;
+    const shellCommand = isWindows ? `powershell.exe -Command "${escapedCommand}"` : command;
 
-    const { stdout, stderr } = await execAsync(shellCommand);
-    
+    const { stdout, stderr } = await execAsync(shellCommand, { timeout });
+
     logger.info(`Command ${eventId} in session ${sessionId} completed successfully`);
+
+    const output = stdout
+      + (stderr ? '\n\n[stderr]:\n' + stderr : '')
+      || 'Command executed successfully with no output.';
 
     updateTimelineEvent(sessionId, eventId, {
       status: 'success',
-      output: stdout || stderr || 'Command executed successfully with no output.',
+      output,
     });
   } catch (error) {
-    logger.error(`Command ${eventId} in session ${sessionId} failed`, { command, error });
+    const isTimeout = error.killed || error.signal === 'SIGTERM';
+    logger.error(`Command ${eventId} in session ${sessionId} ${isTimeout ? 'timed out' : 'failed'}`, { command, error });
     updateTimelineEvent(sessionId, eventId, {
-      status: 'failed',
-      output: error.message || 'Unknown error occurred',
+      status: isTimeout ? 'timeout' : 'failed',
+      output: isTimeout
+        ? `Command timed out after ${timeout / 1000}s.`
+        : (error.message || 'Unknown error occurred'),
     });
   }
 }

@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Helm's Paladin - CTF Recon Assistant",
+  title: "Helm's Watch - CTF Recon Assistant",
   description: 'Premium timeline and documentation tool for CTF reconnaissance.',
 };
 
