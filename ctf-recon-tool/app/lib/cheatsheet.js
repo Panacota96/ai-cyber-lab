@@ -100,5 +100,41 @@ export const CHEATSHEET = [
         ]
       }
     ]
+  },
+  {
+    tool: 'DNS & SSL Recon',
+    categories: [
+      {
+        name: 'DNS Enumeration',
+        flags: [
+          { flag: 'dnsrecon -d {t} -t std', desc: 'Standard DNS scan' },
+          { flag: 'dnsrecon -d {t} -t brt', desc: 'DNS Brute force' },
+          { flag: 'dnsrecon -d {t} -a', desc: 'AXFR Zone Transfer' }
+        ]
+      },
+      {
+        name: 'SSL/TLS Analysis',
+        flags: [
+          { flag: 'sslscan {t}', desc: 'Full SSL/TLS scan' },
+          { flag: 'sslscan --certinfo {t}', desc: 'Show certificate info' }
+        ]
+      }
+    ]
+  },
+  {
+    tool: 'Advanced Web',
+    categories: [
+      {
+        name: 'SQL Exploration',
+        flags: [
+          { flag: 'sqlmap -u "url" --batch', desc: 'Automatic SQLi scan' },
+          { flag: 'sqlmap -u "url" --dbs', desc: 'List databases' },
+          { flag: 'sqlmap -u "url" -D db --tables', desc: 'List tables in DB' },
+          { flag: 'sqlmap -u "url" -D db -T tbl --dump', desc: 'Dump table data' },
+          { flag: 'sqlmap -u "url" --level=5 --risk=3', desc: 'Aggressive scanning' },
+          { flag: 'sqlmap -u "url" --os-shell', desc: 'Attempt OS shell' }
+        ]
+      }
+    ]
   }
 ];

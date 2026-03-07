@@ -28,11 +28,28 @@ const SUGGESTIONS = [
     ]
   },
   {
-    category: 'Services / AD',
+    category: 'Windows/AD Recon',
     items: [
-      { label: 'Enum4Linux', command: 'enum4linux -a {target}' },
-      { label: 'SMB Client List', command: 'smbclient -L //{target}/' },
+      { label: 'SMB Null Session', command: 'smbclient -L //{target} -N' },
+      { label: 'Enum4Linux (sim)', command: 'smbclient -L //{target} -N' },
       { label: 'LDAP Search', command: 'ldapsearch -x -H ldap://{target} -b "dc=example,dc=com"' }
+    ]
+  },
+  {
+    category: 'Database SQLi',
+    items: [
+      { label: 'Auto Scan', command: 'sqlmap -u "http://{target}/" --batch' },
+      { label: 'List Databases', command: 'sqlmap -u "http://{target}/" --dbs' },
+      { label: 'Dump DB', command: 'sqlmap -u "http://{target}/" --dump-all --batch' },
+      { label: 'OS Shell', command: 'sqlmap -u "http://{target}/" --os-shell' }
+    ]
+  },
+  {
+    category: 'Advanced Recon',
+    items: [
+      { label: 'DNS Std Scan', command: 'dnsrecon -d {target} -t std' },
+      { label: 'SSL/TLS Scan', command: 'sslscan {target}' },
+      { label: 'Traceroute', command: 'traceroute {target}' }
     ]
   }
 ];
@@ -208,7 +225,7 @@ export default function Home() {
             onChange={(e) => setCurrentSession(e.target.value)}
             style={{ minWidth: '150px' }}
           >
-            {sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {sessions.map((s, idx) => <option key={`${s.id}-${idx}`} value={s.id}>{s.name}</option>)}
           </select>
           <button className="btn-secondary" onClick={() => setShowNewSessionModal(true)}>+ New Session</button>
           <button className="btn-primary" onClick={generateReport} style={{ background: 'var(--accent-secondary)', color: '#fff' }}>Generate Report</button>
@@ -284,7 +301,7 @@ export default function Home() {
                   {expandedCats.includes(group.category) && (
                     <ul className="suggestion-list">
                       {group.items.map((item, j) => (
-                        <li key={j}>
+                        <li key={`${group.category}-${j}`}>
                           <button className="btn-suggestion" onClick={() => { setInputType('command'); setInputVal(item.command); }}>
                             {item.label}
                           </button>
@@ -308,7 +325,7 @@ export default function Home() {
                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
                          {cat.flags.map((f, k) => (
                            <button 
-                             key={k} 
+                             key={`${f.flag}-${k}`} 
                              className="flag-btn mono" 
                              title={f.desc}
                              onClick={() => appendFlag(f.flag)}
@@ -333,8 +350,8 @@ export default function Home() {
               </div>
             )}
             
-            {timeline.map((event) => (
-              <div key={event.id} className="timeline-event">
+            {timeline.map((event, idx) => (
+              <div key={event.id || idx} className="timeline-event">
                 <div className="event-header">
                   <span className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                     {new Date(event.timestamp).toLocaleTimeString()}
