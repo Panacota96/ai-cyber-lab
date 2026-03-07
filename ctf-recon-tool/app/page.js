@@ -51,6 +51,45 @@ const SUGGESTIONS = [
       { label: 'SSL/TLS Scan', command: 'sslscan {target}' },
       { label: 'Traceroute', command: 'traceroute {target}' }
     ]
+  },
+  {
+    category: 'Web Vulnerability Scanning',
+    items: [
+      { label: 'Nikto Scan', command: 'nikto -h http://{target}' },
+      { label: 'Nikto HTTPS', command: 'nikto -h https://{target} -ssl' },
+      { label: 'Nikto Full Tuning', command: 'nikto -h http://{target} -Tuning 9' },
+      { label: 'Nikto Custom Port', command: 'nikto -h {target} -p 8080' },
+      { label: 'Feroxbuster', command: 'feroxbuster -u http://{target} -w /usr/share/wordlists/dirb/common.txt' },
+      { label: 'Feroxbuster PHP/HTML', command: 'feroxbuster -u http://{target} -x php,html,txt -w /usr/share/wordlists/dirb/common.txt' },
+      { label: 'Feroxbuster No Recurse', command: 'feroxbuster -u http://{target} --no-recursion -w /usr/share/wordlists/dirb/common.txt' }
+    ]
+  },
+  {
+    category: 'Brute Force',
+    items: [
+      { label: 'Hydra SSH', command: 'hydra -l {user} -P /usr/share/wordlists/rockyou.txt ssh://{target}' },
+      { label: 'Hydra FTP', command: 'hydra -l {user} -P /usr/share/wordlists/rockyou.txt ftp://{target}' },
+      { label: 'Hydra HTTP POST', command: 'hydra -l {user} -P /usr/share/wordlists/rockyou.txt {target} http-post-form "/login:username=^USER^&password=^PASS^:Invalid"' },
+      { label: 'Hydra RDP', command: 'hydra -l {user} -P /usr/share/wordlists/rockyou.txt rdp://{target}' },
+      { label: 'Hydra SMB', command: 'hydra -l {user} -P /usr/share/wordlists/rockyou.txt smb://{target}' },
+      { label: 'Medusa SSH', command: 'medusa -h {target} -u {user} -P /usr/share/wordlists/rockyou.txt -M ssh' },
+      { label: 'CrackMapExec SMB', command: 'crackmapexec smb {target} -u {user} -p /usr/share/wordlists/rockyou.txt' }
+    ]
+  },
+  {
+    category: 'Hash Cracking',
+    items: [
+      { label: 'Hashcat Wordlist', command: 'hashcat -a 0 -m 0 {hashfile} /usr/share/wordlists/rockyou.txt' },
+      { label: 'Hashcat NTLM', command: 'hashcat -a 0 -m 1000 {hashfile} /usr/share/wordlists/rockyou.txt' },
+      { label: 'Hashcat Brute Force (MD5)', command: 'hashcat -a 3 -m 0 {hashfile} ?a?a?a?a?a?a' },
+      { label: 'Hashcat Kerberos TGS', command: 'hashcat -a 0 -m 13100 {hashfile} /usr/share/wordlists/rockyou.txt' },
+      { label: 'John Wordlist', command: 'john --wordlist=/usr/share/wordlists/rockyou.txt {hashfile}' },
+      { label: 'John Auto', command: 'john {hashfile}' },
+      { label: 'John Show Cracked', command: 'john --show {hashfile}' },
+      { label: 'John SSH Key', command: 'ssh2john id_rsa > id_rsa.hash && john --wordlist=/usr/share/wordlists/rockyou.txt id_rsa.hash' },
+      { label: 'John ZIP', command: 'zip2john {file}.zip > zip.hash && john --wordlist=/usr/share/wordlists/rockyou.txt zip.hash' },
+      { label: 'Identify Hash', command: 'hash-identifier {hash}' }
+    ]
   }
 ];
 
@@ -97,6 +136,18 @@ export default function Home() {
   // Command timeout (seconds)
   const [cmdTimeout, setCmdTimeout] = useState(120);
 
+  // Tag validation
+  const [tagError, setTagError] = useState(false);
+
+  // DB maintenance modal
+  const [showDbModal, setShowDbModal] = useState(false);
+  const [dbStats, setDbStats] = useState(null);
+
+  // AI Coach panel
+  const [showCoachPanel, setShowCoachPanel] = useState(false);
+  const [coachResult, setCoachResult] = useState('');
+  const [isCoaching, setIsCoaching] = useState(false);
+
   // Timeline filter state
   const [filterType, setFilterType] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -121,6 +172,11 @@ export default function Home() {
   const [writeupVisibility, setWriteupVisibility] = useState('draft');
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [aiProvider, setAiProvider] = useState('claude');
+  const [aiSkill, setAiSkill] = useState('enhance');
+  const [apiKeys, setApiKeys] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('aiApiKeys') || '{}'); }
+    catch { return {}; }
+  });
 
   // Version history modal
   const [showVersionHistory, setShowVersionHistory] = useState(false);
@@ -181,9 +237,14 @@ export default function Home() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!inputVal.trim()) return;
+    if (!inputTags.trim()) {
+      setTagError(true);
+      return;
+    }
+    setTagError(false);
     setIsLoading(true);
     const val = inputVal;
-    const tags = inputTags.trim() ? inputTags.split(',').map(t => t.trim()).filter(Boolean) : [];
+    const tags = inputTags.split(',').map(t => t.trim()).filter(Boolean);
     setInputVal('');
     setInputTags('');
     setHistoryIdx(-1);
@@ -356,9 +417,13 @@ export default function Home() {
       const res = await fetch('/api/writeup/enhance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportContent: reportDraft, provider: aiProvider })
+        body: JSON.stringify({ reportContent: reportDraft, provider: aiProvider, apiKey: apiKeys[aiProvider] || '', skill: aiSkill })
       });
-      if (!res.ok) { alert(`AI enhancement unavailable. Check the API key for the selected provider (${aiProvider.toUpperCase()}).`); return; }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || `AI enhancement unavailable. Check the API key for ${aiProvider.toUpperCase()}.`);
+        return;
+      }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let enhanced = '';
@@ -372,11 +437,90 @@ export default function Home() {
     finally { setIsEnhancing(false); }
   };
 
-  const downloadPdf = () => {
-    const url = `/api/export/pdf?sessionId=${currentSession}&format=${reportFormat}&pdfStyle=${pdfStyle}`;
-    const sessionName = sessions.find(s => s.id === currentSession)?.name?.replace(/\s+/g, '-') || currentSession;
-    const a = document.createElement('a');
-    a.href = url; a.download = `${sessionName}-${reportFormat}.pdf`; a.click();
+  const runCoach = async () => {
+    setIsCoaching(true);
+    setCoachResult('');
+    setShowCoachPanel(true);
+    try {
+      const res = await fetch('/api/coach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, provider: aiProvider, apiKey: apiKeys[aiProvider] || '' }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setCoachResult(`Error: ${err.error || 'Coach unavailable. Check your API key.'}`);
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let result = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        result += decoder.decode(value, { stream: true });
+        setCoachResult(result);
+      }
+    } catch (error) {
+      setCoachResult(`Error: ${error.message}`);
+    } finally {
+      setIsCoaching(false);
+    }
+  };
+
+  const downloadPdf = async () => {
+    try {
+      const res = await fetch('/api/export/pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: reportDraft, pdfStyle, sessionId: currentSession }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        alert(`PDF failed: ${err.detail || err.error}`);
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const sessionName = sessions.find(s => s.id === currentSession)?.name?.replace(/\s+/g, '-') || currentSession;
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${sessionName}-writeup.pdf`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      alert(`PDF download error: ${err.message}`);
+    }
+  };
+
+  const toggleTag = (tag) => {
+    const current = inputTags.split(',').map(t => t.trim()).filter(Boolean);
+    const idx = current.indexOf(tag);
+    if (idx >= 0) current.splice(idx, 1);
+    else current.push(tag);
+    setInputTags(current.join(', '));
+    setTagError(false);
+  };
+
+  const loadDbStats = async () => {
+    try {
+      const res = await fetch('/api/admin/cleanup');
+      const data = await res.json();
+      setDbStats(data);
+      setShowDbModal(true);
+    } catch (e) { console.error('Failed to load DB stats', e); }
+  };
+
+  const runCleanup = async (action) => {
+    try {
+      const res = await fetch('/api/admin/cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (data.stats) setDbStats(data.stats);
+    } catch (e) { console.error('Cleanup failed', e); }
   };
 
   const exportTimeline = () => {
@@ -496,6 +640,9 @@ export default function Home() {
           {currentSession !== 'default' && (
             <button className="btn-secondary" onClick={deleteSession} style={{ color: 'var(--accent-danger, #f85149)', borderColor: 'var(--accent-danger, #f85149)' }}>Delete Session</button>
           )}
+          <button className="btn-secondary" onClick={runCoach} disabled={isCoaching} style={{ fontSize: '0.85rem', color: 'var(--accent-secondary)', borderColor: 'var(--accent-secondary)' }}>
+            {isCoaching ? '[ Coaching... ]' : '[ AI Coach ]'}
+          </button>
           <button className="btn-primary" onClick={() => generateReport()} style={{ background: 'var(--accent-secondary)', color: '#fff' }}>Generate Report</button>
         </div>
       </header>
@@ -586,12 +733,42 @@ export default function Home() {
                 <button className="btn-secondary" onClick={loadVersionHistory} style={{ fontSize: '0.8rem' }}>
                   [ Version History ]
                 </button>
+                <select value={aiSkill} onChange={(e) => setAiSkill(e.target.value)}
+                  style={{ fontSize: '0.8rem', padding: '4px 8px' }} title="AI enhancement skill">
+                  <optgroup label="General">
+                    <option value="enhance">✦ Quick Enhance</option>
+                    <option value="writeup-refiner">✦ Writeup Refiner</option>
+                    <option value="report">✦ Pentest Report</option>
+                  </optgroup>
+                  <optgroup label="Challenge Skills">
+                    <option value="web-solve">⚡ Web Solve</option>
+                    <option value="privesc">⚡ Priv Esc</option>
+                    <option value="crypto-solve">⚡ Crypto Solve</option>
+                    <option value="pwn-solve">⚡ Pwn Solve</option>
+                    <option value="reversing-solve">⚡ Reversing Solve</option>
+                    <option value="stego">⚡ Stego</option>
+                    <option value="analyze-file">⚡ Analyze File</option>
+                    <option value="enum-target">⚡ Enum Target</option>
+                  </optgroup>
+                </select>
                 <select value={aiProvider} onChange={(e) => setAiProvider(e.target.value)}
                   style={{ fontSize: '0.8rem', padding: '4px 8px' }}>
                   <option value="claude">Claude</option>
                   <option value="gemini">Gemini</option>
                   <option value="openai">OpenAI</option>
                 </select>
+                <input
+                  type="password"
+                  value={apiKeys[aiProvider] || ''}
+                  onChange={(e) => {
+                    const updated = { ...apiKeys, [aiProvider]: e.target.value };
+                    setApiKeys(updated);
+                    localStorage.setItem('aiApiKeys', JSON.stringify(updated));
+                  }}
+                  placeholder={`${aiProvider} API key`}
+                  className="mono"
+                  style={{ fontSize: '0.75rem', padding: '4px 8px', width: '160px', background: 'rgba(1,4,9,0.6)', border: `1px solid ${apiKeys[aiProvider] ? 'var(--accent-secondary)' : 'var(--border-color)'}`, color: 'var(--text-muted)', borderRadius: '4px', outline: 'none' }}
+                />
                 <button className="btn-secondary" onClick={enhanceReport} disabled={isEnhancing} style={{ fontSize: '0.8rem', color: 'var(--accent-secondary)', borderColor: 'var(--accent-secondary)' }}>
                   {isEnhancing ? '[ Enhancing... ]' : '[ Enhance with AI ]'}
                 </button>
@@ -630,6 +807,60 @@ export default function Home() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── AI Coach Panel ────────────────────────────────────────────────── */}
+      {showCoachPanel && (
+        <div style={{ position: 'fixed', bottom: 0, right: 0, width: '420px', maxHeight: '60vh', zIndex: 200, display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary, #161b22)', border: '1px solid var(--accent-secondary)', borderBottom: 'none', borderRadius: '8px 8px 0 0', boxShadow: '0 -4px 24px rgba(0,0,0,0.5)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', borderBottom: '1px solid var(--border-color)' }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--accent-secondary)' }}>AI Coach</span>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button className="btn-secondary" onClick={runCoach} disabled={isCoaching} style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
+                {isCoaching ? 'Thinking...' : 'Refresh'}
+              </button>
+              <button onClick={() => setShowCoachPanel(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>×</button>
+            </div>
+          </div>
+          <div className="mono" style={{ padding: '0.75rem', overflowY: 'auto', flex: 1, fontSize: '0.78rem', lineHeight: 1.6, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {isCoaching && !coachResult ? <span style={{ color: 'var(--text-muted)' }}>Analyzing timeline...</span> : coachResult || <span style={{ color: 'var(--text-muted)' }}>Click Refresh to get a coaching suggestion.</span>}
+          </div>
+        </div>
+      )}
+
+      {showDbModal && (
+        <div className="overlay">
+          <div className="modal glass-panel" style={{ width: '420px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3>DB Maintenance</h3>
+              <button className="btn-secondary" onClick={() => setShowDbModal(false)}>Close</button>
+            </div>
+            {dbStats ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                  {[['Sessions', dbStats.sessions], ['Timeline Events', dbStats.events], ['App Logs', dbStats.logs], ['Writeup Versions', dbStats.writeupVersions]].map(([label, count]) => (
+                    <div key={label} style={{ padding: '0.5rem', background: 'rgba(1,4,9,0.4)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
+                      <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{label}</div>
+                      <div className="mono" style={{ fontSize: '1.1rem', color: 'var(--accent-secondary)' }}>{count}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                  <button className="btn-secondary mono" style={{ fontSize: '0.78rem' }} onClick={() => runCleanup('logs')}>
+                    Clear Logs
+                  </button>
+                  <button className="btn-secondary mono" style={{ fontSize: '0.78rem' }} onClick={() => runCleanup('vacuum')}>
+                    Vacuum DB
+                  </button>
+                  <button className="btn-primary mono" style={{ fontSize: '0.78rem' }} onClick={() => runCleanup('all')}>
+                    Clear Logs + Vacuum
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Loading stats...</p>
             )}
           </div>
         </div>
@@ -715,6 +946,12 @@ export default function Home() {
                   <div className="mono" style={{ color: 'var(--accent-secondary)', borderBottom: '1px solid rgba(88,166,255,0.2)', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
                     {tool.tool}
                   </div>
+                  {tool.link && (
+                    <a href={tool.link} target="_blank" rel="noopener noreferrer"
+                      style={{ display: 'inline-block', fontSize: '0.78rem', color: 'var(--accent-primary)', border: '1px solid var(--accent-primary)', borderRadius: '4px', padding: '3px 10px', textDecoration: 'none', marginBottom: '0.5rem' }}>
+                      → Open {tool.tool} ↗
+                    </a>
+                  )}
                   {tool.categories.map((cat, j) => (
                     <div key={j} style={{ marginBottom: '0.8rem' }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>{cat.name}</div>
@@ -790,6 +1027,10 @@ export default function Home() {
             <button onClick={exportTimeline} className="mono btn-secondary"
               style={{ fontSize: '0.7rem', padding: '2px 8px', whiteSpace: 'nowrap' }}>
               [Export ↓]
+            </button>
+            <button onClick={loadDbStats} className="mono btn-secondary"
+              style={{ fontSize: '0.7rem', padding: '2px 8px', whiteSpace: 'nowrap' }}>
+              [DB ⚙]
             </button>
           </div>
 
@@ -917,32 +1158,61 @@ export default function Home() {
                 <option value="note">Note</option>
               </select>
               {inputType === 'command' && (
-                <select value={cmdTimeout} onChange={(e) => setCmdTimeout(Number(e.target.value))}
-                  title="Command timeout"
-                  style={{ fontSize: '0.75rem', padding: '2px 4px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px', width: '80px' }}>
-                  <option value={30}>30s</option>
-                  <option value={60}>1 min</option>
-                  <option value={120}>2 min</option>
-                  <option value={300}>5 min</option>
-                  <option value={600}>10 min</option>
-                </select>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Timeout:</span>
+                  <select value={cmdTimeout} onChange={(e) => setCmdTimeout(Number(e.target.value))}
+                    style={{ fontSize: '0.75rem', padding: '2px 4px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px', width: '80px' }}>
+                    <option value={30}>30s</option>
+                    <option value={60}>1 min</option>
+                    <option value={120}>2 min</option>
+                    <option value={300}>5 min</option>
+                    <option value={600}>10 min</option>
+                  </select>
+                </div>
               )}
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
-                <input
-                  type="text" value={inputTags} onChange={(e) => setInputTags(e.target.value)}
-                  list="suggested-tags"
-                  placeholder="tags (comma-separated)" className="mono"
-                  style={{ fontSize: '0.75rem', padding: '4px 8px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px', width: '180px', outline: 'none' }}
-                />
-                <datalist id="suggested-tags">
-                  {SUGGESTED_TAGS.map(t => <option key={t} value={t} />)}
-                </datalist>
                 <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} accept="image/*" />
                 <button type="button" className="upload-btn mono" onClick={() => fileInputRef.current?.click()}>
                   [+] Screenshot
                 </button>
               </div>
             </div>
+            {/* Stage tag chips */}
+            {inputType !== 'screenshot' && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: '0.4rem' }}>
+                {SUGGESTED_TAGS.slice(0, 9).map(tag => {
+                  const active = inputTags.split(',').map(t => t.trim()).includes(tag);
+                  return (
+                    <button key={tag} type="button" onClick={() => toggleTag(tag)}
+                      style={{
+                        fontSize: '0.65rem', padding: '2px 7px', borderRadius: '10px', cursor: 'pointer',
+                        border: `1px solid ${active ? 'var(--accent-primary)' : 'var(--border-color)'}`,
+                        background: active ? 'rgba(88,166,255,0.15)' : 'rgba(1,4,9,0.4)',
+                        color: active ? 'var(--accent-primary)' : 'var(--text-muted)',
+                        transition: 'all 0.15s',
+                      }}>
+                      {tag}
+                    </button>
+                  );
+                })}
+                <input
+                  type="text" value={inputTags} onChange={(e) => { setInputTags(e.target.value); setTagError(false); }}
+                  placeholder="tag (required)" className="mono"
+                  style={{
+                    fontSize: '0.75rem', padding: '2px 8px',
+                    background: 'rgba(1,4,9,0.6)',
+                    border: `1px solid ${tagError ? 'var(--accent-danger, #f85149)' : 'var(--border-color)'}`,
+                    color: tagError ? 'var(--accent-danger, #f85149)' : 'var(--text-muted)',
+                    borderRadius: '4px', width: '130px', outline: 'none',
+                  }}
+                />
+                {tagError && (
+                  <span style={{ fontSize: '0.7rem', color: 'var(--accent-danger, #f85149)', alignSelf: 'center' }}>
+                    ← required
+                  </span>
+                )}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <input
                 ref={inputRef}

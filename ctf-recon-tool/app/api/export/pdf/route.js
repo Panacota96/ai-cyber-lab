@@ -40,7 +40,7 @@ const PDF_STYLES = {
       footer: { fontSize: 8, color: '#484f58', alignment: 'center' },
     },
     defaultStyle: { fontSize: 10, color: '#c9d1d9' },
-    background: { canvas: [{ type: 'rect', x: 0, y: 0, w: 595, h: 842, color: '#0d1117' }] },
+    background: (currentPage, pageSize) => ({ canvas: [{ type: 'rect', x: 0, y: 0, w: pageSize.width, h: pageSize.height, color: '#0d1117' }] }),
     dividerColor: '#58a6ff',
     footerDividerColor: '#30363d',
   },
@@ -74,11 +74,168 @@ const PDF_STYLES = {
       footer: { fontSize: 8, color: '#6a737d', alignment: 'center' },
     },
     defaultStyle: { fontSize: 10, color: '#24292e' },
-    background: { canvas: [{ type: 'rect', x: 0, y: 0, w: 595, h: 842, color: '#f6f8fa' }] },
+    background: (currentPage, pageSize) => ({ canvas: [{ type: 'rect', x: 0, y: 0, w: pageSize.width, h: pageSize.height, color: '#f6f8fa' }] }),
     dividerColor: '#e1e4e8',
     footerDividerColor: '#e1e4e8',
   },
 };
+
+// Parse inline markdown (**bold**, `code`) into pdfmake text nodes
+function parseInline(text) {
+  const parts = [];
+  const regex = /\*\*([^*]+)\*\*|`([^`]+)`/g;
+  let last = 0, match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > last) parts.push({ text: text.slice(last, match.index) });
+    if (match[1] !== undefined) parts.push({ text: match[1], bold: true });
+    else parts.push({ text: match[2], font: 'Roboto', fontSize: 8.5 });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return parts.length === 1 && !parts[0].bold ? parts[0].text : parts;
+}
+
+// Convert a markdown string into a pdfmake content array
+function markdownToPdfmakeContent(markdown, theme) {
+  const lines = markdown.split('\n');
+  const content = [];
+  let i = 0;
+  let pendingBullets = [];
+
+  const flushBullets = () => {
+    if (pendingBullets.length > 0) {
+      content.push({ ul: pendingBullets, style: 'body', margin: [0, 0, 0, 8] });
+      pendingBullets = [];
+    }
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Code block
+    if (line.trim().startsWith('```')) {
+      flushBullets();
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      if (codeLines.length > 0) {
+        content.push({ text: codeLines.join('\n'), style: 'codeBlock', margin: [0, 2, 0, 8] });
+      }
+      i++;
+      continue;
+    }
+
+    // Headings
+    if (line.startsWith('# ')) {
+      flushBullets();
+      content.push({ text: parseInline(line.slice(2).trim()), style: 'header', margin: [0, 8, 0, 4] });
+      i++; continue;
+    }
+    if (line.startsWith('## ')) {
+      flushBullets();
+      content.push({ text: parseInline(line.slice(3).trim()), style: 'sectionTitle', margin: [0, 10, 0, 4] });
+      i++; continue;
+    }
+    if (line.startsWith('### ')) {
+      flushBullets();
+      content.push({ text: parseInline(line.slice(4).trim()), bold: true, margin: [0, 6, 0, 3] });
+      i++; continue;
+    }
+
+    // Horizontal rule
+    if (/^[-*_]{3,}$/.test(line.trim())) {
+      flushBullets();
+      content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: theme.dividerColor }], margin: [0, 6, 0, 6] });
+      i++; continue;
+    }
+
+    // Bullet list
+    if (/^[-*] /.test(line)) {
+      pendingBullets.push(parseInline(line.slice(2).trim()));
+      i++; continue;
+    }
+
+    // Numbered list
+    if (/^\d+\. /.test(line)) {
+      flushBullets();
+      const text = parseInline(line.replace(/^\d+\. /, '').trim());
+      content.push({ text, style: 'body', margin: [8, 0, 0, 3] });
+      i++; continue;
+    }
+
+    // Blank line
+    if (line.trim() === '') {
+      flushBullets();
+      content.push({ text: ' ', margin: [0, 2, 0, 2] });
+      i++; continue;
+    }
+
+    // Regular paragraph
+    flushBullets();
+    content.push({ text: parseInline(line), style: 'body' });
+    i++;
+  }
+  flushBullets();
+  return content;
+}
+
+export async function POST(request) {
+  try {
+    const { content: markdownContent, pdfStyle = 'terminal-dark', sessionId } = await request.json();
+    if (!markdownContent) {
+      return NextResponse.json({ error: 'content is required' }, { status: 400 });
+    }
+
+    const theme = PDF_STYLES[pdfStyle] || PDF_STYLES['terminal-dark'];
+    const session = sessionId ? getSession(sessionId) : null;
+    const sessionName = session?.name || 'CTF-Report';
+
+    const { default: PdfPrinter } = await import('pdfmake/js/Printer.js');
+    const vfs = (await import('pdfmake/js/virtual-fs.js')).default;
+    const vfsFonts = (await import('pdfmake/build/vfs_fonts.js')).default;
+    for (const filename in vfsFonts) vfs.writeFileSync(filename, vfsFonts[filename], 'base64');
+    const printer = new PdfPrinter({
+      Roboto: { normal: 'Roboto-Regular.ttf', bold: 'Roboto-Medium.ttf', italics: 'Roboto-Italic.ttf', bolditalics: 'Roboto-MediumItalic.ttf' }
+    }, vfs);
+
+    const parsedContent = markdownToPdfmakeContent(markdownContent, theme);
+    parsedContent.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: theme.footerDividerColor }], margin: [0, 12, 0, 4] });
+    parsedContent.push({ text: "Generated by Helm's Watch CTF Assistant", style: 'footer' });
+
+    const docDef = {
+      content: parsedContent,
+      styles: theme.styles,
+      defaultStyle: { font: 'Roboto', ...theme.defaultStyle },
+      pageMargins: [40, 40, 40, 40],
+      ...(theme.background ? { background: theme.background } : {}),
+    };
+
+    const pdfDoc = await printer.createPdfKitDocument(docDef);
+    const chunks = [];
+    await new Promise((resolve, reject) => {
+      pdfDoc.on('data', chunk => chunks.push(chunk));
+      pdfDoc.on('end', resolve);
+      pdfDoc.on('error', reject);
+      pdfDoc.end();
+    });
+
+    const pdfBuffer = Buffer.concat(chunks);
+    const filename = `${sessionName.replace(/\s+/g, '-')}-writeup.pdf`;
+    return new NextResponse(pdfBuffer, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+      },
+    });
+  } catch (error) {
+    console.error('[PDF Export Error]', error);
+    return NextResponse.json({ error: 'PDF generation failed', detail: error.message }, { status: 500 });
+  }
+}
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -101,9 +258,8 @@ export async function GET(request) {
 
   // Build pdfmake document definition
   const { default: PdfPrinter } = await import('pdfmake/js/Printer.js');
-  const { default: VirtualFileSystem } = await import('pdfmake/js/virtual-fs.js');
+  const vfs = (await import('pdfmake/js/virtual-fs.js')).default;
   const vfsFonts = (await import('pdfmake/build/vfs_fonts.js')).default;
-  const vfs = new VirtualFileSystem();
   for (const filename in vfsFonts) vfs.writeFileSync(filename, vfsFonts[filename], 'base64');
   const printer = new PdfPrinter({
     Roboto: { normal: 'Roboto-Regular.ttf', bold: 'Roboto-Medium.ttf', italics: 'Roboto-Italic.ttf', bolditalics: 'Roboto-MediumItalic.ttf' }
@@ -226,7 +382,7 @@ export async function GET(request) {
     ...(theme.background ? { background: theme.background } : {}),
   };
 
-  const pdfDoc = printer.createPdfKitDocument(docDef);
+  const pdfDoc = await printer.createPdfKitDocument(docDef);
   const chunks = [];
   await new Promise((resolve, reject) => {
     pdfDoc.on('data', chunk => chunks.push(chunk));

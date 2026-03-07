@@ -277,3 +277,20 @@ export function getWriteupVersion(versionId) {
   } catch (e) { return null; }
 }
 
+export function getDbStats() {
+  return {
+    sessions: db.prepare('SELECT COUNT(*) as n FROM sessions').get().n,
+    events: db.prepare('SELECT COUNT(*) as n FROM timeline_events').get().n,
+    logs: db.prepare('SELECT COUNT(*) as n FROM app_logs').get().n,
+    writeupVersions: db.prepare('SELECT COUNT(*) as n FROM writeup_versions').get().n,
+  };
+}
+
+export function clearLogs() {
+  return db.prepare('DELETE FROM app_logs').run().changes;
+}
+
+export function vacuumDb() {
+  db.exec('VACUUM');
+}
+

