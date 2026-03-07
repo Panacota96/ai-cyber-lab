@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker build -t helms-paladin .)",
+      "Bash(docker run -p 3000:3000 helms-paladin)"
+    ]
+  }
+}
