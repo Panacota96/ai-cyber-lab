@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { isApiTokenValid } from '@/lib/security';
+import { config } from '@/lib/config';
 
 // ── Skill system prompts (derived from ctf-writeups/.gemini/skills) ─────────
 
@@ -215,7 +216,7 @@ function makeStream(generatorFn) {
 }
 
 async function* streamClaude(reportContent, apiKey, systemPrompt) {
-  const client = new Anthropic({ apiKey: apiKey || process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: apiKey || config.anthropicApiKey });
   const stream = client.messages.stream({
     model: 'claude-sonnet-4-6',
     max_tokens: 2048,
@@ -231,7 +232,7 @@ async function* streamClaude(reportContent, apiKey, systemPrompt) {
 
 async function* streamGemini(reportContent, apiKey, systemPrompt) {
   const { GoogleGenAI } = await import('@google/genai');
-  const ai = new GoogleGenAI({ apiKey: apiKey || process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey: apiKey || config.geminiApiKey });
   const response = await ai.models.generateContentStream({
     model: 'gemini-2.5-flash',
     contents: `Here is the reconnaissance report to enhance:\n\n${reportContent}`,
@@ -244,7 +245,7 @@ async function* streamGemini(reportContent, apiKey, systemPrompt) {
 
 async function* streamOpenAI(reportContent, apiKey, systemPrompt) {
   const OpenAI = (await import('openai')).default;
-  const client = new OpenAI({ apiKey: apiKey || process.env.OPENAI_API_KEY });
+  const client = new OpenAI({ apiKey: apiKey || config.openaiApiKey });
   const stream = await client.chat.completions.create({
     model: 'gpt-4o',
     max_tokens: 2048,
@@ -261,7 +262,7 @@ async function* streamOpenAI(reportContent, apiKey, systemPrompt) {
 }
 
 async function completeClaude(userContent, apiKey, systemPrompt) {
-  const client = new Anthropic({ apiKey: apiKey || process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: apiKey || config.anthropicApiKey });
   const resp = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 3072,
@@ -274,7 +275,7 @@ async function completeClaude(userContent, apiKey, systemPrompt) {
 
 async function completeGemini(userContent, apiKey, systemPrompt) {
   const { GoogleGenAI } = await import('@google/genai');
-  const ai = new GoogleGenAI({ apiKey: apiKey || process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey: apiKey || config.geminiApiKey });
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-flash',
     contents: userContent,
@@ -285,7 +286,7 @@ async function completeGemini(userContent, apiKey, systemPrompt) {
 
 async function completeOpenAI(userContent, apiKey, systemPrompt) {
   const OpenAI = (await import('openai')).default;
-  const client = new OpenAI({ apiKey: apiKey || process.env.OPENAI_API_KEY });
+  const client = new OpenAI({ apiKey: apiKey || config.openaiApiKey });
   const response = await client.chat.completions.create({
     model: 'gpt-4o',
     max_tokens: 3072,
@@ -340,10 +341,10 @@ export async function POST(request) {
 
     const key = apiKey || (
       provider === 'gemini'
-        ? process.env.GEMINI_API_KEY
+        ? config.geminiApiKey
         : provider === 'openai'
-          ? process.env.OPENAI_API_KEY
-          : process.env.ANTHROPIC_API_KEY
+          ? config.openaiApiKey
+          : config.anthropicApiKey
     );
     if (!key) {
       const providerName = provider === 'openai' ? 'OpenAI' : provider === 'gemini' ? 'Gemini' : 'Anthropic';

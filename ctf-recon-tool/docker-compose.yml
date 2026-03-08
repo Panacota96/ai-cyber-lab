@@ -1,11 +1,27 @@
+name: helms-paladin
+
 services:
-  ctf-assistant:
+  app:
     build: .
+    image: helms-paladin:latest
+    container_name: helms-paladin
+    restart: unless-stopped
     ports:
-      - "3000:3000"
-    volumes:
-      - .:/app
-      - /app/node_modules
-      - ./data:/app/data
+      - "${PORT:-3000}:3000"
+    env_file:
+      - path: .env
+        required: false       # app runs without .env; compose won't error if absent
     environment:
-      - NODE_ENV=development
+      NODE_ENV: ${NODE_ENV:-production}
+    volumes:
+      - helms-paladin-data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  helms-paladin-data:
+    driver: local

@@ -4,12 +4,17 @@
   --border-color: #30363d;
   --text-main: #c9d1d9;
   --text-muted: #8b949e;
-  
+
   --accent-primary: #39d353; /* Hacker green */
   --accent-primary-hover: #2ea043;
   --accent-secondary: #58a6ff; /* Blue */
   --accent-danger: #f85149;
   --accent-warning: #d29922;
+  /* Cyberpunk glow variables */
+  --glow-green:  0 0 6px rgba(57, 211, 83, 0.55),  0 0 14px rgba(57, 211, 83, 0.25);
+  --glow-blue:   0 0 6px rgba(88, 166, 255, 0.55), 0 0 14px rgba(88, 166, 255, 0.25);
+  --glow-red:    0 0 6px rgba(248, 81, 73, 0.55),  0 0 14px rgba(248, 81, 73, 0.25);
+  --glow-gold:   0 0 6px rgba(210, 153, 34, 0.55), 0 0 14px rgba(210, 153, 34, 0.25);
 
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
@@ -284,3 +289,197 @@ input:focus, select:focus, textarea:focus {
   flex-direction: column;
   gap: 1.5rem;
 }
+
+/* ============================================================
+   CYBERPUNK THEME ENHANCEMENTS
+   ============================================================ */
+
+/* --- CRT Scanline Overlay ---
+   Applied via ::before pseudo-element on elements with .crt class.
+   Use sparingly (e.g., main app container) to avoid performance issues. */
+.crt::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.04) 0px,
+    rgba(0, 0, 0, 0.04) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* --- Neon Glow Utilities ---
+   Add .glow-green / .glow-blue / etc. to any element for neon border glow. */
+.glow-green  { box-shadow: var(--glow-green); }
+.glow-blue   { box-shadow: var(--glow-blue); }
+.glow-red    { box-shadow: var(--glow-red); }
+.glow-gold   { box-shadow: var(--glow-gold); }
+
+/* Neon text glow utilities */
+.text-glow-green { text-shadow: 0 0 6px rgba(57, 211, 83, 0.7),  0 0 12px rgba(57, 211, 83, 0.4); }
+.text-glow-blue  { text-shadow: 0 0 6px rgba(88, 166, 255, 0.7), 0 0 12px rgba(88, 166, 255, 0.4); }
+
+/* Enhance existing btn-primary hover with neon glow */
+.btn-primary:hover:not(:disabled) {
+  box-shadow: 0 0 10px rgba(57, 211, 83, 0.4), var(--glow-green);
+}
+
+/* Enhance btn-secondary hover with blue glow */
+.btn-secondary:hover:not(:disabled) {
+  background-color: rgba(88, 166, 255, 0.1);
+  box-shadow: var(--glow-blue);
+}
+
+/* --- Animated Status Dots ---
+   Usage: <span class="status-dot status-dot--running"></span>
+          <span class="status-dot status-dot--success"></span>
+          <span class="status-dot status-dot--failed"></span> */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.status-dot--running {
+  background-color: var(--accent-warning);
+  box-shadow: 0 0 4px var(--accent-warning);
+  animation: pulse-warning 1.4s ease-in-out infinite;
+}
+
+.status-dot--success {
+  background-color: var(--accent-primary);
+  box-shadow: 0 0 4px var(--accent-primary);
+  /* Steady — no animation */
+}
+
+.status-dot--failed {
+  background-color: var(--accent-danger);
+  box-shadow: 0 0 4px var(--accent-danger);
+  animation: blink-danger 1s step-start infinite;
+}
+
+.status-dot--pending {
+  background-color: var(--text-muted);
+  /* Steady muted — no animation */
+}
+
+/* --- Keyframe Animations --- */
+
+/* Pulse for running/warning state */
+@keyframes pulse-warning {
+  0%, 100% { opacity: 1;   box-shadow: 0 0 4px var(--accent-warning); }
+  50%       { opacity: 0.4; box-shadow: 0 0 10px var(--accent-warning); }
+}
+
+/* Blink for failed/error state */
+@keyframes blink-danger {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* Terminal cursor blink — apply to .terminal-cursor span */
+@keyframes cursor-blink {
+  0%, 49% { border-right-color: var(--accent-secondary); }
+  50%, 100% { border-right-color: transparent; }
+}
+
+.terminal-cursor {
+  border-right: 2px solid var(--accent-secondary);
+  animation: cursor-blink 1s step-end infinite;
+  padding-right: 2px;
+}
+
+/* Glitch effect — apply to .glitch class for 300ms on error */
+@keyframes glitch {
+  0%   { transform: translate(0); filter: none; }
+  20%  { transform: translate(-2px, 1px); filter: hue-rotate(90deg); }
+  40%  { transform: translate(2px, -1px); filter: hue-rotate(-90deg); }
+  60%  { transform: translate(-1px, 0); filter: none; }
+  80%  { transform: translate(1px, 1px); filter: hue-rotate(30deg); }
+  100% { transform: translate(0); filter: none; }
+}
+
+.glitch {
+  animation: glitch 0.3s ease-in-out;
+}
+
+/* Success flash — apply to .success-flash class briefly on completion */
+@keyframes success-flash {
+  0%   { box-shadow: none; }
+  30%  { box-shadow: 0 0 16px rgba(0, 255, 65, 0.6), 0 0 32px rgba(0, 255, 65, 0.3); }
+  100% { box-shadow: none; }
+}
+
+.success-flash {
+  animation: success-flash 0.6s ease-out;
+}
+
+/* Fade-in slide for new timeline events */
+@keyframes event-enter {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.event-enter {
+  animation: event-enter 0.25s ease-out both;
+}
+
+/* --- Focus Rings (Accessibility) ---
+   Visible 2px focus outline on all interactive elements. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent-secondary);
+  outline-offset: 2px;
+}
+
+/* --- Connection Status Dot ---
+   Usage: <span class="conn-dot conn-dot--connected"></span>
+          <span class="conn-dot conn-dot--disconnected"></span>
+          <span class="conn-dot conn-dot--syncing"></span> */
+.conn-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+
+.conn-dot--connected {
+  background-color: var(--accent-primary);
+  box-shadow: 0 0 5px var(--accent-primary);
+}
+
+.conn-dot--disconnected {
+  background-color: var(--accent-danger);
+  box-shadow: 0 0 5px var(--accent-danger);
+  animation: blink-danger 1.2s step-start infinite;
+}
+
+.conn-dot--syncing {
+  background-color: var(--accent-warning);
+  box-shadow: 0 0 5px var(--accent-warning);
+  animation: pulse-warning 0.8s ease-in-out infinite;
+}
+
+/* --- Output Syntax Highlighting ---
+   Applied via inline span injection in command output rendering. */
+.output-ip      { color: #79c0ff; }  /* light blue — IP addresses */
+.output-port    { color: #e3b341; }  /* gold — port numbers */
+.output-url     { color: #58a6ff; }  /* blue — URLs */
+.output-path    { color: #d2a8ff; }  /* purple — file paths */
+.output-hash    { color: #7ee787; }  /* green — hashes/hex strings */
+.output-error   { color: #f85149; }  /* red — error lines */
+.output-success { color: #39d353; }  /* green — success indicators */
+.output-user    { color: #ff9f43; }  /* orange — usernames */

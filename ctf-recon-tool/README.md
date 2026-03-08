@@ -99,6 +99,7 @@ Requires Node.js 18+.
 ```bash
 cd ctf-recon-tool
 npm install
+cp .env.example .env   # optional: set AI keys and security controls
 npm run dev        # http://localhost:3000
 ```
 
@@ -116,24 +117,47 @@ npm run lint       # run ESLint
 
 ## AI Setup
 
-API keys are entered in the report modal UI and saved to browser `localStorage`. No `.env` file is required.
+API keys can be entered directly in the report modal UI and saved to browser `localStorage`. No server configuration required for basic use.
 
-Optionally set environment variables to pre-populate keys server-side:
+To pre-populate keys server-side, set environment variables (copy `.env.example` to `.env`):
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...
-GEMINI_API_KEY=AIza...
-OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...    # Claude — preferred provider
+OPENAI_API_KEY=sk-...           # OpenAI GPT-4o — fallback #1
+GOOGLE_AI_API_KEY=AIza...       # Google Gemini — fallback #2
 ```
+
+When using the AI Coach or Report Enhancement with the default Claude provider, the app automatically falls back to the next available key if the preferred one is absent.
 
 With Docker:
 
 ```bash
 docker run -p 3000:3000 \
   -e ANTHROPIC_API_KEY=sk-ant-... \
-  -e GEMINI_API_KEY=AIza... \
+  -e OPENAI_API_KEY=sk-... \
+  -e GOOGLE_AI_API_KEY=AIza... \
   helms-paladin
 ```
+
+---
+
+## Environment Variables
+
+Copy `.env.example` to `.env` to configure locally:
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | — | Claude API key. Preferred AI provider for coach and enhancement. |
+| `OPENAI_API_KEY` | — | OpenAI API key. Auto-fallback if Anthropic key is absent. |
+| `GOOGLE_AI_API_KEY` | — | Google Gemini API key. Second auto-fallback. (`GEMINI_API_KEY` also accepted.) |
+| `APP_API_TOKEN` | *(unset)* | Require `x-api-token: <value>` header on mutating routes. Unset = no auth. |
+| `ENABLE_COMMAND_EXECUTION` | `true` dev / `false` prod | Enable shell command execution from the UI. |
+| `ENABLE_ADMIN_API` | `true` dev / `false` prod | Enable `/api/admin/*` maintenance endpoints. |
+| `NODE_ENV` | `development` | Set to `production` to harden security defaults. |
 
 ---
 
@@ -165,7 +189,7 @@ docker run -p 3000:3000 \
 
 | Layer | Technology |
 |---|---|
-| Framework | Next.js 16 (App Router) |
+| Framework | Next.js 15 (App Router) |
 | UI | React 19, single-page (`app/page.js`) |
 | Database | SQLite via `better-sqlite3` |
 | PDF generation | pdfmake 0.3 |

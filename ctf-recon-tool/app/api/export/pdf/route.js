@@ -133,6 +133,33 @@ const PDF_STYLES = {
     dividerColor: '#00ff8c',
     footerDividerColor: '#1d3d2d',
   },
+  'htb-professional': {
+    styles: {
+      header: { fontSize: 22, bold: true, color: '#9fef00' },
+      coverTitle: { fontSize: 30, bold: true, color: '#9fef00', alignment: 'center' },
+      coverSubtitle: { fontSize: 15, color: '#a4b1cd', italics: true, alignment: 'center' },
+      coverMetaKey: { fontSize: 10, bold: true, color: '#9fef00' },
+      coverMeta: { fontSize: 10, color: '#a4b1cd' },
+      sectionTitle: { fontSize: 13, bold: true, color: '#9fef00', margin: [0, 0, 0, 6] },
+      meta: { fontSize: 9, color: '#a4b1cd' },
+      body: { fontSize: 10, color: '#a4b1cd', lineHeight: 1.5 },
+      commandLabel: { fontSize: 10, bold: true, color: '#9fef00' },
+      codeBlock: { fontSize: 8.5, color: '#c3d0e0', background: '#1a2332', preserveLeadingSpaces: true },
+      codeLang: { fontSize: 8, color: '#9fef00', italics: true },
+      tableHeader: { bold: true, fontSize: 10, color: '#141d2b', fillColor: '#9fef00' },
+      caption: { fontSize: 9, italics: true, color: '#a4b1cd' },
+      footer: { fontSize: 8, color: '#4e5d7a', alignment: 'center' },
+      tocTitle: { fontSize: 14, bold: true, color: '#9fef00', margin: [0, 0, 0, 10] },
+    },
+    defaultStyle: { fontSize: 10, color: '#a4b1cd' },
+    background: (currentPage, pageSize) => ({
+      canvas: [{ type: 'rect', x: 0, y: 0, w: pageSize.width, h: pageSize.height, color: '#141d2b' }],
+    }),
+    dividerColor: '#9fef00',
+    footerDividerColor: '#2a3649',
+    hasCoverPage: true,
+    hasToc: true,
+  },
 };
 
 // Parse inline markdown (**bold**, `code`) into pdfmake text nodes
@@ -411,15 +438,50 @@ export async function GET(request) {
   const notes = events.filter(e => e.type === 'note');
   const screenshots = events.filter(e => e.type === 'screenshot');
 
+  const theme = PDF_STYLES[pdfStyle] || PDF_STYLES['terminal-dark'];
   const content = [];
 
-  // Header
+  // --- Cover Page (htb-professional and other themes with hasCoverPage) ---
+  if (theme.hasCoverPage) {
+    content.push({ text: '\n\n\n\n\n', fontSize: 12 });
+    content.push({ text: 'PENETRATION TEST REPORT', style: 'coverTitle', margin: [0, 0, 0, 12] });
+    content.push({ text: session.name, style: 'coverSubtitle', margin: [0, 0, 0, 40] });
+    content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1.5, lineColor: theme.dividerColor }], margin: [0, 0, 0, 24] });
+    const coverRows = [
+      ['Prepared by', 'Helm\'s Watch CTF Assistant'],
+      ['Date', new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })],
+      ['Target', session.target || 'Not specified'],
+      ['Difficulty', session.difficulty ? session.difficulty.toUpperCase() : 'N/A'],
+      ['Classification', 'CONFIDENTIAL'],
+    ];
+    coverRows.forEach(([key, val]) => {
+      content.push({
+        columns: [
+          { text: key, style: 'coverMetaKey', width: 130 },
+          { text: val, style: 'coverMeta', width: '*' },
+        ],
+        margin: [0, 0, 0, 6],
+      });
+    });
+    content.push({ text: '', pageBreak: 'after' });
+  }
+
+  // --- Table of Contents ---
+  if (theme.hasToc) {
+    content.push({ text: 'Table of Contents', style: 'tocTitle' });
+    content.push({ toc: { numberStyle: { bold: false }, textStyle: { color: theme.styles.body.color } } });
+    content.push({ text: '', pageBreak: 'after' });
+  }
+
+  // --- Report Header ---
+  const reportTitle = `${FORMAT_TITLES[format] || 'Report'}: ${session.name}`;
   content.push({
-    text: `${FORMAT_TITLES[format] || 'Report'}: ${session.name}`,
+    text: reportTitle,
     style: 'header',
+    tocItem: !!theme.hasToc,
     margin: [0, 0, 0, 4],
   });
-  content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#58a6ff' }], margin: [0, 0, 0, 8] });
+  content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: theme.dividerColor }], margin: [0, 0, 0, 8] });
 
   // Metadata row
   const metaItems = [`Date: ${new Date().toLocaleString()}`];
@@ -428,12 +490,12 @@ export async function GET(request) {
   content.push({ text: metaItems.join('   |   '), style: 'meta', margin: [0, 0, 0, 12] });
 
   if (session.objective) {
-    content.push({ text: 'Objective', style: 'sectionTitle' });
+    content.push({ text: 'Objective', style: 'sectionTitle', tocItem: !!theme.hasToc });
     content.push({ text: session.objective, style: 'body', margin: [0, 0, 0, 12] });
   }
 
   // Activity summary table
-  content.push({ text: 'Activity Summary', style: 'sectionTitle' });
+  content.push({ text: 'Activity Summary', style: 'sectionTitle', tocItem: !!theme.hasToc });
   content.push({
     table: {
       widths: ['*', 80],
@@ -452,7 +514,7 @@ export async function GET(request) {
 
   // Notes / Observations
   if (notes.length > 0) {
-    content.push({ text: 'Observations', style: 'sectionTitle' });
+    content.push({ text: 'Observations', style: 'sectionTitle', tocItem: !!theme.hasToc });
     notes.forEach(n => {
       content.push({
         text: `• ${n.content}`,
@@ -465,7 +527,7 @@ export async function GET(request) {
 
   // Commands
   if (commands.length > 0) {
-    content.push({ text: 'Command Timeline', style: 'sectionTitle' });
+    content.push({ text: 'Command Timeline', style: 'sectionTitle', tocItem: !!theme.hasToc });
     commands.forEach((cmd, i) => {
       content.push({
         text: `${i + 1}. ${cmd.command}`,
@@ -486,7 +548,7 @@ export async function GET(request) {
 
   // Screenshots
   if (screenshots.length > 0) {
-    content.push({ text: 'Screenshots', style: 'sectionTitle' });
+    content.push({ text: 'Screenshots', style: 'sectionTitle', tocItem: !!theme.hasToc });
     for (const ss of screenshots) {
       try {
         const imgPath = path.join(process.cwd(), 'data', 'sessions', sessionId, 'screenshots', ss.filename);
@@ -507,21 +569,25 @@ export async function GET(request) {
     }
   }
 
-  const theme = PDF_STYLES[pdfStyle] || PDF_STYLES['terminal-dark'];
-
   // Footer note
   content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: theme.footerDividerColor }], margin: [0, 12, 0, 4] });
   content.push({ text: 'Generated by Helm\'s Watch CTF Assistant', style: 'footer' });
-
-  // Replace header divider with theme color
-  content[1] = { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: theme.dividerColor }], margin: [0, 0, 0, 8] };
 
   const docDef = {
     content,
     styles: theme.styles,
     defaultStyle: { font: 'Roboto', ...theme.defaultStyle },
-    pageMargins: [40, 40, 40, 40],
+    pageMargins: [40, 60, 40, 60],
     ...(theme.background ? { background: theme.background } : {}),
+    ...(theme.hasCoverPage ? {
+      footer: (currentPage, pageCount) => currentPage === 1 ? {} : ({
+        margin: [40, 8, 40, 0],
+        columns: [
+          { text: session.name, style: 'footer', alignment: 'left' },
+          { text: `Page ${currentPage - (theme.hasToc ? 2 : 1)} of ${pageCount - (theme.hasToc ? 2 : 1)}`, style: 'footer', alignment: 'right' },
+        ],
+      }),
+    } : {}),
   };
 
   const pdfDoc = await printer.createPdfKitDocument(docDef);

@@ -292,6 +292,7 @@ export default function Home() {
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1600));
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [favorites, setFavorites] = useState(() => (typeof window !== 'undefined' ? loadFavorites() : new Set()));
+  const [collapsedTools, setCollapsedTools] = useState(new Set());
   const [cmdHistory, setCmdHistory] = useState([]);
 
   // Command timeout (seconds)
@@ -310,11 +311,24 @@ export default function Home() {
   const [isCoaching, setIsCoaching] = useState(false);
   const [coachSkill, setCoachSkill] = useState('enum-target');
 
-  // Timeline filter state
-  const [filterType, setFilterType] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [filterKeyword, setFilterKeyword] = useState('');
-  const [filterTag, setFilterTag] = useState('');
+  // Timeline filter state — persisted to localStorage
+  const [filterType, setFilterType] = useState(() => {
+    try { return localStorage.getItem('filter.type') || 'all'; } catch { return 'all'; }
+  });
+  const [filterStatus, setFilterStatus] = useState(() => {
+    try { return localStorage.getItem('filter.status') || 'all'; } catch { return 'all'; }
+  });
+  const [filterKeyword, setFilterKeyword] = useState(() => {
+    try { return localStorage.getItem('filter.keyword') || ''; } catch { return ''; }
+  });
+  const [filterTag, setFilterTag] = useState(() => {
+    try { return localStorage.getItem('filter.tag') || ''; } catch { return ''; }
+  });
+
+  // Connection / sync status
+  const [lastSyncTime, setLastSyncTime] = useState(null);
+  const [connectionStatus, setConnectionStatus] = useState('connecting'); // 'connected'|'disconnected'|'connecting'
+  const [healthData, setHealthData] = useState(null); // null = loading, otherwise /api/health response
   const [historyFocus, setHistoryFocus] = useState(false);
   const [timelineAtTop, setTimelineAtTop] = useState(true);
   const [timelineAtBottom, setTimelineAtBottom] = useState(true);
@@ -322,6 +336,12 @@ export default function Home() {
 
   // Collapsible output state
   const [expandedOutputs, setExpandedOutputs] = useState(new Set());
+
+  // Collapsible input area
+  const [inputCollapsed, setInputCollapsed] = useState(false);
+
+  // Copy-to-clipboard feedback
+  const [copiedEventId, setCopiedEventId] = useState(null);
 
   // Screenshot inline editing state
   const [editingScreenshot, setEditingScreenshot] = useState(null); // { id, name, tag }
@@ -417,7 +437,12 @@ export default function Home() {
       const res = await apiFetch(`/api/timeline?sessionId=${currentSession}`);
       const data = await res.json();
       setTimeline(data);
-    } catch (e) { console.error('Failed to fetch timeline', e); }
+      setLastSyncTime(Date.now());
+      setConnectionStatus('connected');
+    } catch (e) {
+      console.error('Failed to fetch timeline', e);
+      setConnectionStatus('disconnected');
+    }
   }, [currentSession, apiFetch]);
 
   const fetchCommandHistory = useCallback(async () => {
@@ -437,6 +462,22 @@ export default function Home() {
     const interval = setInterval(fetchTimeline, 3000);
     return () => clearInterval(interval);
   }, [fetchTimeline]);
+
+  const fetchHealth = useCallback(async () => {
+    try {
+      const res = await fetch('/api/health');
+      const data = await res.json();
+      setHealthData(data);
+    } catch {
+      setHealthData({ status: 'error' });
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHealth();
+    const interval = setInterval(fetchHealth, 30000);
+    return () => clearInterval(interval);
+  }, [fetchHealth]);
 
   useEffect(() => {
     const feed = timelineFeedRef.current;
@@ -492,6 +533,16 @@ export default function Home() {
       // localStorage unavailable
     }
   }, [sidebarWidth, sidebarCollapsed, historyFocus]);
+
+  // Persist filter state to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('filter.type', filterType);
+      localStorage.setItem('filter.status', filterStatus);
+      localStorage.setItem('filter.keyword', filterKeyword);
+      localStorage.setItem('filter.tag', filterTag);
+    } catch (_) { /* localStorage unavailable */ }
+  }, [filterType, filterStatus, filterKeyword, filterTag]);
 
   useEffect(() => {
     if (viewportWidth < 1200) {
@@ -991,14 +1042,22 @@ export default function Home() {
     });
   };
 
+  const copyOutput = (id, text) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedEventId(id);
+      setTimeout(() => setCopiedEventId(null), 1500);
+    }).catch(() => {});
+  };
+
   // ── Derived data ──────────────────────────────────────────────────────────
 
   const isOverlaySidebar = viewportWidth < 1200;
   const activeSidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, sidebarWidth));
   const hideSidebarForFocus = historyFocus;
-  const layoutSidebarWidth = hideSidebarForFocus
+  // When collapsed: sidebar takes 0px in grid (drawer overlay instead of rail strip)
+  const layoutSidebarWidth = hideSidebarForFocus || sidebarCollapsed
     ? 0
-    : (isOverlaySidebar ? activeSidebarWidth : (sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : activeSidebarWidth));
+    : (isOverlaySidebar ? activeSidebarWidth : activeSidebarWidth);
   const layoutVars = {
     '--sidebar-width': `${layoutSidebarWidth}px`,
     '--resizer-width': isOverlaySidebar || sidebarCollapsed || hideSidebarForFocus ? '0px' : '10px',
@@ -1046,39 +1105,74 @@ export default function Home() {
   return (
     <main className={`container ${historyFocus ? 'focus-mode' : ''}`}>
       <header className={`header glass-panel ${historyFocus ? 'header-compact' : ''}`}>
-        <div className="header-row header-row-top">
-          <h1 className="dnd-title">Helm&apos;s Watch</h1>
-          <div className="session-meta">
-            <div className="session-badge mono">{currentSessionData?.name || currentSession}</div>
+        <div className="header-row">
+          {/* Brand */}
+          <span className="dnd-title header-brand">HW</span>
+
+          {/* Session selector + contextual meta */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flex: '1 1 auto', minWidth: 0, overflow: 'hidden' }}>
+            {(isOverlaySidebar || sidebarCollapsed) && !historyFocus && (
+              <button className="btn-secondary btn-compact" onClick={() => setSidebarDrawerOpen(true)} title="Toolbox">☰</button>
+            )}
+            <select value={currentSession} onChange={(e) => setCurrentSession(e.target.value)}
+              style={{ flex: '1 1 140px', maxWidth: '240px' }}>
+              {sessions.map((s, idx) => <option key={`${s.id}-${idx}`} value={s.id}>{s.name}</option>)}
+            </select>
             {currentSessionData?.difficulty && (
-              <span className="mono" style={{ fontSize: '0.78rem', padding: '3px 9px', borderRadius: '4px', background: DIFFICULTY_COLORS[currentSessionData.difficulty] + '22', color: DIFFICULTY_COLORS[currentSessionData.difficulty], border: `1px solid ${DIFFICULTY_COLORS[currentSessionData.difficulty]}44` }}>
+              <span className="mono" style={{ fontSize: '0.7rem', padding: '2px 7px', borderRadius: '4px', whiteSpace: 'nowrap', background: DIFFICULTY_COLORS[currentSessionData.difficulty] + '22', color: DIFFICULTY_COLORS[currentSessionData.difficulty], border: `1px solid ${DIFFICULTY_COLORS[currentSessionData.difficulty]}44` }}>
                 {currentSessionData.difficulty.toUpperCase()}
               </span>
             )}
             {currentSessionData?.target && (
-              <span className="mono" style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>
+              <span className="mono" title={currentSessionData.target}
+                style={{ fontSize: '0.76rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px' }}>
                 ⌖ {currentSessionData.target}
               </span>
             )}
           </div>
-        </div>
 
-        <div className="header-row header-row-actions">
-          <div className="session-selector">
-            {isOverlaySidebar && !historyFocus && (
-              <button className="btn-secondary" onClick={() => setSidebarDrawerOpen(true)}>[ Toolbox ]</button>
-            )}
-            <select value={currentSession} onChange={(e) => setCurrentSession(e.target.value)} style={{ minWidth: '180px' }}>
-              {sessions.map((s, idx) => <option key={`${s.id}-${idx}`} value={s.id}>{s.name}</option>)}
-            </select>
-            <button className="btn-secondary" onClick={() => setShowNewSessionModal(true)}>+ New Session</button>
+          {/* Action buttons */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
+            <button className="btn-secondary btn-compact" onClick={() => setShowNewSessionModal(true)} title="New Session">+</button>
             {currentSession !== 'default' && (
-              <button className="btn-secondary" onClick={deleteSession} style={{ color: 'var(--accent-danger, #f85149)', borderColor: 'var(--accent-danger, #f85149)' }}>Delete Session</button>
+              <button className="btn-compact" onClick={deleteSession} title="Delete Session"
+                style={{ color: 'var(--accent-danger, #f85149)', border: '1px solid var(--accent-danger, #f85149)', borderRadius: '6px', background: 'transparent' }}>✕</button>
             )}
-            <button className="btn-secondary" onClick={runCoach} disabled={isCoaching} style={{ fontSize: '0.9rem', color: 'var(--accent-secondary)', borderColor: 'var(--accent-secondary)' }}>
-              {isCoaching ? '[ Coaching... ]' : '[ AI Coach ]'}
+            <button className="btn-secondary btn-compact" onClick={runCoach} disabled={isCoaching}
+              style={{ color: 'var(--accent-secondary)', borderColor: 'var(--accent-secondary)' }}>
+              {isCoaching ? '…' : 'Coach'}
             </button>
-            <button className="btn-primary" onClick={() => generateReport()} style={{ background: 'var(--accent-secondary)', color: '#fff' }}>Generate Report</button>
+            <button className="btn-primary btn-compact" onClick={() => generateReport()}
+              style={{ background: 'var(--accent-secondary)', color: '#fff' }}>Report</button>
+          </div>
+
+          {/* Status dots */}
+          <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', fontSize: '0.72rem', color: 'var(--text-muted)', flexShrink: 0 }}>
+            {(() => {
+              const s = healthData?.status;
+              const dotClass = s === 'ok' ? 'connected' : s === 'degraded' ? 'syncing' : 'disconnected';
+              const label = s === 'ok' ? 'System OK' : s === 'degraded' ? 'Degraded' : s === 'error' ? 'Unreachable' : '…';
+              const tip = healthData ? [
+                `Status: ${healthData.status}`,
+                `DB: ${healthData.db?.status ?? '?'}`,
+                `AI: ${Object.entries(healthData.ai || {}).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}`,
+                `Disk: ${healthData.disk?.dataDir ?? '?'}`,
+                `v${healthData.version ?? '?'}`,
+              ].join('\n') : 'Checking health…';
+              return (
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'default' }} title={tip}>
+                  <span className={`conn-dot conn-dot--${dotClass}`} />
+                  <span>{label}</span>
+                </span>
+              );
+            })()}
+            <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'default' }}
+              title={`Timeline: ${connectionStatus}${lastSyncTime ? ` — last synced ${Math.round((Date.now() - lastSyncTime) / 1000)}s ago` : ''}`}>
+              <span className={`conn-dot conn-dot--${connectionStatus === 'connected' ? 'connected' : connectionStatus === 'disconnected' ? 'disconnected' : 'syncing'}`} />
+              <span>{connectionStatus === 'connected' && lastSyncTime
+                ? `${Math.round((Date.now() - lastSyncTime) / 1000)}s`
+                : connectionStatus === 'disconnected' ? 'offline' : '…'}</span>
+            </span>
           </div>
         </div>
       </header>
@@ -1143,6 +1237,7 @@ export default function Home() {
                   <option value="cyber-neon-grid">Cyber Neon Grid</option>
                   <option value="cyber-synthwave">Cyber Synthwave</option>
                   <option value="cyber-matrix-terminal">Cyber Matrix Terminal</option>
+                  <option value="htb-professional">HTB Professional</option>
                 </select>
                 <button className="btn-secondary" onClick={() => setShowReportModal(false)}>Close</button>
               </div>
@@ -1432,22 +1527,22 @@ export default function Home() {
       )}
 
       <div className={`layout ${isOverlaySidebar ? 'layout-overlay' : ''} ${sidebarCollapsed ? 'layout-collapsed' : ''} ${historyFocus ? 'layout-history-focus' : ''}`} style={layoutVars}>
-        {!hideSidebarForFocus && isOverlaySidebar && sidebarDrawerOpen && (
+        {!hideSidebarForFocus && (isOverlaySidebar || sidebarCollapsed) && sidebarDrawerOpen && (
           <div className="sidebar-backdrop" onClick={() => setSidebarDrawerOpen(false)} />
         )}
 
         {/* ── Sidebar ──────────────────────────────────────────────────────── */}
         {!hideSidebarForFocus && (
-        <aside className={`sidebar glass-panel ${isOverlaySidebar ? 'overlay' : ''} ${sidebarDrawerOpen ? 'open' : ''} ${sidebarCollapsed && !isOverlaySidebar ? 'collapsed' : ''}`}>
+        <aside className={`sidebar glass-panel ${(isOverlaySidebar || sidebarCollapsed) ? 'overlay' : ''} ${sidebarDrawerOpen ? 'open' : ''}`}>
           <div className="sidebar-header">
-            <h3>{sidebarCollapsed && !isOverlaySidebar ? 'TB' : 'Toolbox'}</h3>
+            <h3>Toolbox</h3>
             <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
               {!isOverlaySidebar && (
-                <button className="btn-secondary mono sidebar-toggle-btn" onClick={toggleSidebarCollapse} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+                <button className="btn-secondary mono sidebar-toggle-btn" onClick={toggleSidebarCollapse} title={sidebarCollapsed ? 'Pin sidebar' : 'Collapse sidebar'}>
                   {sidebarCollapsed ? '»' : '«'}
                 </button>
               )}
-              {isOverlaySidebar && (
+              {(isOverlaySidebar || sidebarCollapsed) && (
                 <button className="btn-secondary mono sidebar-toggle-btn" onClick={() => setSidebarDrawerOpen(false)} title="Close toolbox">
                   ×
                 </button>
@@ -1455,21 +1550,7 @@ export default function Home() {
             </div>
           </div>
 
-          {sidebarCollapsed && !isOverlaySidebar ? (
-            <div className="sidebar-rail">
-              {[['tools', 'T'], ['flags', 'F'], ['history', 'H']].map(([tab, label]) => (
-                <button
-                  key={tab}
-                  className="btn-secondary mono rail-btn"
-                  onClick={() => setSidebarTab(tab)}
-                  style={{ color: sidebarTab === tab ? 'var(--accent-primary)' : 'var(--text-muted)' }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <>
+          <>
               <div className="tab-switcher mono" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
                 {[['tools', 'TOOLS'], ['flags', 'FLAGS'], ['history', 'HIST']].map(([tab, label]) => (
                   <span key={tab} style={{ cursor: 'pointer', whiteSpace: 'nowrap', color: sidebarTab === tab ? 'var(--accent-primary)' : 'var(--text-muted)', fontSize: '0.82rem', letterSpacing: '0.5px' }}
@@ -1541,34 +1622,51 @@ export default function Home() {
                       </div>
                     </div>
                   )}
-                  {CHEATSHEET.map((tool, i) => (
-                    <div key={i} style={{ marginBottom: '1.5rem' }}>
-                      <div className="mono" style={{ color: 'var(--accent-secondary)', borderBottom: '1px solid rgba(88,166,255,0.2)', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-                        {tool.tool}
-                      </div>
-                      {tool.link && (
-                        <a href={tool.link} target="_blank" rel="noopener noreferrer"
-                          style={{ display: 'inline-block', fontSize: '0.78rem', color: 'var(--accent-primary)', border: '1px solid var(--accent-primary)', borderRadius: '4px', padding: '3px 10px', textDecoration: 'none', marginBottom: '0.5rem' }}>
-                          → Open {tool.tool} ↗
-                        </a>
-                      )}
-                      {tool.categories.map((cat, j) => (
-                        <div key={j} style={{ marginBottom: '0.8rem' }}>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>{cat.name}</div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-                            {cat.flags.map((f, k) => (
-                              <div key={`${f.flag}-${k}`} style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-                                <button className="flag-btn mono" title={f.desc} onClick={() => appendFlag(f.flag)}>{f.flag}</button>
-                                <button onClick={() => toggleFavorite(f.flag)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: favorites.has(f.flag) ? '#e3b341' : 'var(--text-muted)', fontSize: '0.65rem', padding: '0 2px' }} title={favorites.has(f.flag) ? 'Remove from favorites' : 'Add to favorites'}>
-                                  {favorites.has(f.flag) ? '★' : '☆'}
-                                </button>
+                  {CHEATSHEET.map((tool, i) => {
+                    const isCollapsed = collapsedTools.has(i);
+                    return (
+                      <div key={i} style={{ marginBottom: '0.6rem', borderRadius: '6px', border: '1px solid rgba(88,166,255,0.12)', overflow: 'hidden' }}>
+                        {/* Tool header — click to collapse */}
+                        <div
+                          className="mono"
+                          onClick={() => setCollapsedTools(prev => {
+                            const next = new Set(prev);
+                            next.has(i) ? next.delete(i) : next.add(i);
+                            return next;
+                          })}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', padding: '0.38rem 0.55rem', background: 'rgba(88,166,255,0.07)', color: 'var(--accent-secondary)', fontSize: '0.84rem', userSelect: 'none' }}>
+                          <span>{tool.tool}</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', transition: 'transform 0.15s', display: 'inline-block', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}>▼</span>
+                        </div>
+                        {/* Collapsible content */}
+                        {!isCollapsed && (
+                          <div style={{ padding: '0.45rem 0.55rem 0.55rem' }}>
+                            {tool.link && (
+                              <a href={tool.link} target="_blank" rel="noopener noreferrer"
+                                style={{ display: 'inline-block', fontSize: '0.74rem', color: 'var(--accent-primary)', border: '1px solid var(--accent-primary)', borderRadius: '4px', padding: '2px 8px', textDecoration: 'none', marginBottom: '0.45rem' }}>
+                                → Open {tool.tool} ↗
+                              </a>
+                            )}
+                            {tool.categories.map((cat, j) => (
+                              <div key={j} style={{ marginBottom: '0.5rem' }}>
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.25rem', letterSpacing: '0.3px' }}>{cat.name}</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                                  {cat.flags.map((f, k) => (
+                                    <div key={`${f.flag}-${k}`} style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                      <button className="flag-btn mono" title={f.desc} onClick={() => appendFlag(f.flag)}>{f.flag}</button>
+                                      <button onClick={() => toggleFavorite(f.flag)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: favorites.has(f.flag) ? '#e3b341' : 'var(--text-muted)', fontSize: '0.65rem', padding: '0 2px' }} title={favorites.has(f.flag) ? 'Remove from favorites' : 'Add to favorites'}>
+                                        {favorites.has(f.flag) ? '★' : '☆'}
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             ))}
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -1589,7 +1687,6 @@ export default function Home() {
                 </div>
               )}
             </>
-          )}
         </aside>
         )}
 
@@ -1599,56 +1696,54 @@ export default function Home() {
 
         {/* ── Timeline ──────────────────────────────────────────────────────── */}
         <section className={`timeline-container glass-panel ${historyFocus ? 'history-focus' : ''}`}>
-          {/* Filter bar */}
+          {/* Filter bar — single row */}
           <div className="filter-toolbar">
-            <div className="filter-row filter-row-primary">
+            <div className="filter-row">
               {['all', 'command', 'note', 'screenshot'].map(t => (
                 <button key={t} onClick={() => setFilterType(t)}
                   className="mono"
-                  style={{ fontSize: '0.82rem', padding: '4px 10px', borderRadius: '4px', border: '1px solid var(--border-color)', background: filterType === t ? 'var(--accent-primary)' : 'transparent', color: filterType === t ? '#000' : 'var(--text-muted)', cursor: 'pointer', letterSpacing: '0.5px' }}>
-                  {t === 'all' ? 'ALL' : t.toUpperCase()}
+                  style={{ fontSize: '0.78rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: filterType === t ? 'var(--accent-primary)' : 'transparent', color: filterType === t ? '#000' : 'var(--text-muted)', cursor: 'pointer', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>
+                  {t === 'all' ? 'ALL' : t === 'command' ? 'CMD' : t === 'screenshot' ? 'SS' : t.toUpperCase()}
                 </button>
               ))}
               <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
-                style={{ fontSize: '0.84rem', padding: '4px 8px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px' }}>
+                style={{ fontSize: '0.78rem', padding: '3px 6px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px' }}>
                 <option value="all">Any status</option>
                 <option value="success">Success</option>
                 <option value="failed">Failed</option>
                 <option value="running">Running</option>
               </select>
               <select value={filterTag} onChange={(e) => setFilterTag(e.target.value)}
-                style={{ fontSize: '0.84rem', padding: '4px 8px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px', maxWidth: '180px' }}>
+                style={{ fontSize: '0.78rem', padding: '3px 6px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px', maxWidth: '140px' }}>
                 <option value="">Any tag</option>
                 {allTimelineTags.map(t => <option key={t} value={t}>#{t}</option>)}
               </select>
-              {(filterType !== 'all' || filterStatus !== 'all' || filterKeyword || filterTag) && (
-                <button onClick={() => { setFilterType('all'); setFilterStatus('all'); setFilterKeyword(''); setFilterTag(''); }}
-                  className="mono" style={{ fontSize: '0.82rem', padding: '4px 10px', borderRadius: '4px', border: '1px solid rgba(248,81,73,0.4)', color: 'rgba(248,81,73,0.8)', background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                  ✕ Clear
-                </button>
-              )}
-            </div>
-            <div className="filter-row filter-row-secondary">
               <input
                 type="text" value={filterKeyword} onChange={(e) => setFilterKeyword(e.target.value)}
                 placeholder="Search..." className="mono"
-                style={{ fontSize: '0.84rem', padding: '6px 10px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', flexGrow: 1, outline: 'none', minWidth: '200px' }}
+                style={{ fontSize: '0.8rem', padding: '3px 8px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', flex: '1 1 120px', outline: 'none', minWidth: '80px' }}
               />
+              {(filterType !== 'all' || filterStatus !== 'all' || filterKeyword || filterTag) && (
+                <button onClick={() => { setFilterType('all'); setFilterStatus('all'); setFilterKeyword(''); setFilterTag(''); }}
+                  className="mono" style={{ fontSize: '0.78rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid rgba(248,81,73,0.4)', color: 'rgba(248,81,73,0.8)', background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                  ✕
+                </button>
+              )}
               <button onClick={exportTimeline} className="mono btn-secondary"
-                style={{ fontSize: '0.82rem', padding: '4px 10px', whiteSpace: 'nowrap' }}>
-                [Export ↓]
+                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="Export timeline">
+                ↓
               </button>
               <button onClick={loadDbStats} className="mono btn-secondary"
-                style={{ fontSize: '0.82rem', padding: '4px 10px', whiteSpace: 'nowrap' }}>
-                [DB ⚙]
+                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="DB stats">
+                ⚙
               </button>
               <button
                 onClick={() => setHistoryFocus(v => !v)}
                 className="mono btn-secondary"
-                style={{ fontSize: '0.82rem', padding: '4px 10px', whiteSpace: 'nowrap' }}
-                title={historyFocus ? 'Exit history focus mode' : 'Maximize timeline readability'}
+                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }}
+                title={historyFocus ? 'Exit focus mode' : 'History focus mode'}
               >
-                {historyFocus ? '[Exit Focus]' : '[History Focus]'}
+                {historyFocus ? '⊡' : '⊞'}
               </button>
             </div>
           </div>
@@ -1663,9 +1758,10 @@ export default function Home() {
 
               {filteredTimeline.map((event, idx) => {
                 const outputLines = (event.output || '').split('\n');
-                const isLong = outputLines.length > 10;
+                const PREVIEW_LINES = 4;
+                const isLong = outputLines.length > PREVIEW_LINES;
                 const isExpanded = expandedOutputs.has(event.id);
-                const visibleOutput = isExpanded ? event.output : outputLines.slice(0, 10).join('\n');
+                const visibleOutput = isExpanded ? event.output : outputLines.slice(0, PREVIEW_LINES).join('\n');
                 const tags = (() => { try { return JSON.parse(event.tags || '[]'); } catch { return []; } })();
 
                 return (
@@ -1701,11 +1797,19 @@ export default function Home() {
                         </div>
                         {event.status !== 'running' && event.status !== 'queued' && event.output && (
                           <>
-                            <pre className="event-output mono">{visibleOutput || 'No output.'}</pre>
+                            <div style={{ position: 'relative' }}>
+                              <pre className="event-output mono">{visibleOutput || 'No output.'}</pre>
+                              <button
+                                onClick={() => copyOutput(event.id, event.output)}
+                                title="Copy output"
+                                className="mono"
+                                style={{ position: 'absolute', top: '6px', right: '6px', fontSize: '0.72rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', color: copiedEventId === event.id ? 'var(--accent-primary)' : 'var(--text-muted)', background: 'rgba(1,4,9,0.85)', cursor: 'pointer', lineHeight: 1.5 }}
+                              >{copiedEventId === event.id ? '✓ Copied' : 'Copy'}</button>
+                            </div>
                             {isLong && (
                               <button onClick={() => toggleOutput(event.id)} className="mono"
                                 style={{ fontSize: '0.8rem', background: 'transparent', border: 'none', color: 'var(--accent-secondary)', cursor: 'pointer', padding: '3px 0', display: 'block' }}>
-                                {isExpanded ? `▲ Collapse` : `▼ Show more (${outputLines.length - 10} more lines)`}
+                                {isExpanded ? `▲ Collapse` : `▼ Show more (${outputLines.length - PREVIEW_LINES} more lines)`}
                               </button>
                             )}
                           </>
@@ -1714,8 +1818,11 @@ export default function Home() {
                           <pre className="event-output mono">No output.</pre>
                         )}
                         {(event.status === 'running' || event.status === 'queued') && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-warning)', fontSize: '0.85rem' }}>
-                            <span className="loader"></span> Processing...
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--accent-warning)', fontSize: '0.85rem' }}>
+                            <span className="status-dot status-dot--running" />
+                            <span className="mono">
+                              {`${Math.floor((Date.now() - new Date(event.timestamp).getTime()) / 1000)}s elapsed`}
+                            </span>
                           </div>
                         )}
                       </>
@@ -1800,7 +1907,20 @@ export default function Home() {
           </div>
 
           {/* ── Input area ────────────────────────────────────────────────── */}
-          <form className="input-area" onSubmit={handleSubmit}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: inputCollapsed ? '0' : '0.3rem' }}>
+            <button type="button" onClick={() => setInputCollapsed(v => !v)}
+              className="mono btn-secondary"
+              style={{ fontSize: '0.75rem', padding: '2px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}
+              title={inputCollapsed ? 'Expand input' : 'Collapse input'}>
+              {inputCollapsed ? '▲ Input' : '▼'}
+            </button>
+            {inputCollapsed && (
+              <span className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                input collapsed — click ▲ to expand
+              </span>
+            )}
+          </div>
+          <form className={`input-area${inputCollapsed ? ' input-area--collapsed' : ''}`} onSubmit={handleSubmit}>
             <div className="input-toolbar">
               <select value={inputType} onChange={(e) => setInputType(e.target.value)} style={{ width: '120px' }}>
                 <option value="command">Command</option>
@@ -1826,28 +1946,31 @@ export default function Home() {
                 </button>
               </div>
             </div>
-            {/* Stage tag chips */}
+            {/* Stage tag selector */}
             {inputType !== 'screenshot' && (
               <div className="tag-block">
-                <div className="tag-chip-row">
-                  {SUGGESTED_TAGS.slice(0, 9).map(tag => {
-                    const active = inputTags.split(',').map(t => t.trim()).includes(tag);
-                    return (
-                      <button key={tag} type="button" onClick={() => toggleTag(tag)}
-                        style={{
-                          fontSize: '0.76rem', padding: '3px 9px', borderRadius: '10px', cursor: 'pointer',
-                          border: `1px solid ${active ? 'var(--accent-primary)' : 'var(--border-color)'}`,
-                          background: active ? 'rgba(88,166,255,0.15)' : 'rgba(1,4,9,0.4)',
-                          color: active ? 'var(--accent-primary)' : 'var(--text-muted)',
-                          transition: 'all 0.15s',
-                          whiteSpace: 'nowrap',
-                        }}>
-                        {tag}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="tag-input-row">
+                <div className="tag-input-row" style={{ gap: '0.5rem' }}>
+                  <select
+                    value=""
+                    onChange={(e) => { if (e.target.value) toggleTag(e.target.value); }}
+                    className="mono"
+                    style={{ fontSize: '0.82rem', padding: '4px 8px', background: 'rgba(1,4,9,0.6)',
+                      border: '1px solid var(--border-color)', color: 'var(--text-muted)',
+                      borderRadius: '4px', minWidth: '160px' }}>
+                    <option value="">— phase / category —</option>
+                    <optgroup label="Pentest Phases">
+                      {SUGGESTED_TAGS.slice(0, 9).map(t => {
+                        const active = inputTags.split(',').map(s => s.trim()).includes(t);
+                        return <option key={t} value={t}>{active ? '✓ ' : ''}{t}</option>;
+                      })}
+                    </optgroup>
+                    <optgroup label="CTF Categories">
+                      {SUGGESTED_TAGS.slice(9).map(t => {
+                        const active = inputTags.split(',').map(s => s.trim()).includes(t);
+                        return <option key={t} value={t}>{active ? '✓ ' : ''}{t}</option>;
+                      })}
+                    </optgroup>
+                  </select>
                   <input
                     type="text" value={inputTags} onChange={(e) => { setInputTags(e.target.value); setTagError(false); }}
                     placeholder="tag (required)" className="mono"
@@ -1856,7 +1979,7 @@ export default function Home() {
                       background: 'rgba(1,4,9,0.6)',
                       border: `1px solid ${tagError ? 'var(--accent-danger, #f85149)' : 'var(--border-color)'}`,
                       color: tagError ? 'var(--accent-danger, #f85149)' : 'var(--text-muted)',
-                      borderRadius: '4px', width: '200px', outline: 'none',
+                      borderRadius: '4px', width: '180px', outline: 'none',
                     }}
                   />
                   {tagError && (
@@ -1864,6 +1987,14 @@ export default function Home() {
                       ← required
                     </span>
                   )}
+                  {inputTags && inputTags.split(',').map(t => t.trim()).filter(Boolean).map(t => (
+                    <span key={t} className="mono" onClick={() => toggleTag(t)}
+                      style={{ fontSize: '0.74rem', padding: '2px 7px', borderRadius: '10px',
+                        background: 'rgba(88,166,255,0.15)', color: 'var(--accent-primary)',
+                        border: '1px solid var(--accent-primary)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      {t} ×
+                    </span>
+                  ))}
                 </div>
               </div>
             )}
@@ -1889,21 +2020,11 @@ export default function Home() {
       <style jsx>{`
         .container { width: min(96vw, 1880px); margin: 0 auto; padding: clamp(12px, 1.2vw, 24px); height: calc(100vh - clamp(12px, 1.2vw, 24px)); display: flex; flex-direction: column; gap: 0.5rem; }
         .container.focus-mode { gap: 0.35rem; }
-        .header { padding: 1rem 1.2rem; display: flex; flex-direction: column; gap: 0.75rem; }
-        .header.header-compact { padding: 0.55rem 0.85rem; gap: 0.45rem; }
-        .header h1 { font-size: 1.55rem; letter-spacing: -0.5px; text-transform: uppercase; }
-        .header.header-compact h1 { font-size: 1.25rem; letter-spacing: -0.2px; }
-        .header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 42px; }
-        .header.header-compact .header-row { min-height: 34px; gap: 8px; }
-        .header-row-top { align-items: flex-start; }
-        .header-row-actions { width: 100%; }
-        .session-meta { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
-        .header.header-compact .session-meta { gap: 0.45rem; }
-        .session-selector { width: 100%; display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 0.75rem; margin-right: 0; }
-        .session-selector :global(button), .session-selector :global(select) { min-height: 42px; }
-        .header.header-compact .session-selector :global(button), .header.header-compact .session-selector :global(select) { min-height: 34px; font-size: 0.8rem; padding: 0.3rem 0.62rem; }
-        .session-selector :global(select:first-child) { flex: 1 1 220px; max-width: 320px; }
-        .session-selector :global(button) { font-size: 0.88rem; }
+        .header { padding: 0.45rem 1.2rem; display: flex; flex-direction: row; align-items: center; gap: 0.6rem; }
+        .header.header-compact { padding: 0.35rem 0.85rem; gap: 0.4rem; }
+        .header-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 0.45rem; flex-wrap: nowrap; min-height: unset; }
+        .header-brand { font-size: 1.0rem; letter-spacing: 2px; white-space: nowrap; flex-shrink: 0; }
+        .btn-compact { min-height: 30px !important; padding: 0.2rem 0.55rem !important; font-size: 0.8rem !important; }
         .objective-bar { padding: 0.7rem 1.2rem; font-size: 0.92rem; color: var(--text-muted); border-top: none; }
 
         .report-modal { width: 88%; max-width: 1240px; height: 88vh; padding: 1.25rem; gap: 0.75rem; overflow: hidden; }
@@ -1933,9 +2054,9 @@ export default function Home() {
         .btn-suggestion { width: 100%; text-align: left; background: transparent; color: var(--text-muted); font-size: 0.8rem; padding: 0.4rem 0.5rem; border-radius: 4px; border: 1px solid transparent; transition: all 0.2s; }
         .btn-suggestion:hover { background: rgba(57, 211, 83, 0.05); border-color: rgba(57, 211, 83, 0.3); color: var(--accent-primary); }
         .timeline-container { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; padding: 1.2rem; position: relative; overflow-x: hidden; }
-        .filter-toolbar { display: flex; flex-direction: column; gap: 0.55rem; margin-bottom: 0.8rem; }
-        .filter-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-        .filter-row-secondary { justify-content: space-between; }
+        .filter-toolbar { display: flex; flex-direction: column; gap: 0; margin-bottom: 0.55rem; }
+        .filter-row { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
+        .input-area--collapsed { display: none; }
         .timeline-scroll-shell { flex-grow: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 0.55rem; margin-bottom: 1rem; }
         .timeline-feed { flex-grow: 1; overflow-y: auto; overflow-x: hidden; padding-right: 0.85rem; margin-bottom: 0; display: flex; flex-direction: column; gap: 1rem; min-height: 0; }
         .timeline-jump-controls { display: flex; flex-direction: column; justify-content: flex-end; gap: 0.35rem; padding-bottom: 0.2rem; }
@@ -1971,40 +2092,24 @@ export default function Home() {
         .event-header { display: flex; align-items: center; gap: 0.55rem; margin-bottom: 0.6rem; flex-wrap: wrap; }
 
         @media (min-width: 1600px) {
-          .header { padding: 1.1rem 1.35rem; }
           .timeline-container { padding: 1.35rem; }
           .sidebar { padding: 1.2rem; }
         }
 
         @media (max-width: 1599px) and (min-width: 1366px) {
-          .header { padding: 0.95rem 1.1rem; }
           .timeline-container { padding: 1.1rem; }
           .sidebar { padding: 0.95rem; }
-          .session-selector :global(button), .session-selector :global(select) { min-height: 40px; }
-          .session-selector :global(button) { padding: 0.45rem 0.8rem; }
           .input-area { padding: 1.05rem; }
         }
 
         @media (max-width: 1365px) {
-          .header { padding: 0.9rem 1rem; }
           .timeline-container { padding: 1rem; }
           .timeline-feed { padding-right: 0.6rem; }
-          .header h1 { font-size: 1.42rem; }
-          .session-selector :global(select:first-child) { min-width: 180px; max-width: 100%; }
           .input-toolbar { gap: 0.4rem; margin-bottom: 0.35rem; }
           .input-extras { justify-content: flex-start; }
-          .tag-chip-row { gap: 5px; }
         }
 
         @media (max-width: 1280px) and (min-width: 1200px) {
-          .header { padding: 0.78rem 0.88rem; gap: 0.5rem; }
-          .header h1 { font-size: 1.3rem; letter-spacing: -0.3px; }
-          .header-row { gap: 8px; min-height: 36px; }
-          .session-meta { gap: 0.45rem; }
-          .session-selector { gap: 0.45rem; }
-          .session-selector :global(select:first-child) { flex: 1 1 170px; max-width: 260px; }
-          .session-selector :global(button), .session-selector :global(select) { min-height: 34px; font-size: 0.8rem; padding: 0.34rem 0.58rem; }
-          .objective-bar { padding: 0.5rem 0.88rem; font-size: 0.8rem; }
           .layout { gap: 0.58rem; margin-top: 0.5rem; }
           .sidebar { padding: 0.72rem 0.74rem 0.78rem; }
           .sidebar-header { margin-bottom: 0.58rem; }
@@ -2025,32 +2130,23 @@ export default function Home() {
           .input-timeout { gap: 4px; }
           .input-extras :global(button) { padding: 0.3rem 0.5rem; font-size: 0.76rem; }
           .tag-block { gap: 0.25rem; margin-bottom: 0.24rem; }
-          .tag-chip-row { gap: 4px; }
-          .tag-chip-row :global(button) { font-size: 0.68rem !important; padding: 2px 7px !important; }
-          .tag-input-row :global(input) { width: 160px !important; font-size: 0.76rem !important; padding: 3px 8px !important; }
+          .tag-input-row :global(input) { width: 140px !important; font-size: 0.76rem !important; padding: 3px 8px !important; }
           .tag-input-row :global(span) { font-size: 0.72rem !important; }
           .input-area .flex-grow { min-height: 34px; font-size: 0.84rem; }
           .input-area :global(.btn-primary) { min-height: 34px; font-size: 0.82rem; padding: 0.34rem 0.72rem; }
         }
 
         @media (max-height: 820px) and (min-width: 1200px) {
-          .header { gap: 0.55rem; }
-          .header-row { min-height: 38px; gap: 10px; }
-          .session-selector :global(button), .session-selector :global(select) { min-height: 38px; }
-          .session-selector :global(button) { font-size: 0.84rem; padding: 0.4rem 0.75rem; }
-          .objective-bar { padding: 0.55rem 1rem; font-size: 0.85rem; }
           .layout { margin-top: 0.55rem; }
           .timeline-container { padding: 0.95rem; }
           .timeline-feed { gap: 0.85rem; margin-bottom: 0.75rem; }
           .timeline-event { padding: 1rem; }
           .input-area { padding: 0.95rem; gap: 0.4rem; }
-          .tag-chip-row { padding-bottom: 0; }
         }
 
         @media (max-width: 1199px) {
           .container { width: min(98vw, 1880px); height: auto; min-height: 100vh; }
           .layout { margin-top: 0.65rem; }
-          .session-selector { gap: 0.55rem; }
           .filter-row-secondary { gap: 0.4rem; }
           .report-modal { width: 96%; height: 92vh; padding: 0.9rem; }
           .timeline-scroll-shell { grid-template-columns: minmax(0, 1fr); gap: 0.45rem; margin-bottom: 0.65rem; }

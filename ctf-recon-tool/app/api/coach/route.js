@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { getTimeline, getSession } from '@/lib/db';
 import { isApiTokenValid, isValidSessionId } from '@/lib/security';
+import { config } from '@/lib/config';
 
 const COACH_SYSTEM_PROMPT = `You are CTF-Coach, an expert CTF machine coach with a phase-driven methodology.
 You will receive a session timeline of executed commands, their outputs, notes, and screenshots.
@@ -108,7 +109,7 @@ function makeStream(generatorFn) {
 }
 
 async function* streamClaude(userMessage, apiKey, systemPrompt) {
-  const client = new Anthropic({ apiKey: apiKey || process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: apiKey || config.anthropicApiKey });
   const stream = client.messages.stream({
     model: 'claude-sonnet-4-6',
     max_tokens: 1024,
@@ -124,7 +125,7 @@ async function* streamClaude(userMessage, apiKey, systemPrompt) {
 
 async function* streamGemini(userMessage, apiKey, systemPrompt) {
   const { GoogleGenAI } = await import('@google/genai');
-  const ai = new GoogleGenAI({ apiKey: apiKey || process.env.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey: apiKey || config.geminiApiKey });
   const response = await ai.models.generateContentStream({
     model: 'gemini-2.5-flash',
     contents: userMessage,
@@ -137,7 +138,7 @@ async function* streamGemini(userMessage, apiKey, systemPrompt) {
 
 async function* streamOpenAI(userMessage, apiKey, systemPrompt) {
   const OpenAI = (await import('openai')).default;
-  const client = new OpenAI({ apiKey: apiKey || process.env.OPENAI_API_KEY });
+  const client = new OpenAI({ apiKey: apiKey || config.openaiApiKey });
   const stream = await client.chat.completions.create({
     model: 'gpt-4o',
     max_tokens: 1024,
@@ -182,19 +183,29 @@ ${timelineText}
 
 Based on this timeline, what is the single best next action to take?`;
 
+    // Explicit provider override (manual selection from UI)
     if (provider === 'gemini') {
-      const key = apiKey || process.env.GEMINI_API_KEY;
+      const key = apiKey || config.geminiApiKey;
       if (!key) return NextResponse.json({ error: 'Gemini API key required.' }, { status: 503 });
       return makeStream(() => streamGemini(userMessage, key, systemPrompt));
     }
     if (provider === 'openai') {
-      const key = apiKey || process.env.OPENAI_API_KEY;
+      const key = apiKey || config.openaiApiKey;
       if (!key) return NextResponse.json({ error: 'OpenAI API key required.' }, { status: 503 });
       return makeStream(() => streamOpenAI(userMessage, key, systemPrompt));
     }
-    const key = apiKey || process.env.ANTHROPIC_API_KEY;
-    if (!key) return NextResponse.json({ error: 'Anthropic API key required.' }, { status: 503 });
-    return makeStream(() => streamClaude(userMessage, key, systemPrompt));
+
+    // Default (claude): auto-fallback in priority order — Claude → OpenAI → Gemini
+    const claudeKey = apiKey || config.anthropicApiKey;
+    if (claudeKey) return makeStream(() => streamClaude(userMessage, claudeKey, systemPrompt));
+
+    const openaiKey = config.openaiApiKey;
+    if (openaiKey) return makeStream(() => streamOpenAI(userMessage, openaiKey, systemPrompt));
+
+    const geminiKey = config.geminiApiKey;
+    if (geminiKey) return makeStream(() => streamGemini(userMessage, geminiKey, systemPrompt));
+
+    return NextResponse.json({ error: 'No AI API key configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_AI_API_KEY.' }, { status: 503 });
 
   } catch (error) {
     console.error('[Coach Error]', error);
