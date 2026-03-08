@@ -2,6 +2,13 @@
 
 Helm's Paladin provides 11 distinct AI "skills" designed to assist in various phases of a penetration test or CTF challenge.
 
+## Skill Routing
+- **AI Reporter (`/api/writeup/enhance`)**: only report-focused skills are exposed:
+  - Quick Enhance
+  - Writeup Refiner
+  - Pentest Report
+- **AI Coach (`/api/coach`)**: pentest/challenge skills remain available for next-step guidance.
+
 ## General Skills
 
 ### 1. Quick Enhance

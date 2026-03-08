@@ -21,6 +21,7 @@ const PDF_STYLES = {
       body: { fontSize: 10, color: '#c9d1d9', lineHeight: 1.4 },
       commandLabel: { fontSize: 10, bold: true, color: '#e3b341' },
       codeBlock: { fontSize: 8.5, color: '#7ee787', background: '#0d1117', preserveLeadingSpaces: true },
+      codeLang: { fontSize: 8, color: '#58a6ff', italics: true },
       tableHeader: { bold: true, fontSize: 10, color: '#c9d1d9', fillColor: '#161b22' },
       caption: { fontSize: 9, italics: true, color: '#8b949e' },
       footer: { fontSize: 8, color: '#484f58', alignment: 'center' },
@@ -38,6 +39,7 @@ const PDF_STYLES = {
       body: { fontSize: 10, color: '#1a1a1a', lineHeight: 1.4 },
       commandLabel: { fontSize: 10, bold: true, color: '#0f3460' },
       codeBlock: { fontSize: 8.5, color: '#2d2d2d', background: '#f4f4f4', preserveLeadingSpaces: true },
+      codeLang: { fontSize: 8, color: '#0f3460', italics: true },
       tableHeader: { bold: true, fontSize: 10, color: '#ffffff', fillColor: '#0f3460' },
       caption: { fontSize: 9, italics: true, color: '#555555' },
       footer: { fontSize: 8, color: '#888888', alignment: 'center' },
@@ -55,6 +57,7 @@ const PDF_STYLES = {
       body: { fontSize: 10, color: '#24292e', lineHeight: 1.4 },
       commandLabel: { fontSize: 10, bold: true, color: '#0366d6' },
       codeBlock: { fontSize: 8.5, color: '#24292e', background: '#eff1f3', preserveLeadingSpaces: true },
+      codeLang: { fontSize: 8, color: '#0366d6', italics: true },
       tableHeader: { bold: true, fontSize: 10, color: '#24292e', fillColor: '#e1e4e8' },
       caption: { fontSize: 9, italics: true, color: '#6a737d' },
       footer: { fontSize: 8, color: '#6a737d', alignment: 'center' },
@@ -63,6 +66,72 @@ const PDF_STYLES = {
     background: (currentPage, pageSize) => ({ canvas: [{ type: 'rect', x: 0, y: 0, w: pageSize.width, h: pageSize.height, color: '#f6f8fa' }] }),
     dividerColor: '#e1e4e8',
     footerDividerColor: '#e1e4e8',
+  },
+  'cyber-neon-grid': {
+    styles: {
+      header: { fontSize: 21, bold: true, color: '#00f5ff' },
+      sectionTitle: { fontSize: 13, bold: true, color: '#ff4fd8', margin: [0, 0, 0, 6] },
+      meta: { fontSize: 9, color: '#9db2bf' },
+      body: { fontSize: 10, color: '#d4e7ee', lineHeight: 1.45 },
+      commandLabel: { fontSize: 10, bold: true, color: '#7dfc00' },
+      codeBlock: { fontSize: 8.5, color: '#80ffea', background: '#07151f', preserveLeadingSpaces: true },
+      codeLang: { fontSize: 8, color: '#ff4fd8', italics: true },
+      tableHeader: { bold: true, fontSize: 10, color: '#051018', fillColor: '#00f5ff' },
+      caption: { fontSize: 9, italics: true, color: '#9db2bf' },
+      footer: { fontSize: 8, color: '#5b7a8a', alignment: 'center' },
+    },
+    defaultStyle: { fontSize: 10, color: '#d4e7ee' },
+    background: (currentPage, pageSize) => ({
+      canvas: [
+        { type: 'rect', x: 0, y: 0, w: pageSize.width, h: pageSize.height, color: '#050b14' },
+        { type: 'line', x1: 0, y1: 80, x2: pageSize.width, y2: 80, lineWidth: 0.5, lineColor: '#14495f' },
+        { type: 'line', x1: 0, y1: pageSize.height - 80, x2: pageSize.width, y2: pageSize.height - 80, lineWidth: 0.5, lineColor: '#5b2251' },
+      ],
+    }),
+    dividerColor: '#00f5ff',
+    footerDividerColor: '#1f3a4d',
+  },
+  'cyber-synthwave': {
+    styles: {
+      header: { fontSize: 21, bold: true, color: '#ff7edb' },
+      sectionTitle: { fontSize: 13, bold: true, color: '#7df9ff', margin: [0, 0, 0, 6] },
+      meta: { fontSize: 9, color: '#b9b3d9' },
+      body: { fontSize: 10, color: '#f2eaff', lineHeight: 1.45 },
+      commandLabel: { fontSize: 10, bold: true, color: '#ffd166' },
+      codeBlock: { fontSize: 8.5, color: '#8af8ff', background: '#1d1135', preserveLeadingSpaces: true },
+      codeLang: { fontSize: 8, color: '#ff7edb', italics: true },
+      tableHeader: { bold: true, fontSize: 10, color: '#140b1f', fillColor: '#7df9ff' },
+      caption: { fontSize: 9, italics: true, color: '#b9b3d9' },
+      footer: { fontSize: 8, color: '#8676ad', alignment: 'center' },
+    },
+    defaultStyle: { fontSize: 10, color: '#f2eaff' },
+    background: (currentPage, pageSize) => ({
+      canvas: [
+        { type: 'rect', x: 0, y: 0, w: pageSize.width, h: pageSize.height, color: '#130b21' },
+      ],
+    }),
+    dividerColor: '#ff7edb',
+    footerDividerColor: '#4e3b73',
+  },
+  'cyber-matrix-terminal': {
+    styles: {
+      header: { fontSize: 21, bold: true, color: '#00ff8c' },
+      sectionTitle: { fontSize: 13, bold: true, color: '#66ffa8', margin: [0, 0, 0, 6] },
+      meta: { fontSize: 9, color: '#79b798' },
+      body: { fontSize: 10, color: '#c5ffdf', lineHeight: 1.45 },
+      commandLabel: { fontSize: 10, bold: true, color: '#00ff8c' },
+      codeBlock: { fontSize: 8.5, color: '#8dffbf', background: '#021108', preserveLeadingSpaces: true },
+      codeLang: { fontSize: 8, color: '#66ffa8', italics: true },
+      tableHeader: { bold: true, fontSize: 10, color: '#021108', fillColor: '#00ff8c' },
+      caption: { fontSize: 9, italics: true, color: '#79b798' },
+      footer: { fontSize: 8, color: '#4d8c68', alignment: 'center' },
+    },
+    defaultStyle: { fontSize: 10, color: '#c5ffdf' },
+    background: (currentPage, pageSize) => ({
+      canvas: [{ type: 'rect', x: 0, y: 0, w: pageSize.width, h: pageSize.height, color: '#03130a' }],
+    }),
+    dividerColor: '#00ff8c',
+    footerDividerColor: '#1d3d2d',
   },
 };
 
@@ -92,7 +161,19 @@ function fileNameToMime(filename) {
 
 function parseMediaUrl(imageUrl, fallbackSessionId) {
   const raw = String(imageUrl || '').trim();
-  const match = raw.match(/^\/?api\/media\/([^/]+)\/([^?#]+)/i);
+  if (!raw) return null;
+
+  let pathname = raw;
+  try {
+    if (/^https?:\/\//i.test(raw)) {
+      const u = new URL(raw);
+      pathname = u.pathname || raw;
+    }
+  } catch {
+    pathname = raw;
+  }
+
+  const match = pathname.match(/^\/?api\/media\/([^/]+)\/([^?#]+)/i);
   if (!match) return null;
 
   let sessionId;
@@ -148,8 +229,10 @@ function markdownToPdfmakeContent(markdown, theme, sessionId) {
     const line = lines[i];
 
     // Code block
-    if (line.trim().startsWith('```')) {
+    const codeFenceMatch = line.trim().match(/^```([\w+-]+)?/);
+    if (codeFenceMatch) {
       flushBullets();
+      const codeLang = (codeFenceMatch[1] || 'text').toLowerCase();
       const codeLines = [];
       i++;
       while (i < lines.length && !lines[i].trim().startsWith('```')) {
@@ -157,6 +240,9 @@ function markdownToPdfmakeContent(markdown, theme, sessionId) {
         i++;
       }
       if (codeLines.length > 0) {
+        if (codeLang && codeLang !== 'text') {
+          content.push({ text: `Language: ${codeLang}`, style: 'codeLang', margin: [0, 2, 0, 2] });
+        }
         content.push({ text: codeLines.join('\n'), style: 'codeBlock', margin: [0, 2, 0, 8] });
       }
       i++;
@@ -178,7 +264,7 @@ function markdownToPdfmakeContent(markdown, theme, sessionId) {
       const imageUrl = imageMatch[2];
       const dataUri = readMarkdownImageAsDataUri(imageUrl, sessionId);
       if (dataUri) {
-        content.push({ image: dataUri, width: 480, margin: [0, 4, 0, 2] });
+        content.push({ image: dataUri, width: 470, margin: [0, 4, 0, 2] });
         content.push({ text: altText, style: 'caption', margin: [0, 0, 0, 8] });
       } else {
         content.push({ text: `[Image unavailable: ${altText}]`, style: 'meta', margin: [0, 0, 0, 8] });

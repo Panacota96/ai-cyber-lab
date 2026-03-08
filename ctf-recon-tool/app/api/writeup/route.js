@@ -12,7 +12,23 @@ export async function GET(request) {
   }
 
   const writeup = getWriteup(sessionId);
-  return NextResponse.json(writeup || { content: '', status: 'draft' });
+  if (!writeup) {
+    return NextResponse.json({ content: '', contentJson: null, status: 'draft' });
+  }
+
+  let contentJson = null;
+  if (writeup.content_json) {
+    try {
+      contentJson = JSON.parse(writeup.content_json);
+    } catch (_) {
+      contentJson = null;
+    }
+  }
+
+  return NextResponse.json({
+    ...writeup,
+    contentJson,
+  });
 }
 
 export async function POST(request) {
@@ -20,15 +36,18 @@ export async function POST(request) {
     if (!isApiTokenValid(request)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const { sessionId, content, status, visibility } = await request.json();
+    const { sessionId, content, contentJson = null, status, visibility } = await request.json();
 
     if (!sessionId || !isValidSessionId(sessionId)) {
       return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
     }
 
-    const writeup = saveWriteup(sessionId, content, status, visibility);
-    logger.info(`Writeup saved for session ${sessionId}`, { status, visibility });
-    return NextResponse.json(writeup);
+    const writeup = saveWriteup(sessionId, content || '', status, visibility, contentJson);
+    logger.info(`Writeup saved for session ${sessionId}`, { status, visibility, hasJson: Boolean(contentJson) });
+    return NextResponse.json({
+      ...writeup,
+      contentJson,
+    });
   } catch (error) {
     logger.error('Error in /api/writeup POST handler', error);
     return NextResponse.json({ error: 'Failed to save writeup' }, { status: 500 });

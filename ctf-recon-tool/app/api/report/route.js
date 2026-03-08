@@ -13,7 +13,7 @@ const FORMATS = {
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const sessionId = searchParams.get('sessionId');
-  const format = searchParams.get('format') || 'lab-report';
+  const format = searchParams.get('format') || 'technical-walkthrough';
 
   if (!sessionId || !isValidSessionId(sessionId)) {
     return NextResponse.json({ error: 'Session ID required' }, { status: 400 });

@@ -114,6 +114,157 @@ function loadFavorites() {
   catch { return new Set(); }
 }
 
+function makeBlockId(prefix = 'blk') {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function newSectionBlock(title = 'Section', content = '') {
+  return { id: makeBlockId('sec'), blockType: 'section', title, content };
+}
+
+function newCodeBlock(title = 'Code Snippet', content = '', language = 'bash') {
+  return { id: makeBlockId('code'), blockType: 'code', title, content, language };
+}
+
+function newImageBlock(title = 'Screenshot Evidence', imageUrl = '', alt = 'Screenshot', caption = '', content = '') {
+  return { id: makeBlockId('img'), blockType: 'image', title, imageUrl, alt, caption, content };
+}
+
+function reportBlocksToMarkdown(blocks) {
+  if (!Array.isArray(blocks) || blocks.length === 0) return '';
+
+  return blocks.map((block) => {
+    if (block.blockType === 'code') {
+      const title = (block.title || 'Code Snippet').trim();
+      const lang = (block.language || 'bash').trim();
+      const body = (block.content || '').trim();
+      return `### ${title}\n\`\`\`${lang}\n${body}\n\`\`\``;
+    }
+
+    if (block.blockType === 'image') {
+      const title = (block.title || 'Screenshot Evidence').trim();
+      const alt = (block.alt || 'Screenshot').trim();
+      const imageUrl = (block.imageUrl || '').trim();
+      const caption = (block.caption || '').trim();
+      const notes = (block.content || '').trim();
+      const parts = [
+        `### ${title}`,
+        imageUrl ? `![${alt}](${imageUrl})` : '_No image selected_',
+      ];
+      if (caption) parts.push(`*${caption}*`);
+      if (notes) parts.push(notes);
+      return parts.join('\n\n');
+    }
+
+    const title = (block.title || 'Section').trim();
+    const body = (block.content || '').trim();
+    return `## ${title}\n${body}`;
+  }).join('\n\n').trim();
+}
+
+function markdownToReportBlocks(markdown) {
+  const source = String(markdown || '').replace(/\r\n/g, '\n').trim();
+  if (!source) {
+    return [newSectionBlock('Walkthrough', '')];
+  }
+
+  const lines = source.split('\n');
+  const blocks = [];
+  let currentSection = null;
+  let pendingTitle = '';
+
+  const pushCurrentSection = () => {
+    if (!currentSection) return;
+    const content = currentSection.content.join('\n').trim();
+    if (currentSection.title || content) {
+      blocks.push(newSectionBlock(currentSection.title || 'Section', content));
+    }
+    currentSection = null;
+  };
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith('# ')) {
+      if (trimmed.slice(2).trim()) pendingTitle = trimmed.slice(2).trim();
+      i++;
+      continue;
+    }
+
+    const heading2 = trimmed.match(/^##\s+(.+)$/);
+    if (heading2) {
+      pushCurrentSection();
+      currentSection = { title: heading2[1].trim(), content: [] };
+      i++;
+      continue;
+    }
+
+    const heading3 = trimmed.match(/^###\s+(.+)$/);
+    if (heading3) {
+      pushCurrentSection();
+      pendingTitle = heading3[1].trim();
+      i++;
+      continue;
+    }
+
+    const codeFence = trimmed.match(/^```([\w+-]+)?$/);
+    if (codeFence) {
+      pushCurrentSection();
+      const language = (codeFence[1] || 'bash').trim();
+      i++;
+      const codeLines = [];
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++;
+      blocks.push(newCodeBlock(pendingTitle || 'Code Snippet', codeLines.join('\n').trim(), language));
+      pendingTitle = '';
+      continue;
+    }
+
+    const imageMatch = trimmed.match(/^!\[(.*?)\]\((.*?)\)$/);
+    if (imageMatch) {
+      pushCurrentSection();
+      let caption = '';
+      let lookahead = i + 1;
+      while (lookahead < lines.length && lines[lookahead].trim() === '') lookahead++;
+      if (lookahead < lines.length) {
+        const capMatch = lines[lookahead].trim().match(/^\*(.+)\*$/);
+        if (capMatch) {
+          caption = capMatch[1].trim();
+          i = lookahead;
+        }
+      }
+      blocks.push(newImageBlock(
+        pendingTitle || 'Screenshot Evidence',
+        imageMatch[2].trim(),
+        (imageMatch[1] || 'Screenshot').trim(),
+        caption,
+        ''
+      ));
+      pendingTitle = '';
+      i++;
+      continue;
+    }
+
+    if (!currentSection) {
+      currentSection = { title: pendingTitle || 'Walkthrough', content: [] };
+      pendingTitle = '';
+    }
+    currentSection.content.push(line);
+    i++;
+  }
+
+  pushCurrentSection();
+  if (blocks.length === 0) {
+    blocks.push(newSectionBlock(pendingTitle || 'Walkthrough', source));
+  }
+  return blocks;
+}
+
 export default function Home() {
   // Core state
   const [timeline, setTimeline] = useState([]);
@@ -164,6 +315,10 @@ export default function Home() {
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterKeyword, setFilterKeyword] = useState('');
   const [filterTag, setFilterTag] = useState('');
+  const [historyFocus, setHistoryFocus] = useState(false);
+  const [timelineAtTop, setTimelineAtTop] = useState(true);
+  const [timelineAtBottom, setTimelineAtBottom] = useState(true);
+  const [timelineFollowEnabled, setTimelineFollowEnabled] = useState(true);
 
   // Collapsible output state
   const [expandedOutputs, setExpandedOutputs] = useState(new Set());
@@ -177,8 +332,10 @@ export default function Home() {
 
   // Report modal state
   const [reportDraft, setReportDraft] = useState('');
+  const [reportBlocks, setReportBlocks] = useState([newSectionBlock('Walkthrough', '')]);
+  const [selectedReportBlocks, setSelectedReportBlocks] = useState([]);
   const [showReportModal, setShowReportModal] = useState(false);
-  const [reportFormat, setReportFormat] = useState('lab-report');
+  const [reportFormat, setReportFormat] = useState('technical-walkthrough');
   const [pdfStyle, setPdfStyle] = useState('terminal-dark');
   const [writeupVisibility, setWriteupVisibility] = useState('draft');
   const [isEnhancing, setIsEnhancing] = useState(false);
@@ -194,6 +351,7 @@ export default function Home() {
   const [writeupVersions, setWriteupVersions] = useState([]);
 
   const bottomRef = useRef(null);
+  const timelineFeedRef = useRef(null);
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
   const resizeStateRef = useRef({ startX: 0, startWidth: SIDEBAR_DEFAULT_WIDTH });
@@ -208,6 +366,41 @@ export default function Home() {
     }
     return fetch(url, { ...options, headers });
   }, []);
+
+  const syncTimelineScrollFlags = useCallback(() => {
+    const feed = timelineFeedRef.current;
+    if (!feed) return { nearTop: true, nearBottom: true };
+    const nearTop = feed.scrollTop <= 20;
+    const distanceFromBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
+    const nearBottom = distanceFromBottom <= 48;
+    setTimelineAtTop(nearTop);
+    setTimelineAtBottom(nearBottom);
+    return { nearTop, nearBottom };
+  }, []);
+
+  const handleTimelineScroll = useCallback(() => {
+    const { nearBottom } = syncTimelineScrollFlags();
+    setTimelineFollowEnabled(nearBottom);
+  }, [syncTimelineScrollFlags]);
+
+  const scrollTimelineToBottom = useCallback((behavior = 'smooth') => {
+    const feed = timelineFeedRef.current;
+    if (!feed) return;
+    feed.scrollTo({ top: feed.scrollHeight, behavior });
+    setTimelineFollowEnabled(true);
+    requestAnimationFrame(() => {
+      syncTimelineScrollFlags();
+    });
+  }, [syncTimelineScrollFlags]);
+
+  const scrollTimelineToTop = useCallback((behavior = 'smooth') => {
+    const feed = timelineFeedRef.current;
+    if (!feed) return;
+    feed.scrollTo({ top: 0, behavior });
+    requestAnimationFrame(() => {
+      syncTimelineScrollFlags();
+    });
+  }, [syncTimelineScrollFlags]);
 
   // ── Data fetching ────────────────────────────────────────────────────────────
 
@@ -246,8 +439,16 @@ export default function Home() {
   }, [fetchTimeline]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [timeline]);
+    const feed = timelineFeedRef.current;
+    if (!feed) return;
+    const distanceFromBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
+    const nearBottom = distanceFromBottom <= 48;
+    if (timelineFollowEnabled || nearBottom) {
+      feed.scrollTo({ top: feed.scrollHeight, behavior: 'auto' });
+      setTimelineFollowEnabled(true);
+    }
+    syncTimelineScrollFlags();
+  }, [timeline, timelineFollowEnabled, syncTimelineScrollFlags]);
 
   useEffect(() => { fetchCommandHistory(); }, [fetchCommandHistory]);
 
@@ -265,6 +466,7 @@ export default function Home() {
     try {
       const storedWidth = Number(localStorage.getItem('ui.sidebarWidth') || '');
       const storedCollapsed = localStorage.getItem('ui.sidebarCollapsed');
+      const storedHistoryFocus = localStorage.getItem('ui.historyFocus');
       if (Number.isFinite(storedWidth) && storedWidth > 0) {
         setSidebarWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, storedWidth)));
       }
@@ -272,6 +474,9 @@ export default function Home() {
         setSidebarCollapsed(storedCollapsed === 'true');
       } else if (window.innerWidth >= 1200 && window.innerWidth <= 1365) {
         setSidebarCollapsed(true);
+      }
+      if (storedHistoryFocus === 'true' || storedHistoryFocus === 'false') {
+        setHistoryFocus(storedHistoryFocus === 'true');
       }
     } catch (_) {
       // localStorage unavailable
@@ -282,10 +487,11 @@ export default function Home() {
     try {
       localStorage.setItem('ui.sidebarWidth', String(Math.round(sidebarWidth)));
       localStorage.setItem('ui.sidebarCollapsed', sidebarCollapsed ? 'true' : 'false');
+      localStorage.setItem('ui.historyFocus', historyFocus ? 'true' : 'false');
     } catch (_) {
       // localStorage unavailable
     }
-  }, [sidebarWidth, sidebarCollapsed]);
+  }, [sidebarWidth, sidebarCollapsed, historyFocus]);
 
   useEffect(() => {
     if (viewportWidth < 1200) {
@@ -437,15 +643,74 @@ export default function Home() {
 
   // ── Report handlers ───────────────────────────────────────────────────────
 
+  const applyReportBlocks = useCallback((nextBlocks) => {
+    const normalized = Array.isArray(nextBlocks) && nextBlocks.length > 0
+      ? nextBlocks
+      : [newSectionBlock('Walkthrough', '')];
+    setReportBlocks(normalized);
+    setReportDraft(reportBlocksToMarkdown(normalized));
+  }, []);
+
+  const loadReportPayload = useCallback((payload) => {
+    const content = String(payload?.content || '');
+    if (Array.isArray(payload?.contentJson) && payload.contentJson.length > 0) {
+      applyReportBlocks(payload.contentJson);
+      return;
+    }
+    applyReportBlocks(markdownToReportBlocks(content));
+  }, [applyReportBlocks]);
+
+  const addReportBlock = (blockType = 'section') => {
+    let newBlock = newSectionBlock('New Section', '');
+    if (blockType === 'code') newBlock = newCodeBlock('Code Snippet', '', 'bash');
+    if (blockType === 'image') newBlock = newImageBlock('Screenshot Evidence', '', 'Screenshot', '', '');
+    applyReportBlocks([...reportBlocks, newBlock]);
+  };
+
+  const updateReportBlock = (blockId, updates) => {
+    applyReportBlocks(reportBlocks.map((block) => (
+      block.id === blockId ? { ...block, ...updates } : block
+    )));
+  };
+
+  const removeReportBlock = (blockId) => {
+    applyReportBlocks(reportBlocks.filter(block => block.id !== blockId));
+    setSelectedReportBlocks(prev => prev.filter(id => id !== blockId));
+  };
+
+  const moveReportBlock = (blockId, direction) => {
+    const idx = reportBlocks.findIndex(b => b.id === blockId);
+    if (idx === -1) return;
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= reportBlocks.length) return;
+    const next = [...reportBlocks];
+    [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+    applyReportBlocks(next);
+  };
+
   const generateReport = async (fmt = reportFormat) => {
     try {
       setIsLoading(true);
-      const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}`);
-      const data = await res.json();
-      if (data.report) {
-        setReportDraft(data.report);
-        setShowReportModal(true);
+      const existingRes = await apiFetch(`/api/writeup?sessionId=${currentSession}`);
+      const existing = await existingRes.json().catch(() => null);
+      const hasExisting = Boolean(
+        existing && (
+          String(existing.content || '').trim() ||
+          (Array.isArray(existing.contentJson) && existing.contentJson.length > 0)
+        )
+      );
+
+      if (hasExisting) {
+        loadReportPayload(existing);
+      } else {
+        const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}`);
+        const data = await res.json();
+        if (data.report) {
+          applyReportBlocks(markdownToReportBlocks(data.report));
+        }
       }
+      setSelectedReportBlocks([]);
+      setShowReportModal(true);
     } catch (error) { console.error('Report generation failed', error); }
     finally { setIsLoading(false); }
   };
@@ -456,7 +721,10 @@ export default function Home() {
       try {
         const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}`);
         const data = await res.json();
-        if (data.report) setReportDraft(data.report);
+        if (data.report) {
+          applyReportBlocks(markdownToReportBlocks(data.report));
+          setSelectedReportBlocks([]);
+        }
       } catch (_) {}
     }
   };
@@ -464,11 +732,19 @@ export default function Home() {
   const saveReport = async () => {
     try {
       setIsLoading(true);
+      const markdown = reportBlocksToMarkdown(reportBlocks);
       await apiFetch('/api/writeup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: currentSession, content: reportDraft, status: writeupVisibility, visibility: writeupVisibility })
+        body: JSON.stringify({
+          sessionId: currentSession,
+          content: markdown,
+          contentJson: reportBlocks,
+          status: writeupVisibility,
+          visibility: writeupVisibility,
+        })
       });
+      setReportDraft(markdown);
       setShowReportModal(false);
       alert('Write-up saved!');
     } catch (error) { console.error('Failed to save report', error); }
@@ -476,27 +752,64 @@ export default function Home() {
   };
 
   const enhanceReport = async () => {
-    if (!reportDraft) return;
+    if (!reportDraft && reportBlocks.length === 0) return;
     setIsEnhancing(true);
     try {
+      const markdown = reportBlocksToMarkdown(reportBlocks);
+      const evidenceContext = timeline.slice(-60).map((e) => {
+        if (e.type === 'command') return `[${e.timestamp}] COMMAND ${e.status || ''}: ${e.command || ''}`;
+        if (e.type === 'note') return `[${e.timestamp}] NOTE: ${e.content || ''}`;
+        return `[${e.timestamp}] SCREENSHOT: ${e.name || e.filename || 'unnamed'}`;
+      }).join('\n');
+
       const res = await apiFetch('/api/writeup/enhance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportContent: reportDraft, provider: aiProvider, apiKey: apiKeys[aiProvider] || '', skill: aiSkill })
+        body: JSON.stringify({
+          reportContent: markdown,
+          provider: aiProvider,
+          apiKey: apiKeys[aiProvider] || '',
+          skill: aiSkill,
+          mode: 'section-patch',
+          reportBlocks,
+          selectedSectionIds: selectedReportBlocks,
+          evidenceContext,
+        })
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         alert(err.error || `AI enhancement unavailable. Check the API key for ${aiProvider.toUpperCase()}.`);
         return;
       }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let enhanced = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        enhanced += decoder.decode(value, { stream: true });
-        setReportDraft(enhanced);
+
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await res.json();
+        if (Array.isArray(data.patches) && data.patches.length > 0) {
+          const nextBlocks = reportBlocks.map((block) => {
+            const patch = data.patches.find(p => p.sectionId === block.id);
+            if (!patch) return block;
+            return {
+              ...block,
+              ...(typeof patch.title === 'string' ? { title: patch.title } : {}),
+              ...(typeof patch.content === 'string' ? { content: patch.content } : {}),
+              ...(typeof patch.caption === 'string' ? { caption: patch.caption } : {}),
+              ...(typeof patch.alt === 'string' ? { alt: patch.alt } : {}),
+            };
+          });
+          applyReportBlocks(nextBlocks);
+        }
+      } else {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let enhanced = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          enhanced += decoder.decode(value, { stream: true });
+          setReportDraft(enhanced);
+        }
+        applyReportBlocks(markdownToReportBlocks(enhanced));
       }
     } catch (error) { console.error('Enhancement failed', error); }
     finally { setIsEnhancing(false); }
@@ -535,10 +848,11 @@ export default function Home() {
 
   const downloadPdf = async () => {
     try {
+      const markdown = reportBlocksToMarkdown(reportBlocks);
       const res = await apiFetch('/api/export/pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: reportDraft, pdfStyle, sessionId: currentSession }),
+        body: JSON.stringify({ content: markdown, pdfStyle, sessionId: currentSession }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Unknown error' }));
@@ -612,7 +926,12 @@ export default function Home() {
       const res = await apiFetch(`/api/writeup/history?sessionId=${currentSession}&versionId=${versionId}`);
       const data = await res.json();
       if (data.content) {
-        setReportDraft(data.content);
+        if (Array.isArray(data.contentJson) && data.contentJson.length > 0) {
+          applyReportBlocks(data.contentJson);
+        } else {
+          applyReportBlocks(markdownToReportBlocks(data.content));
+        }
+        setSelectedReportBlocks([]);
         setShowVersionHistory(false);
       }
     } catch (_) {}
@@ -676,10 +995,13 @@ export default function Home() {
 
   const isOverlaySidebar = viewportWidth < 1200;
   const activeSidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, sidebarWidth));
-  const layoutSidebarWidth = isOverlaySidebar ? activeSidebarWidth : (sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : activeSidebarWidth);
+  const hideSidebarForFocus = historyFocus;
+  const layoutSidebarWidth = hideSidebarForFocus
+    ? 0
+    : (isOverlaySidebar ? activeSidebarWidth : (sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : activeSidebarWidth));
   const layoutVars = {
     '--sidebar-width': `${layoutSidebarWidth}px`,
-    '--resizer-width': isOverlaySidebar || sidebarCollapsed ? '0px' : '10px',
+    '--resizer-width': isOverlaySidebar || sidebarCollapsed || hideSidebarForFocus ? '0px' : '10px',
   };
 
   const currentSessionData = sessions.find(s => s.id === currentSession);
@@ -704,6 +1026,14 @@ export default function Home() {
     return true;
   });
 
+  const reportScreenshotOptions = timeline
+    .filter(e => e.type === 'screenshot' && e.filename)
+    .map(e => ({
+      id: e.id,
+      label: `${e.name || e.filename}${e.tag ? ` #${e.tag}` : ''}`,
+      url: `/api/media/${currentSession}/${e.filename}`,
+    }));
+
   const favFlagItems = [];
   const allFlags = [];
   CHEATSHEET.forEach(tool => tool.categories.forEach(cat => cat.flags.forEach(f => {
@@ -714,8 +1044,8 @@ export default function Home() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <main className="container">
-      <header className="header glass-panel">
+    <main className={`container ${historyFocus ? 'focus-mode' : ''}`}>
+      <header className={`header glass-panel ${historyFocus ? 'header-compact' : ''}`}>
         <div className="header-row header-row-top">
           <h1 className="dnd-title">Helm&apos;s Watch</h1>
           <div className="session-meta">
@@ -735,7 +1065,7 @@ export default function Home() {
 
         <div className="header-row header-row-actions">
           <div className="session-selector">
-            {isOverlaySidebar && (
+            {isOverlaySidebar && !historyFocus && (
               <button className="btn-secondary" onClick={() => setSidebarDrawerOpen(true)}>[ Toolbox ]</button>
             )}
             <select value={currentSession} onChange={(e) => setCurrentSession(e.target.value)} style={{ minWidth: '180px' }}>
@@ -753,7 +1083,7 @@ export default function Home() {
         </div>
       </header>
 
-      {currentSessionData?.objective && (
+      {currentSessionData?.objective && !historyFocus && (
         <div className="glass-panel objective-bar">
           <span style={{ color: 'var(--accent-secondary)' }}>Objective:</span> {currentSessionData.objective}
         </div>
@@ -794,7 +1124,7 @@ export default function Home() {
       {/* ── Report Modal ──────────────────────────────────────────────────── */}
       {showReportModal && (
         <div className="overlay">
-          <div className="modal glass-panel" style={{ width: '82%', maxWidth: '960px', height: '85vh' }}>
+          <div className="modal glass-panel report-modal">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
               <h3 className="dnd-title" style={{ fontSize: '1.2rem' }}>Helm&apos;s Watch Chronicle</h3>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -810,6 +1140,9 @@ export default function Home() {
                   <option value="terminal-dark">Terminal Dark</option>
                   <option value="professional">Professional</option>
                   <option value="minimal">Minimal</option>
+                  <option value="cyber-neon-grid">Cyber Neon Grid</option>
+                  <option value="cyber-synthwave">Cyber Synthwave</option>
+                  <option value="cyber-matrix-terminal">Cyber Matrix Terminal</option>
                 </select>
                 <button className="btn-secondary" onClick={() => setShowReportModal(false)}>Close</button>
               </div>
@@ -827,12 +1160,133 @@ export default function Home() {
               ))}
             </div>
 
-            <textarea
-              value={reportDraft}
-              onChange={(e) => setReportDraft(e.target.value)}
-              style={{ flexGrow: 1, padding: '1.5rem', fontSize: '0.9rem', lineHeight: '1.6', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-main)', outline: 'none', resize: 'none' }}
-              placeholder="The chronicle is empty..."
-            />
+            <div className="report-toolbar">
+              <span className="mono" style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                Add Block:
+              </span>
+              <button type="button" className="btn-secondary mono" style={{ fontSize: '0.78rem', padding: '4px 10px' }} onClick={() => addReportBlock('section')}>+ Section</button>
+              <button type="button" className="btn-secondary mono" style={{ fontSize: '0.78rem', padding: '4px 10px' }} onClick={() => addReportBlock('code')}>+ Code</button>
+              <button type="button" className="btn-secondary mono" style={{ fontSize: '0.78rem', padding: '4px 10px' }} onClick={() => addReportBlock('image')}>+ Screenshot</button>
+              <span className="mono" style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                AI scope: {selectedReportBlocks.length > 0 ? `${selectedReportBlocks.length} selected` : 'all blocks'}
+              </span>
+            </div>
+
+            <div className="report-editor">
+              {reportBlocks.length === 0 && (
+                <p className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.86rem' }}>The chronicle is empty...</p>
+              )}
+
+              {reportBlocks.map((block, idx) => (
+                <div key={block.id} className="report-block-card">
+                  <div className="report-block-header">
+                    <label className="mono" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', color: selectedReportBlocks.includes(block.id) ? 'var(--accent-secondary)' : 'var(--text-muted)' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedReportBlocks.includes(block.id)}
+                        onChange={() => setSelectedReportBlocks(prev => prev.includes(block.id) ? prev.filter(id => id !== block.id) : [...prev, block.id])}
+                        style={{ accentColor: 'var(--accent-secondary)' }}
+                      />
+                      AI
+                    </label>
+                    <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                      {block.blockType.toUpperCase()}
+                    </span>
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.35rem' }}>
+                      <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '2px 7px' }} disabled={idx === 0} onClick={() => moveReportBlock(block.id, 'up')}>↑</button>
+                      <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '2px 7px' }} disabled={idx === reportBlocks.length - 1} onClick={() => moveReportBlock(block.id, 'down')}>↓</button>
+                      <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--accent-danger)', borderColor: 'var(--accent-danger)' }} onClick={() => removeReportBlock(block.id)}>✕</button>
+                    </div>
+                  </div>
+
+                  <input
+                    value={block.title || ''}
+                    onChange={(e) => updateReportBlock(block.id, { title: e.target.value })}
+                    className="mono"
+                    placeholder="Block title"
+                    style={{ fontSize: '0.82rem', marginBottom: '0.45rem' }}
+                  />
+
+                  {block.blockType === 'section' && (
+                    <textarea
+                      value={block.content || ''}
+                      onChange={(e) => updateReportBlock(block.id, { content: e.target.value })}
+                      className="mono"
+                      placeholder="Write section content..."
+                      style={{ minHeight: '100px', resize: 'vertical', fontSize: '0.86rem', lineHeight: 1.55 }}
+                    />
+                  )}
+
+                  {block.blockType === 'code' && (
+                    <>
+                      <input
+                        value={block.language || 'bash'}
+                        onChange={(e) => updateReportBlock(block.id, { language: e.target.value })}
+                        className="mono"
+                        placeholder="Language (bash, python, sql...)"
+                        style={{ width: '220px', marginBottom: '0.45rem', fontSize: '0.78rem' }}
+                      />
+                      <textarea
+                        value={block.content || ''}
+                        onChange={(e) => updateReportBlock(block.id, { content: e.target.value })}
+                        className="mono"
+                        placeholder="Paste command/output snippet..."
+                        style={{ minHeight: '120px', resize: 'vertical', fontSize: '0.84rem', lineHeight: 1.5 }}
+                      />
+                    </>
+                  )}
+
+                  {block.blockType === 'image' && (
+                    <>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.45rem', marginBottom: '0.5rem' }}>
+                        <select
+                          value={block.imageUrl || ''}
+                          onChange={(e) => {
+                            const picked = reportScreenshotOptions.find(opt => opt.url === e.target.value);
+                            updateReportBlock(block.id, {
+                              imageUrl: e.target.value,
+                              alt: block.alt || picked?.label || 'Screenshot',
+                            });
+                          }}
+                          style={{ minWidth: '280px', fontSize: '0.8rem', padding: '4px 8px' }}
+                        >
+                          <option value="">Select screenshot from timeline...</option>
+                          {reportScreenshotOptions.map(opt => (
+                            <option key={opt.id} value={opt.url}>{opt.label}</option>
+                          ))}
+                        </select>
+                        <input
+                          value={block.alt || ''}
+                          onChange={(e) => updateReportBlock(block.id, { alt: e.target.value })}
+                          placeholder="Alt text"
+                          className="mono"
+                          style={{ minWidth: '170px', fontSize: '0.78rem' }}
+                        />
+                        <input
+                          value={block.caption || ''}
+                          onChange={(e) => updateReportBlock(block.id, { caption: e.target.value })}
+                          placeholder="Caption"
+                          className="mono"
+                          style={{ minWidth: '200px', fontSize: '0.78rem' }}
+                        />
+                      </div>
+                      {block.imageUrl ? (
+                        <Image src={block.imageUrl} alt={block.alt || 'Screenshot'} width={920} height={500} unoptimized style={{ width: '100%', height: 'auto', maxHeight: '220px', objectFit: 'contain', borderRadius: '6px', border: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.35)' }} />
+                      ) : (
+                        <div className="mono" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', border: '1px dashed var(--border-color)', borderRadius: '6px', padding: '0.8rem' }}>No screenshot selected.</div>
+                      )}
+                      <textarea
+                        value={block.content || ''}
+                        onChange={(e) => updateReportBlock(block.id, { content: e.target.value })}
+                        className="mono"
+                        placeholder="Notes for this screenshot block..."
+                        style={{ minHeight: '80px', resize: 'vertical', fontSize: '0.82rem', lineHeight: 1.5, marginTop: '0.5rem' }}
+                      />
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
 
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'space-between', marginTop: '0.75rem', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -977,12 +1431,13 @@ export default function Home() {
         </div>
       )}
 
-      <div className={`layout ${isOverlaySidebar ? 'layout-overlay' : ''} ${sidebarCollapsed ? 'layout-collapsed' : ''}`} style={layoutVars}>
-        {isOverlaySidebar && sidebarDrawerOpen && (
+      <div className={`layout ${isOverlaySidebar ? 'layout-overlay' : ''} ${sidebarCollapsed ? 'layout-collapsed' : ''} ${historyFocus ? 'layout-history-focus' : ''}`} style={layoutVars}>
+        {!hideSidebarForFocus && isOverlaySidebar && sidebarDrawerOpen && (
           <div className="sidebar-backdrop" onClick={() => setSidebarDrawerOpen(false)} />
         )}
 
         {/* ── Sidebar ──────────────────────────────────────────────────────── */}
+        {!hideSidebarForFocus && (
         <aside className={`sidebar glass-panel ${isOverlaySidebar ? 'overlay' : ''} ${sidebarDrawerOpen ? 'open' : ''} ${sidebarCollapsed && !isOverlaySidebar ? 'collapsed' : ''}`}>
           <div className="sidebar-header">
             <h3>{sidebarCollapsed && !isOverlaySidebar ? 'TB' : 'Toolbox'}</h3>
@@ -1136,13 +1591,14 @@ export default function Home() {
             </>
           )}
         </aside>
+        )}
 
-        {!isOverlaySidebar && !sidebarCollapsed && (
+        {!hideSidebarForFocus && !isOverlaySidebar && !sidebarCollapsed && (
           <div className={`sidebar-resizer ${isResizingSidebar ? 'active' : ''}`} onMouseDown={startSidebarResize} role="separator" aria-orientation="vertical" aria-label="Resize toolbox panel" />
         )}
 
         {/* ── Timeline ──────────────────────────────────────────────────────── */}
-        <section className="timeline-container glass-panel">
+        <section className={`timeline-container glass-panel ${historyFocus ? 'history-focus' : ''}`}>
           {/* Filter bar */}
           <div className="filter-toolbar">
             <div className="filter-row filter-row-primary">
@@ -1186,126 +1642,161 @@ export default function Home() {
                 style={{ fontSize: '0.82rem', padding: '4px 10px', whiteSpace: 'nowrap' }}>
                 [DB ⚙]
               </button>
+              <button
+                onClick={() => setHistoryFocus(v => !v)}
+                className="mono btn-secondary"
+                style={{ fontSize: '0.82rem', padding: '4px 10px', whiteSpace: 'nowrap' }}
+                title={historyFocus ? 'Exit history focus mode' : 'Maximize timeline readability'}
+              >
+                {historyFocus ? '[Exit Focus]' : '[History Focus]'}
+              </button>
             </div>
           </div>
 
-          <div className="timeline-feed">
-            {filteredTimeline.length === 0 && (
-              <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '2rem' }}>
-                <p>{timeline.length === 0 ? `Session "${currentSession}" is empty. Start your recon!` : 'No events match the current filter.'}</p>
-              </div>
-            )}
+          <div className="timeline-scroll-shell">
+            <div ref={timelineFeedRef} onScroll={handleTimelineScroll} className="timeline-feed">
+              {filteredTimeline.length === 0 && (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '2rem' }}>
+                  <p>{timeline.length === 0 ? `Session "${currentSession}" is empty. Start your recon!` : 'No events match the current filter.'}</p>
+                </div>
+              )}
 
-            {filteredTimeline.map((event, idx) => {
-              const outputLines = (event.output || '').split('\n');
-              const isLong = outputLines.length > 10;
-              const isExpanded = expandedOutputs.has(event.id);
-              const visibleOutput = isExpanded ? event.output : outputLines.slice(0, 10).join('\n');
-              const tags = (() => { try { return JSON.parse(event.tags || '[]'); } catch { return []; } })();
+              {filteredTimeline.map((event, idx) => {
+                const outputLines = (event.output || '').split('\n');
+                const isLong = outputLines.length > 10;
+                const isExpanded = expandedOutputs.has(event.id);
+                const visibleOutput = isExpanded ? event.output : outputLines.slice(0, 10).join('\n');
+                const tags = (() => { try { return JSON.parse(event.tags || '[]'); } catch { return []; } })();
 
-              return (
-                <div key={event.id || idx} className="timeline-event">
-                  <div className="event-header">
-                    <span className="mono" style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                      {new Date(event.timestamp).toLocaleTimeString()}
-                    </span>
-                    <span className={`badge badge-${event.type === 'note' ? 'note' : (event.type === 'screenshot' ? 'screenshot' : event.status)}`}>
-                      {(event.type || 'EVENT').toUpperCase()}
-                    </span>
-                    {tags.length > 0 && tags.map(t => (
-                      <span key={t} style={{ fontSize: '0.74rem', padding: '2px 7px', borderRadius: '10px', background: 'rgba(88,166,255,0.12)', color: 'var(--accent-secondary)', border: '1px solid rgba(88,166,255,0.2)' }}>#{t}</span>
-                    ))}
-                    <button
-                      onClick={() => deleteEvent(event.id)}
-                      title="Delete event"
-                      className="mono"
-                      style={{ marginLeft: 'auto', fontSize: '0.78rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(248,81,73,0.3)', color: 'rgba(248,81,73,0.6)', background: 'transparent', cursor: 'pointer', lineHeight: 1.4 }}
-                    >✕</button>
-                  </div>
+                return (
+                  <div key={event.id || idx} className="timeline-event">
+                    <div className="event-header">
+                      <span className="mono" style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                        {new Date(event.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span className={`badge badge-${event.type === 'note' ? 'note' : (event.type === 'screenshot' ? 'screenshot' : event.status)}`}>
+                        {(event.type || 'EVENT').toUpperCase()}
+                      </span>
+                      {tags.length > 0 && tags.map(t => (
+                        <span key={t} style={{ fontSize: '0.74rem', padding: '2px 7px', borderRadius: '10px', background: 'rgba(88,166,255,0.12)', color: 'var(--accent-secondary)', border: '1px solid rgba(88,166,255,0.2)' }}>#{t}</span>
+                      ))}
+                      <button
+                        onClick={() => deleteEvent(event.id)}
+                        title="Delete event"
+                        className="mono"
+                        style={{ marginLeft: 'auto', fontSize: '0.78rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(248,81,73,0.3)', color: 'rgba(248,81,73,0.6)', background: 'transparent', cursor: 'pointer', lineHeight: 1.4 }}
+                      >✕</button>
+                    </div>
 
-                  {event.type === 'command' && (
-                    <>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <div className="event-command" style={{ flex: 1 }}><span style={{ color: 'var(--accent-primary)' }}>$</span> {event.command}</div>
-                        {(event.status === 'failed' || event.status === 'error') && (
-                          <button onClick={() => { setInputType('command'); setInputVal(event.command); inputRef.current?.focus(); }}
-                            className="mono" style={{ fontSize: '0.8rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--accent-warning)', color: 'var(--accent-warning)', background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                            ↩ Retry
-                          </button>
-                        )}
-                      </div>
-                      {event.status !== 'running' && event.status !== 'queued' && event.output && (
-                        <>
-                          <pre className="event-output mono">{visibleOutput || 'No output.'}</pre>
-                          {isLong && (
-                            <button onClick={() => toggleOutput(event.id)} className="mono"
-                              style={{ fontSize: '0.8rem', background: 'transparent', border: 'none', color: 'var(--accent-secondary)', cursor: 'pointer', padding: '3px 0', display: 'block' }}>
-                              {isExpanded ? `▲ Collapse` : `▼ Show more (${outputLines.length - 10} more lines)`}
+                    {event.type === 'command' && (
+                      <>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <div className="event-command" style={{ flex: 1 }}><span style={{ color: 'var(--accent-primary)' }}>$</span> {event.command}</div>
+                          {(event.status === 'failed' || event.status === 'error') && (
+                            <button onClick={() => { setInputType('command'); setInputVal(event.command); inputRef.current?.focus(); }}
+                              className="mono" style={{ fontSize: '0.8rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--accent-warning)', color: 'var(--accent-warning)', background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                              ↩ Retry
                             </button>
                           )}
-                        </>
-                      )}
-                      {event.status !== 'running' && event.status !== 'queued' && !event.output && (
-                        <pre className="event-output mono">No output.</pre>
-                      )}
-                      {(event.status === 'running' || event.status === 'queued') && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-warning)', fontSize: '0.85rem' }}>
-                          <span className="loader"></span> Processing...
                         </div>
-                      )}
-                    </>
-                  )}
+                        {event.status !== 'running' && event.status !== 'queued' && event.output && (
+                          <>
+                            <pre className="event-output mono">{visibleOutput || 'No output.'}</pre>
+                            {isLong && (
+                              <button onClick={() => toggleOutput(event.id)} className="mono"
+                                style={{ fontSize: '0.8rem', background: 'transparent', border: 'none', color: 'var(--accent-secondary)', cursor: 'pointer', padding: '3px 0', display: 'block' }}>
+                                {isExpanded ? `▲ Collapse` : `▼ Show more (${outputLines.length - 10} more lines)`}
+                              </button>
+                            )}
+                          </>
+                        )}
+                        {event.status !== 'running' && event.status !== 'queued' && !event.output && (
+                          <pre className="event-output mono">No output.</pre>
+                        )}
+                        {(event.status === 'running' || event.status === 'queued') && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-warning)', fontSize: '0.85rem' }}>
+                            <span className="loader"></span> Processing...
+                          </div>
+                        )}
+                      </>
+                    )}
 
-                  {event.type === 'note' && <div className="event-note">{event.content}</div>}
+                    {event.type === 'note' && <div className="event-note">{event.content}</div>}
 
-                  {event.type === 'screenshot' && (
-                    <div className="event-screenshot">
-                      <a href={`/api/media/${currentSession}/${event.filename}`} target="_blank" rel="noopener noreferrer">
-                        <Image
-                          src={`/api/media/${currentSession}/${event.filename}`}
-                          alt={event.name || 'Screenshot'}
-                          width={1200}
-                          height={675}
-                          unoptimized
-                          style={{ maxHeight: '180px', width: '100%', objectFit: 'contain', cursor: 'pointer' }}
-                        />
-                      </a>
-                      {editingScreenshot?.id === event.id ? (
-                        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', padding: '6px 0', flexWrap: 'wrap' }}>
-                          <input
-                            value={editingScreenshot.name}
-                            onChange={(e) => setEditingScreenshot(s => ({ ...s, name: e.target.value }))}
-                            placeholder="Name"
-                            className="mono"
-                            style={{ fontSize: '0.8rem', padding: '3px 6px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', flex: '1', minWidth: '100px' }}
+                    {event.type === 'screenshot' && (
+                      <div className="event-screenshot">
+                        <a href={`/api/media/${currentSession}/${event.filename}`} target="_blank" rel="noopener noreferrer">
+                          <Image
+                            src={`/api/media/${currentSession}/${event.filename}`}
+                            alt={event.name || 'Screenshot'}
+                            width={1200}
+                            height={675}
+                            unoptimized
+                            style={{ maxHeight: '180px', width: '100%', objectFit: 'contain', cursor: 'pointer' }}
                           />
-                          <input
-                            value={editingScreenshot.tag}
-                            onChange={(e) => setEditingScreenshot(s => ({ ...s, tag: e.target.value }))}
-                            placeholder="Tag"
-                            className="mono"
-                            style={{ fontSize: '0.8rem', padding: '3px 6px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', width: '100px' }}
-                          />
-                          <button className="btn-primary" onClick={saveScreenshotEdit} style={{ fontSize: '0.75rem', padding: '3px 10px' }}>Save</button>
-                          <button className="btn-secondary" onClick={() => setEditingScreenshot(null)} style={{ fontSize: '0.75rem', padding: '3px 10px' }}>Cancel</button>
-                        </div>
-                      ) : (
-                        <div className="screenshot-info mono" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                          <span>{event.name}</span>
-                          {event.tag && <span style={{ color: 'var(--accent-primary)' }}>#{event.tag}</span>}
-                          <button
-                            onClick={() => setEditingScreenshot({ id: event.id, name: event.name || '', tag: event.tag || '' })}
-                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.8rem', padding: '0 2px' }}
-                            title="Edit name / tag"
-                          >✏</button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-            <div ref={bottomRef} />
+                        </a>
+                        {editingScreenshot?.id === event.id ? (
+                          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', padding: '6px 0', flexWrap: 'wrap' }}>
+                            <input
+                              value={editingScreenshot.name}
+                              onChange={(e) => setEditingScreenshot(s => ({ ...s, name: e.target.value }))}
+                              placeholder="Name"
+                              className="mono"
+                              style={{ fontSize: '0.8rem', padding: '3px 6px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', flex: '1', minWidth: '100px' }}
+                            />
+                            <input
+                              value={editingScreenshot.tag}
+                              onChange={(e) => setEditingScreenshot(s => ({ ...s, tag: e.target.value }))}
+                              placeholder="Tag"
+                              className="mono"
+                              style={{ fontSize: '0.8rem', padding: '3px 6px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', width: '100px' }}
+                            />
+                            <button className="btn-primary" onClick={saveScreenshotEdit} style={{ fontSize: '0.75rem', padding: '3px 10px' }}>Save</button>
+                            <button className="btn-secondary" onClick={() => setEditingScreenshot(null)} style={{ fontSize: '0.75rem', padding: '3px 10px' }}>Cancel</button>
+                          </div>
+                        ) : (
+                          <div className="screenshot-info mono" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <span>{event.name}</span>
+                            {event.tag && <span style={{ color: 'var(--accent-primary)' }}>#{event.tag}</span>}
+                            <button
+                              onClick={() => setEditingScreenshot({ id: event.id, name: event.name || '', tag: event.tag || '' })}
+                              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.8rem', padding: '0 2px' }}
+                              title="Edit name / tag"
+                            >✏</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <div ref={bottomRef} />
+            </div>
+
+            {(!timelineAtTop || !timelineAtBottom) && (
+              <div className="timeline-jump-controls" aria-label="Timeline navigation controls">
+                {!timelineAtTop && (
+                  <button
+                    className="mono btn-secondary timeline-jump-arrow"
+                    onClick={() => scrollTimelineToTop()}
+                    aria-label="Scroll to top"
+                    title="Scroll to top"
+                  >
+                    ↑
+                  </button>
+                )}
+                {!timelineAtBottom && (
+                  <button
+                    className="mono btn-secondary timeline-jump-arrow"
+                    onClick={() => scrollTimelineToBottom()}
+                    aria-label="Scroll to bottom"
+                    title="Scroll to bottom"
+                  >
+                    ↓
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* ── Input area ────────────────────────────────────────────────── */}
@@ -1397,19 +1888,32 @@ export default function Home() {
 
       <style jsx>{`
         .container { width: min(96vw, 1880px); margin: 0 auto; padding: clamp(12px, 1.2vw, 24px); height: calc(100vh - clamp(12px, 1.2vw, 24px)); display: flex; flex-direction: column; gap: 0.5rem; }
+        .container.focus-mode { gap: 0.35rem; }
         .header { padding: 1rem 1.2rem; display: flex; flex-direction: column; gap: 0.75rem; }
+        .header.header-compact { padding: 0.55rem 0.85rem; gap: 0.45rem; }
         .header h1 { font-size: 1.55rem; letter-spacing: -0.5px; text-transform: uppercase; }
+        .header.header-compact h1 { font-size: 1.25rem; letter-spacing: -0.2px; }
         .header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 42px; }
+        .header.header-compact .header-row { min-height: 34px; gap: 8px; }
         .header-row-top { align-items: flex-start; }
         .header-row-actions { width: 100%; }
         .session-meta { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+        .header.header-compact .session-meta { gap: 0.45rem; }
         .session-selector { width: 100%; display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 0.75rem; margin-right: 0; }
         .session-selector :global(button), .session-selector :global(select) { min-height: 42px; }
+        .header.header-compact .session-selector :global(button), .header.header-compact .session-selector :global(select) { min-height: 34px; font-size: 0.8rem; padding: 0.3rem 0.62rem; }
         .session-selector :global(select:first-child) { flex: 1 1 220px; max-width: 320px; }
         .session-selector :global(button) { font-size: 0.88rem; }
         .objective-bar { padding: 0.7rem 1.2rem; font-size: 0.92rem; color: var(--text-muted); border-top: none; }
 
+        .report-modal { width: 88%; max-width: 1240px; height: 88vh; padding: 1.25rem; gap: 0.75rem; overflow: hidden; }
+        .report-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.45rem; border: 1px solid var(--border-color); border-radius: 8px; padding: 0.5rem 0.6rem; background: rgba(1,4,9,0.45); }
+        .report-editor { flex-grow: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; background: rgba(1,4,9,0.5); padding: 0.7rem; display: flex; flex-direction: column; gap: 0.6rem; }
+        .report-block-card { border: 1px solid rgba(88,166,255,0.22); border-radius: 8px; background: rgba(1,4,9,0.58); padding: 0.65rem; display: flex; flex-direction: column; }
+        .report-block-header { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.42rem; }
+
         .layout { position: relative; display: grid; grid-template-columns: var(--sidebar-width) var(--resizer-width) minmax(0, 1fr); flex-grow: 1; min-height: 0; gap: 0.75rem; margin-top: 0.75rem; }
+        .layout.layout-history-focus { margin-top: 0.35rem; }
         .layout.layout-overlay { grid-template-columns: minmax(0, 1fr); }
         .sidebar { width: 100%; padding: 1rem 1rem 1.1rem; display: flex; flex-direction: column; overflow-y: auto; min-height: 0; }
         .sidebar.collapsed { padding: 0.75rem 0.45rem; overflow: hidden; }
@@ -1432,11 +1936,22 @@ export default function Home() {
         .filter-toolbar { display: flex; flex-direction: column; gap: 0.55rem; margin-bottom: 0.8rem; }
         .filter-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
         .filter-row-secondary { justify-content: space-between; }
-        .timeline-feed { flex-grow: 1; overflow-y: auto; overflow-x: hidden; padding-right: 0.85rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: 1rem; }
+        .timeline-scroll-shell { flex-grow: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 0.55rem; margin-bottom: 1rem; }
+        .timeline-feed { flex-grow: 1; overflow-y: auto; overflow-x: hidden; padding-right: 0.85rem; margin-bottom: 0; display: flex; flex-direction: column; gap: 1rem; min-height: 0; }
+        .timeline-jump-controls { display: flex; flex-direction: column; justify-content: flex-end; gap: 0.35rem; padding-bottom: 0.2rem; }
+        .timeline-jump-arrow { width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 1rem; line-height: 1; backdrop-filter: blur(3px); background: rgba(1,4,9,0.75); }
         .timeline-event { background: rgba(1, 4, 9, 0.4); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.15rem; }
         .event-command { font-family: var(--font-mono); font-size: 1rem; margin-bottom: 0.5rem; color: #fff; }
         .event-output { background: rgba(1, 4, 9, 0.8); padding: 1rem; border-radius: 6px; font-size: 0.9rem; max-height: 320px; overflow-y: auto; border-left: 2px solid var(--accent-primary); white-space: pre-wrap; word-break: break-all; margin-bottom: 2px; }
         .event-note { font-size: 1.05rem; padding: 0.5rem 1rem; border-left: 3px solid var(--accent-secondary); background: rgba(88, 166, 255, 0.05); }
+        .timeline-container.history-focus { padding: 1.32rem 1.45rem; }
+        .timeline-container.history-focus .timeline-event { padding: 1.22rem; }
+        .timeline-container.history-focus .event-header { margin-bottom: 0.72rem; }
+        .timeline-container.history-focus .event-header .mono { font-size: 0.9rem !important; }
+        .timeline-container.history-focus .event-command { font-size: 1.08rem; }
+        .timeline-container.history-focus .event-output { font-size: 0.96rem; line-height: 1.6; max-height: 410px; }
+        .timeline-container.history-focus .event-note { font-size: 1.14rem; line-height: 1.65; padding: 0.7rem 1rem; }
+        .timeline-container.history-focus .input-area { padding: 1.25rem; gap: 0.7rem; }
         .loader { width: 12px; height: 12px; border: 2px solid var(--accent-warning); border-bottom-color: transparent; border-radius: 50%; display: inline-block; animation: rotation 1s linear infinite; }
         @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .input-area { background: rgba(1, 4, 9, 0.6); padding: 1.15rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.5rem; }
@@ -1537,6 +2052,10 @@ export default function Home() {
           .layout { margin-top: 0.65rem; }
           .session-selector { gap: 0.55rem; }
           .filter-row-secondary { gap: 0.4rem; }
+          .report-modal { width: 96%; height: 92vh; padding: 0.9rem; }
+          .timeline-scroll-shell { grid-template-columns: minmax(0, 1fr); gap: 0.45rem; margin-bottom: 0.65rem; }
+          .timeline-jump-controls { flex-direction: row; justify-content: flex-end; align-items: center; padding-bottom: 0; }
+          .timeline-jump-arrow { width: 30px; height: 30px; min-width: 30px; min-height: 30px; }
         }
       `}</style>
     </main>

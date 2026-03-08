@@ -187,6 +187,8 @@ Given recon notes or a partial writeup, enhance it with a comprehensive, priorit
 Generate specific commands with actual placeholders replaced where values are known from the notes.`,
 };
 
+const REPORT_SKILLS = new Set(['enhance', 'writeup-refiner', 'report']);
+
 const STREAM_HEADERS = {
   'Content-Type': 'text/plain; charset=utf-8',
   'Transfer-Encoding': 'chunked',
@@ -258,33 +260,184 @@ async function* streamOpenAI(reportContent, apiKey, systemPrompt) {
   }
 }
 
+async function completeClaude(userContent, apiKey, systemPrompt) {
+  const client = new Anthropic({ apiKey: apiKey || process.env.ANTHROPIC_API_KEY });
+  const resp = await client.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 3072,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userContent }],
+  });
+  const textBlocks = resp.content?.filter(c => c.type === 'text').map(c => c.text) || [];
+  return textBlocks.join('\n');
+}
+
+async function completeGemini(userContent, apiKey, systemPrompt) {
+  const { GoogleGenAI } = await import('@google/genai');
+  const ai = new GoogleGenAI({ apiKey: apiKey || process.env.GEMINI_API_KEY });
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: userContent,
+    config: { systemInstruction: systemPrompt, maxOutputTokens: 3072 },
+  });
+  return response.text || '';
+}
+
+async function completeOpenAI(userContent, apiKey, systemPrompt) {
+  const OpenAI = (await import('openai')).default;
+  const client = new OpenAI({ apiKey: apiKey || process.env.OPENAI_API_KEY });
+  const response = await client.chat.completions.create({
+    model: 'gpt-4o',
+    max_tokens: 3072,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent },
+    ],
+  });
+  return response.choices?.[0]?.message?.content || '';
+}
+
+function extractJsonObject(rawText) {
+  const text = String(rawText || '').trim();
+  if (!text) return null;
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch (_) {
+    return null;
+  }
+}
+
 export async function POST(request) {
   try {
     if (!isApiTokenValid(request)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const { reportContent, provider = 'claude', apiKey = '', skill = 'enhance' } = await request.json();
+    const {
+      reportContent,
+      provider = 'claude',
+      apiKey = '',
+      skill = 'enhance',
+      mode = 'stream',
+      reportBlocks = [],
+      selectedSectionIds = [],
+      evidenceContext = '',
+    } = await request.json();
     if (!reportContent) {
       return NextResponse.json({ error: 'reportContent is required' }, { status: 400 });
     }
 
-    const systemPrompt = SKILL_PROMPTS[skill] || SKILL_PROMPTS['enhance'];
+    if (!REPORT_SKILLS.has(skill)) {
+      return NextResponse.json(
+        { error: `Unsupported reporter skill "${skill}". Allowed: enhance, writeup-refiner, report.` },
+        { status: 400 }
+      );
+    }
+
+    const systemPrompt = SKILL_PROMPTS[skill] || SKILL_PROMPTS.enhance;
+
+    const key = apiKey || (
+      provider === 'gemini'
+        ? process.env.GEMINI_API_KEY
+        : provider === 'openai'
+          ? process.env.OPENAI_API_KEY
+          : process.env.ANTHROPIC_API_KEY
+    );
+    if (!key) {
+      const providerName = provider === 'openai' ? 'OpenAI' : provider === 'gemini' ? 'Gemini' : 'Anthropic';
+      return NextResponse.json({ error: `${providerName} API key required.` }, { status: 503 });
+    }
+
+    if (mode === 'section-patch') {
+      const selected = Array.isArray(selectedSectionIds) ? selectedSectionIds : [];
+      const blocks = Array.isArray(reportBlocks) ? reportBlocks : [];
+      const targetBlocks = blocks.filter(b => selected.length === 0 || selected.includes(b.id));
+      if (targetBlocks.length === 0) {
+        return NextResponse.json({ mode: 'section-patch', patches: [] });
+      }
+
+      const compactBlocks = targetBlocks.map(block => ({
+        id: block.id,
+        blockType: block.blockType,
+        title: block.title || '',
+        content: block.content || '',
+        caption: block.caption || '',
+        alt: block.alt || '',
+        imageUrl: block.imageUrl || '',
+      }));
+
+      const patchPrompt = `You are editing selected report blocks.
+Return ONLY valid JSON with this shape:
+{
+  "patches": [
+    {
+      "sectionId": "existing-block-id",
+      "title": "optional updated title",
+      "content": "updated markdown/text content",
+      "caption": "optional image caption",
+      "alt": "optional image alt text",
+      "evidenceRefs": ["timestamp or screenshot name used as evidence"]
+    }
+  ]
+}
+
+Rules:
+- Keep sectionId unchanged and match provided IDs.
+- Preserve technical accuracy and reproducibility.
+- Include evidenceRefs for each patch.
+- Do not include markdown code fences around JSON.
+
+Selected blocks:
+${JSON.stringify(compactBlocks, null, 2)}
+
+Evidence context:
+${evidenceContext || '(none provided)'}`;
+
+      let modelOutput = '';
+      if (provider === 'gemini') {
+        modelOutput = await completeGemini(patchPrompt, key, systemPrompt);
+      } else if (provider === 'openai') {
+        modelOutput = await completeOpenAI(patchPrompt, key, systemPrompt);
+      } else {
+        modelOutput = await completeClaude(patchPrompt, key, systemPrompt);
+      }
+
+      const parsed = extractJsonObject(modelOutput);
+      let patches = Array.isArray(parsed?.patches) ? parsed.patches : [];
+      patches = patches
+        .filter(p => p && typeof p.sectionId === 'string' && compactBlocks.some(b => b.id === p.sectionId))
+        .map(p => ({
+          sectionId: p.sectionId,
+          title: typeof p.title === 'string' ? p.title : undefined,
+          content: typeof p.content === 'string' ? p.content : undefined,
+          caption: typeof p.caption === 'string' ? p.caption : undefined,
+          alt: typeof p.alt === 'string' ? p.alt : undefined,
+          evidenceRefs: Array.isArray(p.evidenceRefs) ? p.evidenceRefs.map(x => String(x)) : [],
+        }));
+
+      // Fallback: if JSON parse fails but we have exactly one selected block, apply raw output to that block.
+      if (patches.length === 0 && compactBlocks.length === 1 && modelOutput.trim()) {
+        patches = [{
+          sectionId: compactBlocks[0].id,
+          content: modelOutput.trim(),
+          evidenceRefs: [],
+        }];
+      }
+
+      return NextResponse.json({ mode: 'section-patch', patches });
+    }
 
     if (provider === 'gemini') {
-      const key = apiKey || process.env.GEMINI_API_KEY;
-      if (!key) return NextResponse.json({ error: 'Gemini API key required. Enter it in the key field next to the provider selector.' }, { status: 503 });
       return makeStream(() => streamGemini(reportContent, key, systemPrompt));
     }
 
     if (provider === 'openai') {
-      const key = apiKey || process.env.OPENAI_API_KEY;
-      if (!key) return NextResponse.json({ error: 'OpenAI API key required. Enter it in the key field next to the provider selector.' }, { status: 503 });
       return makeStream(() => streamOpenAI(reportContent, key, systemPrompt));
     }
 
     // Default: claude
-    const key = apiKey || process.env.ANTHROPIC_API_KEY;
-    if (!key) return NextResponse.json({ error: 'Anthropic API key required. Enter it in the key field next to the provider selector.' }, { status: 503 });
     return makeStream(() => streamClaude(reportContent, key, systemPrompt));
 
   } catch (error) {

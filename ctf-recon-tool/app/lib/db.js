@@ -51,6 +51,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     session_id TEXT UNIQUE,
     content TEXT,
+    content_json TEXT,
     status TEXT DEFAULT 'draft',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
@@ -61,6 +62,7 @@ db.exec(`
     session_id TEXT NOT NULL,
     version_number INTEGER NOT NULL,
     content TEXT,
+    content_json TEXT,
     visibility TEXT DEFAULT 'draft',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
@@ -77,6 +79,8 @@ const migrations = [
   `ALTER TABLE sessions ADD COLUMN difficulty TEXT DEFAULT 'medium'`,
   `ALTER TABLE sessions ADD COLUMN objective TEXT`,
   `ALTER TABLE timeline_events ADD COLUMN tags TEXT`,
+  `ALTER TABLE writeups ADD COLUMN content_json TEXT`,
+  `ALTER TABLE writeup_versions ADD COLUMN content_json TEXT`,
 ];
 for (const sql of migrations) {
   try { db.exec(sql); } catch (_) { /* column already exists */ }
@@ -250,10 +254,11 @@ export function getWriteup(sessionId) {
   } catch (e) { return null; }
 }
 
-export function saveWriteup(sessionId, content, status = 'draft', visibility = 'draft') {
+export function saveWriteup(sessionId, content, status = 'draft', visibility = 'draft', contentJson = null) {
   try {
     requireValidSessionId(sessionId);
     const id = Date.now().toString();
+    const serializedJson = contentJson ? JSON.stringify(contentJson) : null;
     // Save version snapshot before upsert
     const existing = getWriteup(sessionId);
     if (existing) {
@@ -262,16 +267,23 @@ export function saveWriteup(sessionId, content, status = 'draft', visibility = '
       ).get(sessionId);
       const versionNum = (lastVersion?.v || 0) + 1;
       db.prepare(
-        'INSERT INTO writeup_versions (id, session_id, version_number, content, visibility) VALUES (?, ?, ?, ?, ?)'
-      ).run(`${id}-v${versionNum}`, sessionId, versionNum, existing.content, existing.visibility || 'draft');
+        'INSERT INTO writeup_versions (id, session_id, version_number, content, content_json, visibility) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(
+        `${id}-v${versionNum}`,
+        sessionId,
+        versionNum,
+        existing.content,
+        existing.content_json || null,
+        existing.visibility || 'draft'
+      );
     }
     const stmt = db.prepare(`
-      INSERT INTO writeups (id, session_id, content, status, visibility, updated_at)
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(session_id) DO UPDATE SET content = excluded.content, status = excluded.status, visibility = excluded.visibility, updated_at = CURRENT_TIMESTAMP
+      INSERT INTO writeups (id, session_id, content, content_json, status, visibility, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(session_id) DO UPDATE SET content = excluded.content, content_json = excluded.content_json, status = excluded.status, visibility = excluded.visibility, updated_at = CURRENT_TIMESTAMP
     `);
-    stmt.run(id, sessionId, content, status, visibility);
-    return { id, sessionId, content, status, visibility };
+    stmt.run(id, sessionId, content, serializedJson, status, visibility);
+    return { id, sessionId, content, content_json: serializedJson, status, visibility };
   } catch (e) { console.error('Error saving writeup', e); return null; }
 }
 
