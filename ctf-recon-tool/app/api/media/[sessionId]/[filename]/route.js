@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { detectImageFormat, imageFormatToMime } from '@/lib/image-sniff';
 import { isValidSessionId, requireSafeFilename, resolvePathWithin } from '@/lib/security';
 
 export async function GET(request, { params }) {
@@ -27,15 +28,21 @@ export async function GET(request, { params }) {
   }
 
   const fileBuffer = fs.readFileSync(filePath);
+  const detectedType = imageFormatToMime(detectImageFormat(fileBuffer));
   const ext = path.extname(filename).toLowerCase();
-  
-  let contentType = 'application/octet-stream';
-  if (ext === '.png') contentType = 'image/png';
-  else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
-  else if (ext === '.gif') contentType = 'image/gif';
-  else if (ext === '.webp') contentType = 'image/webp';
+
+  let contentType = detectedType || 'application/octet-stream';
+  if (!detectedType) {
+    if (ext === '.png') contentType = 'image/png';
+    else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+    else if (ext === '.gif') contentType = 'image/gif';
+    else if (ext === '.webp') contentType = 'image/webp';
+  }
 
   return new NextResponse(fileBuffer, {
-    headers: { 'Content-Type': contentType }
+    headers: {
+      'Content-Type': contentType,
+      'X-Content-Type-Options': 'nosniff',
+    },
   });
 }

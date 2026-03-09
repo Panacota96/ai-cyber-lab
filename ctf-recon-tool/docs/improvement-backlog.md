@@ -25,6 +25,7 @@ format: knowledge-sync compatible
 **Why:** Long sessions become unwieldy.
 **Files:** `app/page.js`
 **Difficulty:** Easy | **Impact:** Medium
+**Status:** Implemented (2026-03-09). Added `Collapse All` / `Expand All`, persisted `ui.timelineCollapsed`, per-event `Show/Hide`, and auto-expand of newest 5 events while collapsed.
 
 ### A.3 — Dark Mode Toggle Persistence
 **What:** Save dark/light preference in localStorage; apply via CSS variables.
@@ -68,6 +69,13 @@ format: knowledge-sync compatible
 **Files:** `app/page.js`
 **Difficulty:** Medium | **Impact:** Low
 
+### A.11 — Project Version Tracking Footer
+**What:** Show app version and git commit short SHA in a fixed bottom footer.
+**Why:** Improves release traceability during rapid UI/feature iterations.
+**Files:** `next.config.mjs`, `app/layout.js`, `app/globals.css`, `app/page.js`
+**Difficulty:** Easy | **Impact:** Low
+**Status:** Implemented (2026-03-09). Footer shows `Helm's Watch • vX.Y.Z (abcdef1)`.
+
 ---
 
 ## B. Operability / DevOps
@@ -95,6 +103,7 @@ format: knowledge-sync compatible
 **What:** SIGTERM handler to close SQLite connection cleanly.
 **Files:** `app/lib/db.js`
 **Difficulty:** Easy | **Impact:** Low-Med
+**Status:** Implemented (2026-03-09). Added idempotent SQLite close helper with `SIGTERM` and `SIGINT` handlers guarded for dev hot-reload.
 
 ### B.5 — `.env` File Config with dotenv
 **What:** Load config from `.env` via dotenv; validate required vars on startup.
@@ -115,6 +124,7 @@ format: knowledge-sync compatible
 **What:** `/api/admin/backup` to download SQLite DB as `.db` or `.sql`.
 **Files:** `app/api/admin/backup/route.js`
 **Difficulty:** Easy | **Impact:** Low-Med
+**Status:** Implemented (2026-03-09). Added admin-guarded `GET /api/admin/backup?format=db|sql` with sqlite3 `.dump` fallback handling.
 
 ### B.9 — Resource Limits Documentation
 **What:** Document recommended CPU/RAM/disk; tuning guidance for large sessions.
@@ -197,9 +207,9 @@ format: knowledge-sync compatible
 
 ### D.3 — Inline Images in Markdown/PDF
 **What:** Auto-embed screenshot data URIs in exported reports.
-**Files:** `app/lib/report-gen.js`, `app/api/export/pdf/route.js`
+**Files:** `app/api/export/markdown/route.js`, `app/api/export/pdf/route.js`
 **Difficulty:** Easy | **Impact:** Medium
-**Note:** PDF export already handles inline images via data URI; markdown export does not.
+**Status:** Implemented (2026-03-09). Added `POST /api/export/markdown` with `inlineImages=true` default; `/api/report` content remains unchanged.
 
 ### D.4 — Proof-of-Concept Step Recorder
 **What:** Guided UI to record finding proof (screenshot + command + output, structured).
@@ -288,8 +298,9 @@ format: knowledge-sync compatible
 
 ### E.10 — API Cost Tracking
 **What:** Log and display estimated cost of AI API calls per session.
-**Files:** `app/lib/db.js`, `app/api/coach/route.js`, `app/page.js`
+**Files:** `app/lib/db.js`, `app/lib/ai-cost.js`, `app/api/coach/route.js`, `app/api/writeup/enhance/route.js`, `app/api/ai/usage/route.js`, `app/page.js`
 **Difficulty:** Easy | **Impact:** Low
+**Status:** Implemented (2026-03-09). Added `ai_usage` table + summary endpoint and UI session usage badge.
 
 ---
 
@@ -311,8 +322,9 @@ format: knowledge-sync compatible
 
 ### F.4 — Screenshot Magic-Byte MIME Validation
 **What:** Verify file magic bytes, not just Content-Type header.
-**Files:** `app/api/upload/route.js`
+**Files:** `app/lib/image-sniff.js`, `app/api/upload/route.js`, `app/api/media/[sessionId]/[filename]/route.js`
 **Difficulty:** Easy | **Impact:** Medium
+**Status:** Implemented (2026-03-09). Upload now validates PNG/JPEG/GIF/WEBP signatures and normalizes saved extension; media route serves MIME from bytes first.
 
 ### F.5 — Parameterized Query Audit
 **What:** Audit `updateTimelineEvent` dynamic SQL; ensure all user inputs are parameterized.
@@ -391,6 +403,7 @@ format: knowledge-sync compatible
 **What:** `npm audit`; update to latest compatible versions.
 **Files:** `package.json`, `package-lock.json`
 **Difficulty:** Easy | **Impact:** Medium
+**Status:** Implemented (2026-03-09). `npm audit` = 0 vulnerabilities; safe patch updates applied: `react 19.2.4`, `react-dom 19.2.4`.
 
 ### G.10 — OpenAPI / Swagger Docs
 **What:** Generate OpenAPI spec; publish interactive docs at `/api/docs`.
@@ -419,3 +432,20 @@ format: knowledge-sync compatible
 | 2026-03-09 | Input area collapse button (`▼`) removed — form is now always visible to guarantee usability |
 | 2026-03-09 | History focus mode (`⊞`/`⊡` button) removed — caused unrecoverable full-collapse layout on re-load |
 | 2026-03-09 | FLAGS tab: Expand All / Collapse All buttons added; all flag sections default to collapsed |
+| 2026-03-09 | B.4 implemented — graceful DB shutdown added in `app/lib/db.js` with idempotent close and `SIGTERM`/`SIGINT` handlers |
+| 2026-03-09 | A.11 implemented — fixed bottom version footer added with Semver + Git SHA (`Helm's Watch • vX.Y.Z (abcdef1)`) |
+| 2026-03-09 | B.8 implemented — new `/api/admin/backup` endpoint exports SQLite backups as `.db` or `.sql` with admin/token guards |
+| 2026-03-09 | G.4 — Constants (`SUGGESTIONS`, `DIFFICULTY_COLORS`, sidebar widths, `SUGGESTED_TAGS`) extracted to `app/lib/constants.js` |
+| 2026-03-09 | A.3 — Dark/light theme toggle added to header; `.theme-light` CSS class applied to `<main>`; preference persisted in `localStorage('ui.theme')` |
+| 2026-03-09 | A.9 — Sidebar category hide/show: ⚙ button opens inline checklist; `hiddenCats` state persisted to `localStorage('ui.hiddenCats')`; hidden categories skipped in render |
+| 2026-03-09 | C.7 — Bulk screenshot delete: per-screenshot checkbox; "🗑 N" button in filter toolbar when selection active; loops existing single-delete API |
+| 2026-03-09 | D.8 — Auto TOC generator (`buildToc()`) added to `report-formats.js`; replaces hardcoded TOC in `labReport()`; also injected into `pentestReport()` |
+| 2026-03-09 | F.6 — UUID session IDs: `crypto.randomUUID()` auto-generates ID server-side when none provided in POST body |
+| 2026-03-09 | F.10 — Audit log added to sessions route (AUDIT:SESSION_CREATED, AUDIT:SESSION_DELETED) and writeup route (AUDIT:WRITEUP_SAVED) using existing `logger` |
+| 2026-03-09 | E.5 — Coach dangerous command warning: scans coach response code blocks for destructive patterns (`rm -rf`, `dd if=`, etc.); shows yellow badge if found |
+| 2026-03-09 | A.8 — Confirmed already implemented (editingScreenshot inline form); F.8 — already safe (React plain text); G.8 — already organized |
+| 2026-03-09 | A.2 — Timeline collapse mode implemented with `Collapse All`/`Expand All`, `ui.timelineCollapsed`, per-event `Show/Hide`, and newest-5 auto-expand behavior |
+| 2026-03-09 | D.3 — Added `POST /api/export/markdown` with optional inline screenshot data URIs (`inlineImages=true` default) plus report modal download action |
+| 2026-03-09 | E.10 — AI usage/cost tracking added (`ai_usage` table, `/api/ai/usage`, coach + writeup enhance instrumentation, UI summary badge) |
+| 2026-03-09 | F.4 — Magic-byte image validation added for uploads with extension normalization; media serving now infers MIME from bytes first |
+| 2026-03-09 | G.9 — Dependency audit completed: `npm audit` reports 0 vulnerabilities; safe updates applied (`react/react-dom` to 19.2.4), major-risk packages deferred |

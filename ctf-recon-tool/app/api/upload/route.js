@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
+import path from 'path';
 import { getScreenshotDir, addTimelineEvent } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { sniffImage } from '@/lib/image-sniff';
 import {
   isApiTokenValid,
   isValidSessionId,
@@ -9,6 +11,13 @@ import {
   sanitizeUploadFilename,
   requireSafeFilename,
 } from '@/lib/security';
+
+function normalizeMime(mime) {
+  const clean = String(mime || '').trim().toLowerCase();
+  if (!clean) return '';
+  if (clean === 'image/jpg') return 'image/jpeg';
+  return clean;
+}
 
 export async function POST(request) {
   try {
@@ -30,9 +39,6 @@ export async function POST(request) {
     if (typeof file.arrayBuffer !== 'function') {
       return NextResponse.json({ error: 'Invalid file payload' }, { status: 400 });
     }
-    if (!String(file.type || '').startsWith('image/')) {
-      return NextResponse.json({ error: 'Only image uploads are allowed.' }, { status: 415 });
-    }
 
     const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
     if (file.size > MAX_BYTES) {
@@ -40,8 +46,29 @@ export async function POST(request) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
+    const sniffed = sniffImage(buffer);
+    if (!sniffed) {
+      return NextResponse.json(
+        { error: 'Unsupported image payload. Allowed formats: PNG, JPEG, GIF, WEBP.' },
+        { status: 415 }
+      );
+    }
+
+    const declaredMime = normalizeMime(String(file.type || '').split(';')[0]);
+    if (declaredMime && !declaredMime.startsWith('image/')) {
+      return NextResponse.json({ error: 'Only image uploads are allowed.' }, { status: 415 });
+    }
+    if (declaredMime && declaredMime !== normalizeMime(sniffed.mime)) {
+      return NextResponse.json(
+        { error: `Image MIME mismatch. Declared ${declaredMime}, detected ${sniffed.mime}.` },
+        { status: 415 }
+      );
+    }
+
     const safeOriginalName = sanitizeUploadFilename(file.name);
-    const filename = `${Date.now()}-${safeOriginalName}`;
+    const parsed = path.parse(safeOriginalName);
+    const baseName = sanitizeUploadFilename(parsed.name || 'screenshot').replace(/\.[^.]+$/, '');
+    const filename = `${Date.now()}-${baseName}.${sniffed.extension}`;
     requireSafeFilename(filename);
     const name = String(formData.get('name') || safeOriginalName).trim().slice(0, 255) || safeOriginalName;
     const screenshotDir = getScreenshotDir(sessionId);

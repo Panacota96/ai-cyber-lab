@@ -13,6 +13,41 @@ if (!fs.existsSync(SESSIONS_DIR)) {
 }
 
 const db = new Database(DB_PATH);
+const dbSignalState = globalThis.__helmsDbSignalState || (globalThis.__helmsDbSignalState = {
+  hooksRegistered: false,
+  closeCurrentDb: null,
+});
+let dbClosed = false;
+
+export function closeDbConnection(reason = 'manual') {
+  if (dbClosed) return false;
+  dbClosed = true;
+  try {
+    db.close();
+    console.log(`[DB] SQLite connection closed (${reason}).`);
+    return true;
+  } catch (error) {
+    console.error('[DB] Error while closing SQLite connection:', error);
+    return false;
+  }
+}
+
+dbSignalState.closeCurrentDb = closeDbConnection;
+
+if (!dbSignalState.hooksRegistered && typeof process !== 'undefined' && typeof process.once === 'function') {
+  const handleSignal = (signal) => {
+    console.log(`[DB] Received ${signal}. Shutting down database connection...`);
+    try {
+      dbSignalState.closeCurrentDb?.(signal);
+    } finally {
+      process.exit(0);
+    }
+  };
+
+  process.once('SIGTERM', () => handleSignal('SIGTERM'));
+  process.once('SIGINT', () => handleSignal('SIGINT'));
+  dbSignalState.hooksRegistered = true;
+}
 
 // Initialize Schema
 db.exec(`
@@ -46,6 +81,24 @@ db.exec(`
     metadata TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS ai_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_tokens INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    total_tokens INTEGER DEFAULT 0,
+    estimated_cost_usd REAL DEFAULT 0,
+    metadata TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_ai_usage_session_created
+    ON ai_usage(session_id, created_at DESC);
 
   CREATE TABLE IF NOT EXISTS writeups (
     id TEXT PRIMARY KEY,
@@ -247,6 +300,123 @@ export function logToDb(level, message, metadata = {}) {
   } catch (e) { console.error('Failed to log to DB', e); }
 }
 
+export function recordAiUsage(entry) {
+  try {
+    const sessionId = entry?.sessionId || 'default';
+    requireValidSessionId(sessionId);
+    const stmt = db.prepare(`
+      INSERT INTO ai_usage (
+        session_id, endpoint, provider, model, prompt_tokens, completion_tokens, total_tokens, estimated_cost_usd, metadata
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      sessionId,
+      String(entry?.endpoint || 'unknown'),
+      String(entry?.provider || 'unknown'),
+      String(entry?.model || 'unknown'),
+      Number(entry?.promptTokens || 0),
+      Number(entry?.completionTokens || 0),
+      Number(entry?.totalTokens || 0),
+      Number(entry?.estimatedCostUsd || 0),
+      entry?.metadata ? JSON.stringify(entry.metadata) : null
+    );
+    return true;
+  } catch (error) {
+    console.error('Failed to record AI usage', error);
+    return false;
+  }
+}
+
+export function getAiUsageSummary(sessionId) {
+  try {
+    requireValidSessionId(sessionId);
+    const totals = db.prepare(`
+      SELECT
+        COUNT(*) as calls,
+        COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+        COALESCE(SUM(completion_tokens), 0) as completion_tokens,
+        COALESCE(SUM(total_tokens), 0) as total_tokens,
+        COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost_usd,
+        MAX(created_at) as last_call_at
+      FROM ai_usage
+      WHERE session_id = ?
+    `).get(sessionId);
+
+    const byProvider = db.prepare(`
+      SELECT
+        provider,
+        COUNT(*) as calls,
+        COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+        COALESCE(SUM(completion_tokens), 0) as completion_tokens,
+        COALESCE(SUM(total_tokens), 0) as total_tokens,
+        COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost_usd
+      FROM ai_usage
+      WHERE session_id = ?
+      GROUP BY provider
+      ORDER BY estimated_cost_usd DESC, calls DESC
+    `).all(sessionId);
+
+    const byModel = db.prepare(`
+      SELECT
+        provider,
+        model,
+        COUNT(*) as calls,
+        COALESCE(SUM(prompt_tokens), 0) as prompt_tokens,
+        COALESCE(SUM(completion_tokens), 0) as completion_tokens,
+        COALESCE(SUM(total_tokens), 0) as total_tokens,
+        COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost_usd
+      FROM ai_usage
+      WHERE session_id = ?
+      GROUP BY provider, model
+      ORDER BY estimated_cost_usd DESC, calls DESC
+    `).all(sessionId);
+
+    return {
+      sessionId,
+      totals: {
+        calls: Number(totals?.calls || 0),
+        promptTokens: Number(totals?.prompt_tokens || 0),
+        completionTokens: Number(totals?.completion_tokens || 0),
+        totalTokens: Number(totals?.total_tokens || 0),
+        estimatedCostUsd: Number(Number(totals?.estimated_cost_usd || 0).toFixed(8)),
+        lastCallAt: totals?.last_call_at || null,
+      },
+      byProvider: byProvider.map((row) => ({
+        provider: row.provider,
+        calls: Number(row.calls || 0),
+        promptTokens: Number(row.prompt_tokens || 0),
+        completionTokens: Number(row.completion_tokens || 0),
+        totalTokens: Number(row.total_tokens || 0),
+        estimatedCostUsd: Number(Number(row.estimated_cost_usd || 0).toFixed(8)),
+      })),
+      byModel: byModel.map((row) => ({
+        provider: row.provider,
+        model: row.model,
+        calls: Number(row.calls || 0),
+        promptTokens: Number(row.prompt_tokens || 0),
+        completionTokens: Number(row.completion_tokens || 0),
+        totalTokens: Number(row.total_tokens || 0),
+        estimatedCostUsd: Number(Number(row.estimated_cost_usd || 0).toFixed(8)),
+      })),
+    };
+  } catch (error) {
+    console.error('Failed to read AI usage summary', error);
+    return {
+      sessionId,
+      totals: {
+        calls: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
+        lastCallAt: null,
+      },
+      byProvider: [],
+      byModel: [],
+    };
+  }
+}
+
 export function getWriteup(sessionId) {
   try {
     requireValidSessionId(sessionId);
@@ -316,6 +486,7 @@ export function getDbStats() {
     sessions: db.prepare('SELECT COUNT(*) as n FROM sessions').get().n,
     events: db.prepare('SELECT COUNT(*) as n FROM timeline_events').get().n,
     logs: db.prepare('SELECT COUNT(*) as n FROM app_logs').get().n,
+    aiUsage: db.prepare('SELECT COUNT(*) as n FROM ai_usage').get().n,
     writeupVersions: db.prepare('SELECT COUNT(*) as n FROM writeup_versions').get().n,
   };
 }

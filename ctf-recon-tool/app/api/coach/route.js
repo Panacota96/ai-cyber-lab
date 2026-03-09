@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { getTimeline, getSession } from '@/lib/db';
+import { getTimeline, getSession, recordAiUsage } from '@/lib/db';
+import { buildEstimatedUsage } from '@/lib/ai-cost';
 import { isApiTokenValid, isValidSessionId } from '@/lib/security';
 import { config } from '@/lib/config';
 
@@ -68,6 +69,12 @@ const STREAM_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
 };
 
+const COACH_MODELS = {
+  claude: 'claude-sonnet-4-6',
+  gemini: 'gemini-2.5-flash',
+  openai: 'gpt-4o',
+};
+
 function formatTimeline(events) {
   if (!events || events.length === 0) {
     return 'No commands or notes recorded yet. Session is empty.';
@@ -89,14 +96,19 @@ function formatTimeline(events) {
   }).join('\n\n');
 }
 
-function makeStream(generatorFn) {
+function makeStream(generatorFn, { onComplete } = {}) {
   const encoder = new TextEncoder();
   return new NextResponse(
     new ReadableStream({
       async start(controller) {
+        let outputText = '';
         try {
           for await (const text of generatorFn()) {
+            outputText += text;
             controller.enqueue(encoder.encode(text));
+          }
+          if (typeof onComplete === 'function') {
+            await onComplete(outputText);
           }
           controller.close();
         } catch (err) {
@@ -111,7 +123,7 @@ function makeStream(generatorFn) {
 async function* streamClaude(userMessage, apiKey, systemPrompt) {
   const client = new Anthropic({ apiKey: apiKey || config.anthropicApiKey });
   const stream = client.messages.stream({
-    model: 'claude-sonnet-4-6',
+    model: COACH_MODELS.claude,
     max_tokens: 1024,
     system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }],
@@ -127,7 +139,7 @@ async function* streamGemini(userMessage, apiKey, systemPrompt) {
   const { GoogleGenAI } = await import('@google/genai');
   const ai = new GoogleGenAI({ apiKey: apiKey || config.geminiApiKey });
   const response = await ai.models.generateContentStream({
-    model: 'gemini-2.5-flash',
+    model: COACH_MODELS.gemini,
     contents: userMessage,
     config: { systemInstruction: systemPrompt, maxOutputTokens: 1024 },
   });
@@ -140,7 +152,7 @@ async function* streamOpenAI(userMessage, apiKey, systemPrompt) {
   const OpenAI = (await import('openai')).default;
   const client = new OpenAI({ apiKey: apiKey || config.openaiApiKey });
   const stream = await client.chat.completions.create({
-    model: 'gpt-4o',
+    model: COACH_MODELS.openai,
     max_tokens: 1024,
     stream: true,
     messages: [
@@ -183,27 +195,68 @@ ${timelineText}
 
 Based on this timeline, what is the single best next action to take?`;
 
+    const createTrackedStream = (selectedProvider, selectedModel, streamFn, apiKeyToUse, trackingMeta = {}) => makeStream(
+      () => streamFn(userMessage, apiKeyToUse, systemPrompt),
+      {
+        onComplete: async (completionText) => {
+          try {
+            const usage = buildEstimatedUsage({
+              provider: selectedProvider,
+              model: selectedModel,
+              promptText: `${systemPrompt}\n\n${userMessage}`,
+              completionText,
+            });
+
+            recordAiUsage({
+              sessionId,
+              endpoint: '/api/coach',
+              provider: selectedProvider,
+              model: selectedModel,
+              promptTokens: usage.promptTokens,
+              completionTokens: usage.completionTokens,
+              totalTokens: usage.totalTokens,
+              estimatedCostUsd: usage.estimatedCostUsd,
+              metadata: {
+                ...trackingMeta,
+                mode: 'stream',
+                skill,
+                events: events.length,
+              },
+            });
+          } catch (trackingError) {
+            console.error('[Coach Usage Tracking Error]', trackingError);
+          }
+        },
+      }
+    );
+
     // Explicit provider override (manual selection from UI)
     if (provider === 'gemini') {
       const key = apiKey || config.geminiApiKey;
       if (!key) return NextResponse.json({ error: 'Gemini API key required.' }, { status: 503 });
-      return makeStream(() => streamGemini(userMessage, key, systemPrompt));
+      return createTrackedStream('gemini', COACH_MODELS.gemini, streamGemini, key);
     }
     if (provider === 'openai') {
       const key = apiKey || config.openaiApiKey;
       if (!key) return NextResponse.json({ error: 'OpenAI API key required.' }, { status: 503 });
-      return makeStream(() => streamOpenAI(userMessage, key, systemPrompt));
+      return createTrackedStream('openai', COACH_MODELS.openai, streamOpenAI, key);
     }
 
     // Default (claude): auto-fallback in priority order — Claude → OpenAI → Gemini
     const claudeKey = apiKey || config.anthropicApiKey;
-    if (claudeKey) return makeStream(() => streamClaude(userMessage, claudeKey, systemPrompt));
+    if (claudeKey) {
+      return createTrackedStream('anthropic', COACH_MODELS.claude, streamClaude, claudeKey);
+    }
 
     const openaiKey = config.openaiApiKey;
-    if (openaiKey) return makeStream(() => streamOpenAI(userMessage, openaiKey, systemPrompt));
+    if (openaiKey) {
+      return createTrackedStream('openai', COACH_MODELS.openai, streamOpenAI, openaiKey, { fallbackFrom: 'claude' });
+    }
 
     const geminiKey = config.geminiApiKey;
-    if (geminiKey) return makeStream(() => streamGemini(userMessage, geminiKey, systemPrompt));
+    if (geminiKey) {
+      return createTrackedStream('gemini', COACH_MODELS.gemini, streamGemini, geminiKey, { fallbackFrom: 'claude' });
+    }
 
     return NextResponse.json({ error: 'No AI API key configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_AI_API_KEY.' }, { status: 503 });
 

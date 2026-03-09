@@ -16,6 +16,7 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const sessionId = searchParams.get('sessionId');
   const format = searchParams.get('format') || 'technical-walkthrough';
+  const analystName = searchParams.get('analystName') || 'Unknown';
 
   if (!sessionId || !isValidSessionId(sessionId)) {
     return NextResponse.json({ error: 'Session ID required' }, { status: 400 });
@@ -29,7 +30,7 @@ export async function GET(request) {
 
     const events = getTimelineEvents(sessionId);
     const generator = FORMATS[format] || labReport;
-    const report = generator(session, events);
+    const report = generator(session, events, analystName);
 
     return NextResponse.json({ report });
   } catch (error) {

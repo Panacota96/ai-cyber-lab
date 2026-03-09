@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { listSessions, createSession, deleteSession } from '@/lib/db';
 import { isApiTokenValid, isValidSessionId } from '@/lib/security';
+import { logger } from '@/lib/logger';
 
 export async function GET() {
   const sessions = listSessions();
@@ -12,8 +13,10 @@ export async function POST(request) {
     if (!isApiTokenValid(request)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const { id, name, target, difficulty, objective } = await request.json();
-    if (!id || !isValidSessionId(id)) {
+    const body = await request.json();
+    const { name, target, difficulty, objective } = body;
+    const id = body.id || crypto.randomUUID();
+    if (!isValidSessionId(id)) {
       return NextResponse.json({ error: 'Invalid session id' }, { status: 400 });
     }
     if (!name || !String(name).trim()) {
@@ -23,6 +26,7 @@ export async function POST(request) {
     if (!session) {
       return NextResponse.json({ error: 'Session could not be created (possibly duplicate id)' }, { status: 409 });
     }
+    logger.info('AUDIT:SESSION_CREATED', { sessionId: id, name });
     return NextResponse.json(session);
   } catch (error) {
     return NextResponse.json({ error: 'Failed to create session' }, { status: 500 });
@@ -41,6 +45,7 @@ export async function DELETE(request) {
     }
     const ok = deleteSession(id);
     if (!ok) return NextResponse.json({ error: 'Failed to delete session' }, { status: 500 });
+    logger.info('AUDIT:SESSION_DELETED', { sessionId: id });
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json({ error: 'Failed to delete session' }, { status: 500 });

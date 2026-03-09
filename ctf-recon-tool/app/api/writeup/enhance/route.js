@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { isApiTokenValid } from '@/lib/security';
+import { buildEstimatedUsage, extractAnthropicUsage, extractGeminiUsage, extractOpenAiUsage } from '@/lib/ai-cost';
+import { recordAiUsage } from '@/lib/db';
+import { isApiTokenValid, isValidSessionId } from '@/lib/security';
 import { config } from '@/lib/config';
 
 // ── Skill system prompts (derived from ctf-writeups/.gemini/skills) ─────────
@@ -196,14 +198,25 @@ const STREAM_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
 };
 
-function makeStream(generatorFn) {
+const ENHANCE_MODELS = {
+  anthropic: 'claude-sonnet-4-6',
+  gemini: 'gemini-2.5-flash',
+  openai: 'gpt-4o',
+};
+
+function makeStream(generatorFn, { onComplete } = {}) {
   const encoder = new TextEncoder();
   return new NextResponse(
     new ReadableStream({
       async start(controller) {
+        let outputText = '';
         try {
           for await (const text of generatorFn()) {
+            outputText += text;
             controller.enqueue(encoder.encode(text));
+          }
+          if (typeof onComplete === 'function') {
+            await onComplete(outputText);
           }
           controller.close();
         } catch (err) {
@@ -218,7 +231,7 @@ function makeStream(generatorFn) {
 async function* streamClaude(reportContent, apiKey, systemPrompt) {
   const client = new Anthropic({ apiKey: apiKey || config.anthropicApiKey });
   const stream = client.messages.stream({
-    model: 'claude-sonnet-4-6',
+    model: ENHANCE_MODELS.anthropic,
     max_tokens: 2048,
     system: systemPrompt,
     messages: [{ role: 'user', content: `Here is the reconnaissance report to enhance:\n\n${reportContent}` }],
@@ -234,7 +247,7 @@ async function* streamGemini(reportContent, apiKey, systemPrompt) {
   const { GoogleGenAI } = await import('@google/genai');
   const ai = new GoogleGenAI({ apiKey: apiKey || config.geminiApiKey });
   const response = await ai.models.generateContentStream({
-    model: 'gemini-2.5-flash',
+    model: ENHANCE_MODELS.gemini,
     contents: `Here is the reconnaissance report to enhance:\n\n${reportContent}`,
     config: { systemInstruction: systemPrompt, maxOutputTokens: 2048 },
   });
@@ -247,7 +260,7 @@ async function* streamOpenAI(reportContent, apiKey, systemPrompt) {
   const OpenAI = (await import('openai')).default;
   const client = new OpenAI({ apiKey: apiKey || config.openaiApiKey });
   const stream = await client.chat.completions.create({
-    model: 'gpt-4o',
+    model: ENHANCE_MODELS.openai,
     max_tokens: 2048,
     stream: true,
     messages: [
@@ -264,38 +277,47 @@ async function* streamOpenAI(reportContent, apiKey, systemPrompt) {
 async function completeClaude(userContent, apiKey, systemPrompt) {
   const client = new Anthropic({ apiKey: apiKey || config.anthropicApiKey });
   const resp = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: ENHANCE_MODELS.anthropic,
     max_tokens: 3072,
     system: systemPrompt,
     messages: [{ role: 'user', content: userContent }],
   });
   const textBlocks = resp.content?.filter(c => c.type === 'text').map(c => c.text) || [];
-  return textBlocks.join('\n');
+  return {
+    text: textBlocks.join('\n'),
+    usage: extractAnthropicUsage(resp.usage),
+  };
 }
 
 async function completeGemini(userContent, apiKey, systemPrompt) {
   const { GoogleGenAI } = await import('@google/genai');
   const ai = new GoogleGenAI({ apiKey: apiKey || config.geminiApiKey });
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
+    model: ENHANCE_MODELS.gemini,
     contents: userContent,
     config: { systemInstruction: systemPrompt, maxOutputTokens: 3072 },
   });
-  return response.text || '';
+  return {
+    text: response.text || '',
+    usage: extractGeminiUsage(response.usageMetadata),
+  };
 }
 
 async function completeOpenAI(userContent, apiKey, systemPrompt) {
   const OpenAI = (await import('openai')).default;
   const client = new OpenAI({ apiKey: apiKey || config.openaiApiKey });
   const response = await client.chat.completions.create({
-    model: 'gpt-4o',
+    model: ENHANCE_MODELS.openai,
     max_tokens: 3072,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userContent },
     ],
   });
-  return response.choices?.[0]?.message?.content || '';
+  return {
+    text: response.choices?.[0]?.message?.content || '',
+    usage: extractOpenAiUsage(response.usage),
+  };
 }
 
 function extractJsonObject(rawText) {
@@ -311,12 +333,63 @@ function extractJsonObject(rawText) {
   }
 }
 
+function resolveTrackingProvider(provider) {
+  if (provider === 'openai') return 'openai';
+  if (provider === 'gemini') return 'gemini';
+  return 'anthropic';
+}
+
+function resolveTrackingModel(provider) {
+  if (provider === 'openai') return ENHANCE_MODELS.openai;
+  if (provider === 'gemini') return ENHANCE_MODELS.gemini;
+  return ENHANCE_MODELS.anthropic;
+}
+
+function safeRecordAiUsage({
+  sessionId,
+  provider,
+  endpoint,
+  promptText,
+  completionText,
+  usage,
+  metadata,
+}) {
+  try {
+    const trackingProvider = resolveTrackingProvider(provider);
+    const trackingModel = resolveTrackingModel(provider);
+    const normalized = buildEstimatedUsage({
+      provider: trackingProvider,
+      model: trackingModel,
+      promptText,
+      completionText,
+      promptTokens: usage?.promptTokens,
+      completionTokens: usage?.completionTokens,
+      totalTokens: usage?.totalTokens,
+    });
+
+    recordAiUsage({
+      sessionId,
+      endpoint,
+      provider: trackingProvider,
+      model: trackingModel,
+      promptTokens: normalized.promptTokens,
+      completionTokens: normalized.completionTokens,
+      totalTokens: normalized.totalTokens,
+      estimatedCostUsd: normalized.estimatedCostUsd,
+      metadata,
+    });
+  } catch (error) {
+    console.error('[Writeup Usage Tracking Error]', error);
+  }
+}
+
 export async function POST(request) {
   try {
     if (!isApiTokenValid(request)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const {
+      sessionId = 'default',
       reportContent,
       provider = 'claude',
       apiKey = '',
@@ -326,6 +399,9 @@ export async function POST(request) {
       selectedSectionIds = [],
       evidenceContext = '',
     } = await request.json();
+    if (!sessionId || !isValidSessionId(sessionId)) {
+      return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
+    }
     if (!reportContent) {
       return NextResponse.json({ error: 'reportContent is required' }, { status: 400 });
     }
@@ -396,13 +472,21 @@ ${JSON.stringify(compactBlocks, null, 2)}
 Evidence context:
 ${evidenceContext || '(none provided)'}`;
 
+      const promptText = `${systemPrompt}\n\n${patchPrompt}`;
       let modelOutput = '';
+      let usage = null;
       if (provider === 'gemini') {
-        modelOutput = await completeGemini(patchPrompt, key, systemPrompt);
+        const result = await completeGemini(patchPrompt, key, systemPrompt);
+        modelOutput = result.text;
+        usage = result.usage;
       } else if (provider === 'openai') {
-        modelOutput = await completeOpenAI(patchPrompt, key, systemPrompt);
+        const result = await completeOpenAI(patchPrompt, key, systemPrompt);
+        modelOutput = result.text;
+        usage = result.usage;
       } else {
-        modelOutput = await completeClaude(patchPrompt, key, systemPrompt);
+        const result = await completeClaude(patchPrompt, key, systemPrompt);
+        modelOutput = result.text;
+        usage = result.usage;
       }
 
       const parsed = extractJsonObject(modelOutput);
@@ -427,19 +511,81 @@ ${evidenceContext || '(none provided)'}`;
         }];
       }
 
+      safeRecordAiUsage({
+        sessionId,
+        provider,
+        endpoint: '/api/writeup/enhance',
+        promptText,
+        completionText: modelOutput,
+        usage,
+        metadata: {
+          mode: 'section-patch',
+          skill,
+          selectedSections: selected.length,
+          patchedSections: patches.length,
+        },
+      });
+
       return NextResponse.json({ mode: 'section-patch', patches });
     }
 
+    const promptText = `${systemPrompt}\n\nHere is the reconnaissance report to enhance:\n\n${reportContent}`;
+
     if (provider === 'gemini') {
-      return makeStream(() => streamGemini(reportContent, key, systemPrompt));
+      return makeStream(
+        () => streamGemini(reportContent, key, systemPrompt),
+        {
+          onComplete: async (completionText) => {
+            safeRecordAiUsage({
+              sessionId,
+              provider: 'gemini',
+              endpoint: '/api/writeup/enhance',
+              promptText,
+              completionText,
+              usage: null,
+              metadata: { mode: 'stream', skill },
+            });
+          },
+        }
+      );
     }
 
     if (provider === 'openai') {
-      return makeStream(() => streamOpenAI(reportContent, key, systemPrompt));
+      return makeStream(
+        () => streamOpenAI(reportContent, key, systemPrompt),
+        {
+          onComplete: async (completionText) => {
+            safeRecordAiUsage({
+              sessionId,
+              provider: 'openai',
+              endpoint: '/api/writeup/enhance',
+              promptText,
+              completionText,
+              usage: null,
+              metadata: { mode: 'stream', skill },
+            });
+          },
+        }
+      );
     }
 
     // Default: claude
-    return makeStream(() => streamClaude(reportContent, key, systemPrompt));
+    return makeStream(
+      () => streamClaude(reportContent, key, systemPrompt),
+      {
+        onComplete: async (completionText) => {
+          safeRecordAiUsage({
+            sessionId,
+            provider: 'anthropic',
+            endpoint: '/api/writeup/enhance',
+            promptText,
+            completionText,
+            usage: null,
+            metadata: { mode: 'stream', skill },
+          });
+        },
+      }
+    );
 
   } catch (error) {
     console.error('AI enhance failed:', error);

@@ -43,7 +43,7 @@ export async function POST(request) {
     }
 
     const writeup = saveWriteup(sessionId, content || '', status, visibility, contentJson);
-    logger.info(`Writeup saved for session ${sessionId}`, { status, visibility, hasJson: Boolean(contentJson) });
+    logger.info('AUDIT:WRITEUP_SAVED', { sessionId, contentLength: (content || '').length, status, visibility });
     return NextResponse.json({
       ...writeup,
       contentJson,

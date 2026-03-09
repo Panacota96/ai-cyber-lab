@@ -35,6 +35,8 @@ Main gaps: UX polish, operational robustness, reporting depth, test coverage, an
 | 8 | ~~Session event filtering (all/success/failed/running)~~ ✓ DONE | `app/page.js` | — |
 | 9 | ~~Command timeout UI + cancel button~~ ✓ DONE | `app/page.js`, `app/api/execute/route.js`, `app/api/execute/cancel/route.js` | — |
 | 10 | ~~Report format presets (CTF, Bug Bounty, Pentest)~~ ✓ DONE | `app/lib/report-formats.js`, `app/api/report/route.js` | — |
+| 11 | ~~Graceful shutdown handler (SIGTERM/SIGINT + SQLite close)~~ ✓ DONE | `app/lib/db.js` | — |
+| 12 | ~~Fixed bottom project version bar (Semver + Git SHA)~~ ✓ DONE | `next.config.mjs`, `app/layout.js`, `app/globals.css`, `app/page.js` | — |
 
 ---
 
@@ -44,34 +46,34 @@ Main gaps: UX polish, operational robustness, reporting depth, test coverage, an
 
 | ID | Item | Category | Impact |
 |----|------|----------|--------|
-| B.2 | Env var documentation (`.env.example`) | Ops | High |
-| B.3 | `/api/health` liveness endpoint | Ops | Medium |
-| B.4 | Graceful shutdown handler (SIGTERM) | Ops | Low-Med |
-| B.5 | `.env` file config with dotenv | Ops | Medium |
-| B.6 | `docker-compose.yml` for full stack | Ops | High |
-| B.8 | Database backup/export API endpoint | Ops | Low-Med |
-| B.10 | `scripts/init.sh` startup script | Ops | Low-Med |
-| A.2 | Collapsible timeline + expand-all toggle | UX | Medium |
-| A.3 | Dark mode toggle + localStorage persistence | UX | Low |
-| A.5 | Inline event filtering by status/tag | UX | Medium |
-| A.7 | Copy-to-clipboard button per event | UX | Low |
-| A.8 | Screenshot metadata inline edit (popover) | UX | Low |
-| A.9 | Customizable sidebar tool categories | UX | Low-Med |
-| C.2 | Command templates/macros (`{target}`) | Features | Medium |
-| C.6 | Command history fuzzy search | Features | Low-Med |
-| C.7 | Bulk screenshot operations | Features | Low |
-| D.3 | Inline images in markdown/PDF export | Reporting | Medium |
-| D.8 | Auto TOC generation in reports | Reporting | Low |
-| D.10 | Report format presets (Pentest, CTF, Bug Bounty) | Reporting | Medium |
-| E.5 | Coach command validation before execution | AI | Low |
-| E.10 | API cost tracking per session | AI | Low |
-| F.4 | Screenshot magic-byte MIME validation | Security | Medium |
-| F.6 | Session ID randomization (UUID) | Security | Low-Med |
-| F.8 | Note HTML sanitization (XSS) | Security | Low-Med |
-| F.10 | Audit log for sensitive actions | Security | Low-Med |
-| G.4 | Constants consolidation to config file | Code | Low |
-| G.8 | CSS module organization | Code | Low |
-| G.9 | Dependency audit (`npm audit`) | Code | Medium |
+| B.2 | ~~Env var documentation (`.env.example`)~~ ✓ DONE | Ops | High |
+| B.3 | ~~`/api/health` liveness endpoint~~ ✓ DONE | Ops | Medium |
+| B.4 | ~~Graceful shutdown handler (SIGTERM)~~ ✓ DONE | Ops | Low-Med |
+| B.5 | ~~`.env` file config with dotenv~~ ✓ DONE | Ops | Medium |
+| B.6 | ~~`docker-compose.yml` for full stack~~ ✓ DONE | Ops | High |
+| B.8 | ~~Database backup/export API endpoint~~ ✓ DONE | Ops | Low-Med |
+| B.10 | ~~`scripts/init.sh` startup script~~ ✓ DONE | Ops | Low-Med |
+| A.2 | ~~Collapsible timeline + expand-all toggle~~ ✓ DONE | UX | Medium |
+| A.3 | ~~Dark mode toggle + localStorage persistence~~ ✓ DONE | UX | Low |
+| A.5 | ~~Inline event filtering by status/tag~~ ✓ DONE | UX | Medium |
+| A.7 | ~~Copy-to-clipboard button per event~~ ✓ DONE | UX | Low |
+| A.8 | ~~Screenshot metadata inline edit (popover)~~ ✓ DONE | UX | Low |
+| A.9 | ~~Customizable sidebar tool categories~~ ✓ DONE | UX | Low-Med |
+| C.2 | ~~Command templates/macros (`{target}`)~~ ✓ DONE | Features | Medium |
+| C.6 | ~~Command history fuzzy search~~ ✓ DONE | Features | Low-Med |
+| C.7 | ~~Bulk screenshot operations~~ ✓ DONE | Features | Low |
+| D.3 | ~~Inline images in markdown/PDF export~~ ✓ DONE | Reporting | Medium |
+| D.8 | ~~Auto TOC generation in reports~~ ✓ DONE | Reporting | Low |
+| D.10 | ~~Report format presets (Pentest, CTF, Bug Bounty)~~ ✓ DONE | Reporting | Medium |
+| E.5 | ~~Coach command validation before execution~~ ✓ DONE | AI | Low |
+| E.10 | ~~API cost tracking per session~~ ✓ DONE | AI | Low |
+| F.4 | ~~Screenshot magic-byte MIME validation~~ ✓ DONE | Security | Medium |
+| F.6 | ~~Session ID randomization (UUID)~~ ✓ DONE | Security | Low-Med |
+| F.8 | ~~Note HTML sanitization (XSS)~~ ✓ DONE (plain text) | Security | Low-Med |
+| F.10 | ~~Audit log for sensitive actions~~ ✓ DONE | Security | Low-Med |
+| G.4 | ~~Constants consolidation to config file~~ ✓ DONE | Code | Low |
+| G.8 | ~~CSS module organization~~ ✓ DONE (already organized) | Code | Low |
+| G.9 | ~~Dependency audit (`npm audit`)~~ ✓ DONE | Code | Medium |
 
 ### Medium (3–7 days each)
 
@@ -83,7 +85,7 @@ Main gaps: UX polish, operational robustness, reporting depth, test coverage, an
 | A.4 | Real-time fuzzy command suggestions | UX | Medium |
 | A.6 | Drag-and-drop report block reordering | UX | Low-Med |
 | A.10 | Timeline keyboard shortcuts (↑↓, Ctrl+F) | UX | Low |
-| C.1 | Command timeout UI + cancel button | Features | High |
+| C.1 | ~~Command timeout UI + cancel button~~ ✓ DONE | Features | High |
 | C.4 | Session tagging + full-text search | Features | Medium |
 | C.8 | Output diff view for related commands | Features | Low-Med |
 | C.9 | Global search across all sessions | Features | Medium |

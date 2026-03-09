@@ -18,17 +18,30 @@ Creates a new event in the session timeline.
 
 ### `GET /api/report`
 Generates a report draft from timeline data.
-- **Query Params**: `sessionId`, `format` (`lab-report` | `executive-summary` | `technical-walkthrough` | `ctf-solution`)
+- **Query Params**: `sessionId`, `format` (`lab-report` | `executive-summary` | `technical-walkthrough` | `ctf-solution` | `bug-bounty` | `pentest`)
 
 ### `POST /api/writeup/enhance`
 Enhances writeup content with AI.
 - **Reporter Skills**: `enhance`, `writeup-refiner`, `report`
 - **Legacy stream mode payload**:
-  - `{ reportContent: string, provider: 'claude'|'gemini'|'openai', apiKey?: string, skill?: string }`
+  - `{ sessionId?: string, reportContent: string, provider: 'claude'|'gemini'|'openai', apiKey?: string, skill?: string }`
 - **Section patch mode payload**:
-  - `{ reportContent: string, reportBlocks: object[], selectedSectionIds?: string[], evidenceContext?: string, mode: 'section-patch', provider, apiKey, skill }`
+  - `{ sessionId?: string, reportContent: string, reportBlocks: object[], selectedSectionIds?: string[], evidenceContext?: string, mode: 'section-patch', provider, apiKey, skill }`
 - **Section patch response**:
   - `{ mode: 'section-patch', patches: [{ sectionId, title?, content?, caption?, alt?, evidenceRefs? }] }`
+
+### `GET /api/ai/usage`
+Returns AI token/cost usage summary for a session.
+- **Query Params**: `sessionId`
+- **Response**:
+  - `{ sessionId, totals: { calls, promptTokens, completionTokens, totalTokens, estimatedCostUsd, lastCallAt }, byProvider: [], byModel: [] }`
+
+### `POST /api/export/markdown`
+Exports a markdown report as a downloadable `.md` file.
+- **Payload**: `{ sessionId: string, format?: string, inlineImages?: boolean }`
+- **Defaults**:
+  - `format = 'technical-walkthrough'`
+  - `inlineImages = true` (converts `/api/media/...` links to `data:image/...;base64,...` for export file only)
 
 ### `GET /api/writeup`
 Loads the current writeup for a session.
@@ -43,11 +56,29 @@ Saves the current writeup for a session.
 Lists historical versions or loads a specific version.
 - **Query Params**: `sessionId`, `versionId?`
 
+## Admin Endpoints
+
+### `GET /api/admin/backup`
+Downloads a SQLite backup export (admin-protected).
+- **Guards**: requires valid `x-api-token` when `APP_API_TOKEN` is configured; requires `ENABLE_ADMIN_API=true` (or non-production default).
+- **Query Params**:
+  - `format=db|sql` (default: `db`)
+- **Responses**:
+  - `format=db`: binary SQLite file download (`.db`)
+  - `format=sql`: SQL dump download (`.sql`) generated via `sqlite3 .dump`
+  - `400`: invalid format
+  - `401`: unauthorized
+  - `403`: admin API disabled
+  - `404`: database file missing
+  - `501`: `sqlite3` CLI unavailable for SQL export
+
 ## Media Endpoints
 
 ### `POST /api/upload`
 Handles screenshot file uploads.
 - **Storage**: Files are saved to `data/sessions/<sessionId>/screenshots/`.
+- **Validation**: Enforces PNG/JPEG/GIF/WEBP magic-byte signature checks (not header-only MIME checks).
 
 ### `GET /api/media/:sessionId/:filename`
 Serves screenshot files for timeline, writeup editor, and PDF export.
+- **Content-Type**: Inferred from file bytes first, with extension fallback.

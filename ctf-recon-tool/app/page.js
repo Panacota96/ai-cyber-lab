@@ -3,111 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Image from 'next/image';
 import { CHEATSHEET } from '@/lib/cheatsheet';
-
-const SUGGESTIONS = [
-  {
-    category: 'Network Recon',
-    items: [
-      { label: 'Nmap Fast', command: 'nmap -F {target}' },
-      { label: 'Nmap Full Aggressive', command: 'nmap -A -p- -T4 {target}' },
-      { label: 'UDP Scan', command: 'nmap -sU -T4 {target}' },
-      { label: 'Whois Lookup', command: 'whois {target}' },
-      { label: 'DNS Dig', command: 'dig {target} ANY' },
-      { label: 'Ping Loop', command: 'ping -c 4 {target}' }
-    ]
-  },
-  {
-    category: 'Web Enumeration',
-    items: [
-      { label: 'WhatWeb', command: 'whatweb {target}' },
-      { label: 'Gobuster Dir', command: 'gobuster dir -u http://{target} -w /usr/share/wordlists/dirb/common.txt' },
-      { label: 'FFUF Fuzz', command: 'ffuf -u http://{target}/FUZZ -w /usr/share/wordlists/dirb/common.txt' },
-      { label: 'Curl Headers', command: 'curl -I http://{target}/' },
-      { label: 'Curl Verbose', command: 'curl -v http://{target}/' },
-      { label: 'Curl Pass Cookie', command: 'curl -b "session=123" http://{target}/' },
-      { label: 'Curl Burp Proxy', command: 'curl -x http://localhost:8080 http://{target}/' }
-    ]
-  },
-  {
-    category: 'Windows/AD Recon',
-    items: [
-      { label: 'SMB Null Session', command: 'smbclient -L //{target} -N' },
-      { label: 'Enum4Linux (sim)', command: 'smbclient -L //{target} -N' },
-      { label: 'LDAP Search', command: 'ldapsearch -x -H ldap://{target} -b "dc=example,dc=com"' }
-    ]
-  },
-  {
-    category: 'Database SQLi',
-    items: [
-      { label: 'Auto Scan', command: 'sqlmap -u "http://{target}/" --batch' },
-      { label: 'List Databases', command: 'sqlmap -u "http://{target}/" --dbs' },
-      { label: 'Dump DB', command: 'sqlmap -u "http://{target}/" --dump-all --batch' },
-      { label: 'OS Shell', command: 'sqlmap -u "http://{target}/" --os-shell' }
-    ]
-  },
-  {
-    category: 'Advanced Recon',
-    items: [
-      { label: 'DNS Std Scan', command: 'dnsrecon -d {target} -t std' },
-      { label: 'SSL/TLS Scan', command: 'sslscan {target}' },
-      { label: 'Traceroute', command: 'traceroute {target}' }
-    ]
-  },
-  {
-    category: 'Web Vulnerability Scanning',
-    items: [
-      { label: 'Nikto Scan', command: 'nikto -h http://{target}' },
-      { label: 'Nikto HTTPS', command: 'nikto -h https://{target} -ssl' },
-      { label: 'Nikto Full Tuning', command: 'nikto -h http://{target} -Tuning 9' },
-      { label: 'Nikto Custom Port', command: 'nikto -h {target} -p 8080' },
-      { label: 'Feroxbuster', command: 'feroxbuster -u http://{target} -w /usr/share/wordlists/dirb/common.txt' },
-      { label: 'Feroxbuster PHP/HTML', command: 'feroxbuster -u http://{target} -x php,html,txt -w /usr/share/wordlists/dirb/common.txt' },
-      { label: 'Feroxbuster No Recurse', command: 'feroxbuster -u http://{target} --no-recursion -w /usr/share/wordlists/dirb/common.txt' }
-    ]
-  },
-  {
-    category: 'Brute Force',
-    items: [
-      { label: 'Hydra SSH', command: 'hydra -l {user} -P /usr/share/wordlists/rockyou.txt ssh://{target}' },
-      { label: 'Hydra FTP', command: 'hydra -l {user} -P /usr/share/wordlists/rockyou.txt ftp://{target}' },
-      { label: 'Hydra HTTP POST', command: 'hydra -l {user} -P /usr/share/wordlists/rockyou.txt {target} http-post-form "/login:username=^USER^&password=^PASS^:Invalid"' },
-      { label: 'Hydra RDP', command: 'hydra -l {user} -P /usr/share/wordlists/rockyou.txt rdp://{target}' },
-      { label: 'Hydra SMB', command: 'hydra -l {user} -P /usr/share/wordlists/rockyou.txt smb://{target}' },
-      { label: 'Medusa SSH', command: 'medusa -h {target} -u {user} -P /usr/share/wordlists/rockyou.txt -M ssh' },
-      { label: 'CrackMapExec SMB', command: 'crackmapexec smb {target} -u {user} -p /usr/share/wordlists/rockyou.txt' }
-    ]
-  },
-  {
-    category: 'Hash Cracking',
-    items: [
-      { label: 'Hashcat Wordlist', command: 'hashcat -a 0 -m 0 {hashfile} /usr/share/wordlists/rockyou.txt' },
-      { label: 'Hashcat NTLM', command: 'hashcat -a 0 -m 1000 {hashfile} /usr/share/wordlists/rockyou.txt' },
-      { label: 'Hashcat Brute Force (MD5)', command: 'hashcat -a 3 -m 0 {hashfile} ?a?a?a?a?a?a' },
-      { label: 'Hashcat Kerberos TGS', command: 'hashcat -a 0 -m 13100 {hashfile} /usr/share/wordlists/rockyou.txt' },
-      { label: 'John Wordlist', command: 'john --wordlist=/usr/share/wordlists/rockyou.txt {hashfile}' },
-      { label: 'John Auto', command: 'john {hashfile}' },
-      { label: 'John Show Cracked', command: 'john --show {hashfile}' },
-      { label: 'John SSH Key', command: 'ssh2john id_rsa > id_rsa.hash && john --wordlist=/usr/share/wordlists/rockyou.txt id_rsa.hash' },
-      { label: 'John ZIP', command: 'zip2john {file}.zip > zip.hash && john --wordlist=/usr/share/wordlists/rockyou.txt zip.hash' },
-      { label: 'Identify Hash', command: 'hash-identifier {hash}' }
-    ]
-  }
-];
-
-const DIFFICULTY_COLORS = { easy: '#3fb950', medium: '#d29922', hard: '#f85149' };
-const SIDEBAR_MIN_WIDTH = 260;
-const SIDEBAR_MAX_WIDTH = 420;
-const SIDEBAR_DEFAULT_WIDTH = 320;
-const SIDEBAR_RAIL_WIDTH = 72;
-
-const SUGGESTED_TAGS = [
-  // Pentest stages (HackTheBox methodology)
-  'pre-engagement', 'information-gathering', 'enumeration', 'vulnerability-assessment',
-  'exploitation', 'post-exploitation', 'lateral-movement', 'proof-of-concept', 'post-engagement',
-  // CTF categories
-  'web', 'network', 'crypto', 'forensics', 'reverse-engineering', 'steganography',
-  'privilege-escalation', 'password-cracking', 'finding', 'flag',
-];
+import { SUGGESTIONS, DIFFICULTY_COLORS, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH, SUGGESTED_TAGS } from '@/lib/constants';
 
 function loadFavorites() {
   try { return new Set(JSON.parse(localStorage.getItem('flagFavorites') || '[]')); }
@@ -265,6 +161,23 @@ function markdownToReportBlocks(markdown) {
   return blocks;
 }
 
+const TIMELINE_AUTO_EXPAND_COUNT = 5;
+
+function newestTimelineIds(events, count = TIMELINE_AUTO_EXPAND_COUNT) {
+  return [...events]
+    .filter((event) => event?.id)
+    .slice(-count)
+    .map((event) => event.id);
+}
+
+function summarizeTimelineEvent(event) {
+  if (!event) return '';
+  if (event.type === 'command') return event.command || '(command)';
+  if (event.type === 'note') return (event.content || '').replace(/\s+/g, ' ').trim();
+  if (event.type === 'screenshot') return event.name || event.filename || 'Screenshot';
+  return event.content || '';
+}
+
 export default function Home() {
   // Core state
   const [timeline, setTimeline] = useState([]);
@@ -284,6 +197,10 @@ export default function Home() {
 
   // Sidebar state
   const [expandedCats, setExpandedCats] = useState([]);
+  const [hiddenCats, setHiddenCats] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('ui.hiddenCats') || '[]')); } catch { return new Set(); }
+  });
+  const [showCatManager, setShowCatManager] = useState(false);
   const [toolboxSearch, setToolboxSearch] = useState('');
   const [sidebarTab, setSidebarTab] = useState('tools'); // 'tools' | 'flags' | 'history'
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
@@ -298,9 +215,6 @@ export default function Home() {
 
   // Command timeout (seconds)
   const [cmdTimeout, setCmdTimeout] = useState(120);
-
-  // Tag validation
-  const [tagError, setTagError] = useState(false);
 
   // DB maintenance modal
   const [showDbModal, setShowDbModal] = useState(false);
@@ -330,9 +244,14 @@ export default function Home() {
   const [lastSyncTime, setLastSyncTime] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('connecting'); // 'connected'|'disconnected'|'connecting'
   const [healthData, setHealthData] = useState(null); // null = loading, otherwise /api/health response
-const [timelineAtTop, setTimelineAtTop] = useState(true);
+  const [timelineAtTop, setTimelineAtTop] = useState(true);
   const [timelineAtBottom, setTimelineAtBottom] = useState(true);
   const [timelineFollowEnabled, setTimelineFollowEnabled] = useState(true);
+  const [timelineCollapsed, setTimelineCollapsed] = useState(false);
+  const [expandedTimelineEvents, setExpandedTimelineEvents] = useState(new Set());
+
+  // Bulk screenshot selection
+  const [selectedScreenshots, setSelectedScreenshots] = useState(new Set());
 
   // Collapsible output state
   const [expandedOutputs, setExpandedOutputs] = useState(new Set());
@@ -361,6 +280,11 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [aiProvider, setAiProvider] = useState('claude');
   const [aiSkill, setAiSkill] = useState('enhance');
+  const [analystName, setAnalystName] = useState(() => {
+    try { return localStorage.getItem('report.analystName') || ''; } catch { return ''; }
+  });
+  const [analystNameError, setAnalystNameError] = useState(false);
+  const [aiUsageSummary, setAiUsageSummary] = useState(null);
   const [apiKeys, setApiKeys] = useState(() => {
     try { return JSON.parse(localStorage.getItem('aiApiKeys') || '{}'); }
     catch { return {}; }
@@ -375,6 +299,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
   const resizeStateRef = useRef({ startX: 0, startWidth: SIDEBAR_DEFAULT_WIDTH });
+  const timelineSeenIdsRef = useRef(new Set());
 
   const apiFetch = useCallback((url, options = {}) => {
     const headers = new Headers(options.headers || {});
@@ -455,13 +380,33 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
     } catch (e) { /* silent */ }
   }, [currentSession, apiFetch]);
 
+  const fetchAiUsage = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/api/ai/usage?sessionId=${currentSession}`);
+      if (!res.ok) {
+        setAiUsageSummary(null);
+        return;
+      }
+      const data = await res.json();
+      setAiUsageSummary(data);
+    } catch (_) {
+      setAiUsageSummary(null);
+    }
+  }, [currentSession, apiFetch]);
+
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
+  useEffect(() => { fetchAiUsage(); }, [fetchAiUsage]);
 
   useEffect(() => {
     fetchTimeline();
     const interval = setInterval(fetchTimeline, 3000);
     return () => clearInterval(interval);
   }, [fetchTimeline]);
+
+  useEffect(() => {
+    timelineSeenIdsRef.current = new Set();
+    setExpandedTimelineEvents(new Set());
+  }, [currentSession]);
 
   const fetchHealth = useCallback(async () => {
     try {
@@ -507,6 +452,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
     try {
       const storedWidth = Number(localStorage.getItem('ui.sidebarWidth') || '');
       const storedCollapsed = localStorage.getItem('ui.sidebarCollapsed');
+      const storedTimelineCollapsed = localStorage.getItem('ui.timelineCollapsed');
       if (Number.isFinite(storedWidth) && storedWidth > 0) {
         setSidebarWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, storedWidth)));
       }
@@ -514,6 +460,9 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
         setSidebarCollapsed(storedCollapsed === 'true');
       } else if (window.innerWidth >= 1200 && window.innerWidth <= 1365) {
         setSidebarCollapsed(true);
+      }
+      if (storedTimelineCollapsed === 'true' || storedTimelineCollapsed === 'false') {
+        setTimelineCollapsed(storedTimelineCollapsed === 'true');
       }
     } catch (_) {
       // localStorage unavailable
@@ -524,10 +473,20 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
     try {
       localStorage.setItem('ui.sidebarWidth', String(Math.round(sidebarWidth)));
       localStorage.setItem('ui.sidebarCollapsed', sidebarCollapsed ? 'true' : 'false');
+      localStorage.setItem('ui.hiddenCats', JSON.stringify([...hiddenCats]));
+      localStorage.setItem('report.analystName', analystName);
     } catch (_) {
       // localStorage unavailable
     }
-  }, [sidebarWidth, sidebarCollapsed]);
+  }, [sidebarWidth, sidebarCollapsed, hiddenCats, analystName]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('ui.timelineCollapsed', timelineCollapsed ? 'true' : 'false');
+    } catch (_) {
+      // localStorage unavailable
+    }
+  }, [timelineCollapsed]);
 
   // Persist filter state to localStorage
   useEffect(() => {
@@ -554,11 +513,6 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!inputVal.trim()) return;
-    if (!inputTags.trim()) {
-      setTagError(true);
-      return;
-    }
-    setTagError(false);
     setIsLoading(true);
     const val = inputVal;
     const tags = inputTags.split(',').map(t => t.trim()).filter(Boolean);
@@ -737,6 +691,11 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
   };
 
   const generateReport = async (fmt = reportFormat) => {
+    if (!analystName.trim()) {
+      setAnalystNameError(true);
+      return;
+    }
+    setAnalystNameError(false);
     try {
       setIsLoading(true);
       const existingRes = await apiFetch(`/api/writeup?sessionId=${currentSession}`);
@@ -751,7 +710,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
       if (hasExisting) {
         loadReportPayload(existing);
       } else {
-        const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}`);
+        const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent(analystName.trim())}`);
         const data = await res.json();
         if (data.report) {
           applyReportBlocks(markdownToReportBlocks(data.report));
@@ -767,7 +726,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
     setReportFormat(fmt);
     if (showReportModal) {
       try {
-        const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}`);
+        const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent(analystName.trim())}`);
         const data = await res.json();
         if (data.report) {
           applyReportBlocks(markdownToReportBlocks(data.report));
@@ -814,6 +773,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          sessionId: currentSession,
           reportContent: markdown,
           provider: aiProvider,
           apiKey: apiKeys[aiProvider] || '',
@@ -860,7 +820,10 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
         applyReportBlocks(markdownToReportBlocks(enhanced));
       }
     } catch (error) { console.error('Enhancement failed', error); }
-    finally { setIsEnhancing(false); }
+    finally {
+      setIsEnhancing(false);
+      fetchAiUsage();
+    }
   };
 
   const runCoach = async () => {
@@ -891,6 +854,36 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
       setCoachResult(`Error: ${error.message}`);
     } finally {
       setIsCoaching(false);
+      fetchAiUsage();
+    }
+  };
+
+  const downloadMarkdown = async (inlineImages = true) => {
+    try {
+      const res = await apiFetch('/api/export/markdown', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          format: reportFormat,
+          inlineImages,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        alert(`Markdown export failed: ${err.detail || err.error}`);
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const sessionName = sessions.find(s => s.id === currentSession)?.name?.replace(/\s+/g, '-') || currentSession;
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${sessionName}-${reportFormat}.md`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      alert(`Markdown download error: ${err.message}`);
     }
   };
 
@@ -900,7 +893,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
       const res = await apiFetch('/api/export/pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: markdown, pdfStyle, sessionId: currentSession }),
+        body: JSON.stringify({ content: markdown, pdfStyle, sessionId: currentSession, analystName: analystName.trim() }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Unknown error' }));
@@ -926,7 +919,6 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
     if (idx >= 0) current.splice(idx, 1);
     else current.push(tag);
     setInputTags(current.join(', '));
-    setTagError(false);
   };
 
   const loadDbStats = async () => {
@@ -1061,6 +1053,48 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
     }).catch(() => {});
   };
 
+  const collapseTimelineEvents = () => {
+    setTimelineCollapsed(true);
+    setExpandedTimelineEvents(new Set(newestTimelineIds(timeline)));
+  };
+
+  const expandTimelineEvents = () => {
+    setTimelineCollapsed(false);
+  };
+
+  const toggleTimelineEventDetails = (eventId) => {
+    setExpandedTimelineEvents(prev => {
+      const next = new Set(prev);
+      if (next.has(eventId)) next.delete(eventId);
+      else next.add(eventId);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const currentIds = timeline.map(event => event.id).filter(Boolean);
+    const currentSet = new Set(currentIds);
+    if (!timelineCollapsed) {
+      timelineSeenIdsRef.current = currentSet;
+      return;
+    }
+
+    const seenIds = timelineSeenIdsRef.current;
+    const newestIds = newestTimelineIds(timeline);
+    const autoExpandIds = seenIds.size === 0
+      ? newestIds
+      : newestIds.filter(id => !seenIds.has(id));
+
+    setExpandedTimelineEvents(prev => {
+      const next = new Set([...prev].filter(id => currentSet.has(id)));
+      for (const id of autoExpandIds) {
+        next.add(id);
+      }
+      return next;
+    });
+    timelineSeenIdsRef.current = currentSet;
+  }, [timeline, timelineCollapsed]);
+
   // ── Derived data ──────────────────────────────────────────────────────────
 
   const isOverlaySidebar = viewportWidth < 1200;
@@ -1100,6 +1134,21 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
       label: `${e.name || e.filename}${e.tag ? ` #${e.tag}` : ''}`,
       url: `/api/media/${currentSession}/${e.filename}`,
     }));
+
+  const aiTotals = aiUsageSummary?.totals || null;
+  const aiUsageLabel = aiTotals
+    ? `AI $${Number(aiTotals.estimatedCostUsd || 0).toFixed(4)} · ${aiTotals.calls || 0} calls · ${aiTotals.totalTokens || 0} tok`
+    : 'AI usage unavailable';
+  const aiUsageTitle = aiTotals
+    ? [
+        `Session AI usage`,
+        `Calls: ${aiTotals.calls || 0}`,
+        `Prompt tokens: ${aiTotals.promptTokens || 0}`,
+        `Completion tokens: ${aiTotals.completionTokens || 0}`,
+        `Total tokens: ${aiTotals.totalTokens || 0}`,
+        `Estimated cost: $${Number(aiTotals.estimatedCostUsd || 0).toFixed(6)}`,
+      ].join('\n')
+    : 'No AI usage recorded for this session yet.';
 
   const favFlagItems = [];
   const allFlags = [];
@@ -1141,7 +1190,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
 
           {/* Action buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
-            <button className="btn-secondary btn-compact" onClick={() => setShowNewSessionModal(true)} title="New Session">+</button>
+<button className="btn-secondary btn-compact" onClick={() => setShowNewSessionModal(true)} title="New Session">+</button>
             {currentSession !== 'default' && (
               <button className="btn-compact" onClick={deleteSession} title="Delete Session"
                 style={{ color: 'var(--accent-danger, #f85149)', border: '1px solid var(--accent-danger, #f85149)', borderRadius: '6px', background: 'transparent' }}>✕</button>
@@ -1152,6 +1201,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
             </button>
             <button className="btn-primary btn-compact" onClick={() => generateReport()}
               style={{ background: 'var(--accent-secondary)', color: '#fff' }}>Report</button>
+            <span className="mono ai-usage-pill" title={aiUsageTitle}>{aiUsageLabel}</span>
           </div>
 
           {/* Status dots */}
@@ -1227,7 +1277,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
       {showReportModal && (
         <div className="overlay">
           <div className="modal glass-panel report-modal">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
               <h3 className="dnd-title" style={{ fontSize: '1.2rem' }}>Helm&apos;s Watch Chronicle</h3>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <select value={reportFormat} onChange={(e) => onFormatChange(e.target.value)}
@@ -1251,6 +1301,29 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
                 </select>
                 <button className="btn-secondary" onClick={() => setShowReportModal(false)}>Close</button>
               </div>
+            </div>
+
+            {/* Analyst + Date row */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+              <label style={{ fontSize: '0.82rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Analyst *</label>
+              <input
+                type="text"
+                value={analystName}
+                onChange={e => { setAnalystName(e.target.value); setAnalystNameError(false); }}
+                placeholder="Your name (required)"
+                style={{
+                  flex: 1, minWidth: '160px', fontSize: '0.82rem', padding: '4px 10px',
+                  background: 'rgba(1,4,9,0.6)',
+                  border: `1px solid ${analystNameError ? 'var(--accent-danger, #f85149)' : 'var(--border-color)'}`,
+                  borderRadius: '4px', color: 'var(--text-main)', outline: 'none',
+                }}
+              />
+              <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                {new Date().toLocaleDateString()}
+              </span>
+              {analystNameError && (
+                <span style={{ fontSize: '0.78rem', color: 'var(--accent-danger, #f85149)' }}>required</span>
+              )}
             </div>
 
             {/* Visibility selector */}
@@ -1429,6 +1502,9 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
                 </button>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="btn-secondary" onClick={() => downloadMarkdown(true)} style={{ fontSize: '0.8rem' }}>
+                  [ Download Markdown ]
+                </button>
                 <button className="btn-secondary" onClick={downloadPdf} style={{ fontSize: '0.8rem' }}>
                   [ Download PDF ]
                 </button>
@@ -1496,6 +1572,16 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
           </div>
           <div className="mono" style={{ padding: '0.75rem', overflowY: 'auto', flex: 1, fontSize: '0.78rem', lineHeight: 1.6, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             {isCoaching && !coachResult ? <span style={{ color: 'var(--text-muted)' }}>Analyzing timeline...</span> : coachResult || <span style={{ color: 'var(--text-muted)' }}>Click Refresh to get a coaching suggestion.</span>}
+            {!isCoaching && coachResult && (() => {
+              const DANGEROUS = /rm\s+-rf|dd\s+if=|mkfs\.|:\s*\(\)\s*\{|>\s*\/dev\/sd[a-z]|chmod\s+[0-7]*7[0-7]*\s+\/|fork\s+bomb|shred\s+-/i;
+              const codeBlocks = [...coachResult.matchAll(/```[\w]*\n?([\s\S]*?)```/g)].map(m => m[1]);
+              const hasDanger = codeBlocks.some(b => DANGEROUS.test(b)) || DANGEROUS.test(coachResult);
+              return hasDanger ? (
+                <div style={{ marginTop: '0.6rem', padding: '0.4rem 0.65rem', background: 'rgba(210,153,34,0.12)', border: '1px solid rgba(210,153,34,0.4)', borderRadius: '5px', color: 'var(--accent-warning)', fontSize: '0.75rem' }}>
+                  ⚠ Potentially destructive command detected — verify carefully before running
+                </div>
+              ) : null;
+            })()}
           </div>
         </div>
       )}
@@ -1580,12 +1666,28 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
                     style={{ width: '100%', padding: '6px 10px', fontSize: '0.82rem', background: 'rgba(0,0,0,0.4)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', marginBottom: '0.4rem', boxSizing: 'border-box' }}
                   />
                   {!toolboxSearch && (
-                    <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                       <button className="btn-secondary" onClick={() => setExpandedCats(SUGGESTIONS.map(g => g.category))} style={{ fontSize: '0.8rem', padding: '3px 8px' }}>Expand All</button>
                       <button className="btn-secondary" onClick={() => setExpandedCats([])} style={{ fontSize: '0.8rem', padding: '3px 8px' }}>Collapse All</button>
+                      <button className="btn-secondary" onClick={() => setShowCatManager(v => !v)} style={{ fontSize: '0.8rem', padding: '3px 8px', marginLeft: 'auto', color: hiddenCats.size > 0 ? 'var(--accent-warning)' : undefined }} title="Show/hide categories">
+                        ⚙{hiddenCats.size > 0 ? ` (${hiddenCats.size})` : ''}
+                      </button>
+                    </div>
+                  )}
+                  {showCatManager && !toolboxSearch && (
+                    <div style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0.5rem 0.65rem', marginBottom: '0.5rem' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>Show / hide categories</div>
+                      {SUGGESTIONS.map(g => (
+                        <label key={g.category} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', cursor: 'pointer', padding: '2px 0', color: hiddenCats.has(g.category) ? 'var(--text-muted)' : 'var(--text-main)' }}>
+                          <input type="checkbox" checked={!hiddenCats.has(g.category)}
+                            onChange={() => setHiddenCats(prev => { const next = new Set(prev); next.has(g.category) ? next.delete(g.category) : next.add(g.category); return next; })} />
+                          {g.category}
+                        </label>
+                      ))}
                     </div>
                   )}
                   {SUGGESTIONS.map((group, i) => {
+                    if (hiddenCats.has(group.category) && !toolboxSearch) return null;
                     const q = toolboxSearch.toLowerCase();
                     const filteredItems = toolboxSearch
                       ? group.items.filter(item => item.label.toLowerCase().includes(q) || item.command.toLowerCase().includes(q))
@@ -1752,6 +1854,24 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
                   ✕
                 </button>
               )}
+              <button
+                onClick={collapseTimelineEvents}
+                className="mono btn-secondary"
+                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }}
+                title="Collapse timeline events"
+                disabled={timelineCollapsed}
+              >
+                Collapse All
+              </button>
+              <button
+                onClick={expandTimelineEvents}
+                className="mono btn-secondary"
+                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }}
+                title="Expand timeline events"
+                disabled={!timelineCollapsed}
+              >
+                Expand All
+              </button>
               <button onClick={exportTimeline} className="mono btn-secondary"
                 style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="Export timeline">
                 ↓
@@ -1760,6 +1880,25 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
                 style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="DB stats">
                 ⚙
               </button>
+              {selectedScreenshots.size > 0 && (
+                <>
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Delete ${selectedScreenshots.size} screenshot(s)?`)) return;
+                      for (const id of selectedScreenshots) {
+                        await apiFetch(`/api/timeline?sessionId=${currentSession}&id=${id}`, { method: 'DELETE' });
+                      }
+                      setTimeline(prev => prev.filter(e => !selectedScreenshots.has(e.id)));
+                      setSelectedScreenshots(new Set());
+                    }}
+                    className="mono"
+                    style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap', borderRadius: '4px', border: '1px solid var(--accent-danger)', color: 'var(--accent-danger)', background: 'transparent', cursor: 'pointer' }}>
+                    🗑 {selectedScreenshots.size}
+                  </button>
+                  <button onClick={() => setSelectedScreenshots(new Set())} className="mono btn-secondary"
+                    style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }}>✕</button>
+                </>
+              )}
             </div>
           </div>
 
@@ -1777,6 +1916,8 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
                 const isLong = outputLines.length > PREVIEW_LINES;
                 const isExpanded = expandedOutputs.has(event.id);
                 const visibleOutput = isExpanded ? event.output : outputLines.slice(0, PREVIEW_LINES).join('\n');
+                const isTimelineEventExpanded = !timelineCollapsed || expandedTimelineEvents.has(event.id);
+                const compactSummary = summarizeTimelineEvent(event);
                 const tags = (() => { try { return JSON.parse(event.tags || '[]'); } catch { return []; } })();
 
                 return (
@@ -1791,107 +1932,131 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
                       {tags.length > 0 && tags.map(t => (
                         <span key={t} style={{ fontSize: '0.74rem', padding: '2px 7px', borderRadius: '10px', background: 'rgba(88,166,255,0.12)', color: 'var(--accent-secondary)', border: '1px solid rgba(88,166,255,0.2)' }}>#{t}</span>
                       ))}
+                      {timelineCollapsed && (
+                        <button
+                          onClick={() => toggleTimelineEventDetails(event.id)}
+                          className="mono"
+                          style={{ marginLeft: 'auto', fontSize: '0.74rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(88,166,255,0.35)', color: 'var(--accent-secondary)', background: 'transparent', cursor: 'pointer', lineHeight: 1.4 }}
+                          title={isTimelineEventExpanded ? 'Hide event details' : 'Show event details'}
+                        >
+                          {isTimelineEventExpanded ? 'Hide' : 'Show'}
+                        </button>
+                      )}
                       <button
                         onClick={() => deleteEvent(event.id)}
                         title="Delete event"
                         className="mono"
-                        style={{ marginLeft: 'auto', fontSize: '0.78rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(248,81,73,0.3)', color: 'rgba(248,81,73,0.6)', background: 'transparent', cursor: 'pointer', lineHeight: 1.4 }}
+                        style={{ marginLeft: timelineCollapsed ? '0' : 'auto', fontSize: '0.78rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(248,81,73,0.3)', color: 'rgba(248,81,73,0.6)', background: 'transparent', cursor: 'pointer', lineHeight: 1.4 }}
                       >✕</button>
                     </div>
 
-                    {event.type === 'command' && (
+                    {timelineCollapsed && !isTimelineEventExpanded && (
+                      <div className="mono event-collapsed-summary">
+                        {compactSummary || '(empty event)'}
+                      </div>
+                    )}
+
+                    {isTimelineEventExpanded && (
                       <>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <div className="event-command" style={{ flex: 1 }}><span style={{ color: 'var(--accent-primary)' }}>$</span> {event.command}</div>
-                          {(event.status === 'failed' || event.status === 'error') && (
-                            <button onClick={() => { setInputType('command'); setInputVal(event.command); inputRef.current?.focus(); }}
-                              className="mono" style={{ fontSize: '0.8rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--accent-warning)', color: 'var(--accent-warning)', background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                              ↩ Retry
-                            </button>
-                          )}
-                        </div>
-                        {event.status !== 'running' && event.status !== 'queued' && event.output && (
+                        {event.type === 'command' && (
                           <>
-                            <div style={{ position: 'relative' }}>
-                              <pre className="event-output mono">{visibleOutput || 'No output.'}</pre>
-                              <button
-                                onClick={() => copyOutput(event.id, event.output)}
-                                title="Copy output"
-                                className="mono"
-                                style={{ position: 'absolute', top: '6px', right: '6px', fontSize: '0.72rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', color: copiedEventId === event.id ? 'var(--accent-primary)' : 'var(--text-muted)', background: 'rgba(1,4,9,0.85)', cursor: 'pointer', lineHeight: 1.5 }}
-                              >{copiedEventId === event.id ? '✓ Copied' : 'Copy'}</button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <div className="event-command" style={{ flex: 1 }}><span style={{ color: 'var(--accent-primary)' }}>$</span> {event.command}</div>
+                              {(event.status === 'failed' || event.status === 'error') && (
+                                <button onClick={() => { setInputType('command'); setInputVal(event.command); inputRef.current?.focus(); }}
+                                  className="mono" style={{ fontSize: '0.8rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--accent-warning)', color: 'var(--accent-warning)', background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                  ↩ Retry
+                                </button>
+                              )}
                             </div>
-                            {isLong && (
-                              <button onClick={() => toggleOutput(event.id)} className="mono"
-                                style={{ fontSize: '0.8rem', background: 'transparent', border: 'none', color: 'var(--accent-secondary)', cursor: 'pointer', padding: '3px 0', display: 'block' }}>
-                                {isExpanded ? `▲ Collapse` : `▼ Show more (${outputLines.length - PREVIEW_LINES} more lines)`}
-                              </button>
+                            {event.status !== 'running' && event.status !== 'queued' && event.output && (
+                              <>
+                                <div style={{ position: 'relative' }}>
+                                  <pre className="event-output mono">{visibleOutput || 'No output.'}</pre>
+                                  <button
+                                    onClick={() => copyOutput(event.id, event.output)}
+                                    title="Copy output"
+                                    className="mono"
+                                    style={{ position: 'absolute', top: '6px', right: '6px', fontSize: '0.72rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', color: copiedEventId === event.id ? 'var(--accent-primary)' : 'var(--text-muted)', background: 'rgba(1,4,9,0.85)', cursor: 'pointer', lineHeight: 1.5 }}
+                                  >{copiedEventId === event.id ? '✓ Copied' : 'Copy'}</button>
+                                </div>
+                                {isLong && (
+                                  <button onClick={() => toggleOutput(event.id)} className="mono"
+                                    style={{ fontSize: '0.8rem', background: 'transparent', border: 'none', color: 'var(--accent-secondary)', cursor: 'pointer', padding: '3px 0', display: 'block' }}>
+                                    {isExpanded ? `▲ Collapse` : `▼ Show more (${outputLines.length - PREVIEW_LINES} more lines)`}
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            {event.status !== 'running' && event.status !== 'queued' && !event.output && (
+                              <pre className="event-output mono">No output.</pre>
+                            )}
+                            {(event.status === 'running' || event.status === 'queued') && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--accent-warning)', fontSize: '0.85rem' }}>
+                                <span className="status-dot status-dot--running" />
+                                <span className="mono">
+                                  {`${Math.floor((Date.now() - new Date(event.timestamp).getTime()) / 1000)}s elapsed`}
+                                </span>
+                                <button
+                                  onClick={() => handleCancelCommand(event.id, event.session_id || currentSession)}
+                                  style={{ background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', color: '#ff5050', fontSize: '0.75rem', padding: '1px 6px', cursor: 'pointer' }}
+                                >✕ Cancel</button>
+                              </div>
                             )}
                           </>
                         )}
-                        {event.status !== 'running' && event.status !== 'queued' && !event.output && (
-                          <pre className="event-output mono">No output.</pre>
-                        )}
-                        {(event.status === 'running' || event.status === 'queued') && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--accent-warning)', fontSize: '0.85rem' }}>
-                            <span className="status-dot status-dot--running" />
-                            <span className="mono">
-                              {`${Math.floor((Date.now() - new Date(event.timestamp).getTime()) / 1000)}s elapsed`}
-                            </span>
-                            <button
-                              onClick={() => handleCancelCommand(event.id, event.session_id || currentSession)}
-                              style={{ background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', color: '#ff5050', fontSize: '0.75rem', padding: '1px 6px', cursor: 'pointer' }}
-                            >✕ Cancel</button>
+
+                        {event.type === 'note' && <div className="event-note">{event.content}</div>}
+
+                        {event.type === 'screenshot' && (
+                          <div className="event-screenshot">
+                            <label style={{ position: 'absolute', top: '0.5rem', right: '0.5rem', cursor: 'pointer', zIndex: 1 }} title="Select for bulk delete">
+                              <input type="checkbox" checked={selectedScreenshots.has(event.id)}
+                                onChange={() => setSelectedScreenshots(prev => { const next = new Set(prev); next.has(event.id) ? next.delete(event.id) : next.add(event.id); return next; })} />
+                            </label>
+                            <a href={`/api/media/${currentSession}/${event.filename}`} target="_blank" rel="noopener noreferrer">
+                              <Image
+                                src={`/api/media/${currentSession}/${event.filename}`}
+                                alt={event.name || 'Screenshot'}
+                                width={1200}
+                                height={675}
+                                unoptimized
+                                style={{ maxHeight: '180px', width: '100%', objectFit: 'contain', cursor: 'pointer' }}
+                              />
+                            </a>
+                            {editingScreenshot?.id === event.id ? (
+                              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', padding: '6px 0', flexWrap: 'wrap' }}>
+                                <input
+                                  value={editingScreenshot.name}
+                                  onChange={(e) => setEditingScreenshot(s => ({ ...s, name: e.target.value }))}
+                                  placeholder="Name"
+                                  className="mono"
+                                  style={{ fontSize: '0.8rem', padding: '3px 6px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', flex: '1', minWidth: '100px' }}
+                                />
+                                <input
+                                  value={editingScreenshot.tag}
+                                  onChange={(e) => setEditingScreenshot(s => ({ ...s, tag: e.target.value }))}
+                                  placeholder="Tag"
+                                  className="mono"
+                                  style={{ fontSize: '0.8rem', padding: '3px 6px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', width: '100px' }}
+                                />
+                                <button className="btn-primary" onClick={saveScreenshotEdit} style={{ fontSize: '0.75rem', padding: '3px 10px' }}>Save</button>
+                                <button className="btn-secondary" onClick={() => setEditingScreenshot(null)} style={{ fontSize: '0.75rem', padding: '3px 10px' }}>Cancel</button>
+                              </div>
+                            ) : (
+                              <div className="screenshot-info mono" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <span>{event.name}</span>
+                                {event.tag && <span style={{ color: 'var(--accent-primary)' }}>#{event.tag}</span>}
+                                <button
+                                  onClick={() => setEditingScreenshot({ id: event.id, name: event.name || '', tag: event.tag || '' })}
+                                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.8rem', padding: '0 2px' }}
+                                  title="Edit name / tag"
+                                >✏</button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </>
-                    )}
-
-                    {event.type === 'note' && <div className="event-note">{event.content}</div>}
-
-                    {event.type === 'screenshot' && (
-                      <div className="event-screenshot">
-                        <a href={`/api/media/${currentSession}/${event.filename}`} target="_blank" rel="noopener noreferrer">
-                          <Image
-                            src={`/api/media/${currentSession}/${event.filename}`}
-                            alt={event.name || 'Screenshot'}
-                            width={1200}
-                            height={675}
-                            unoptimized
-                            style={{ maxHeight: '180px', width: '100%', objectFit: 'contain', cursor: 'pointer' }}
-                          />
-                        </a>
-                        {editingScreenshot?.id === event.id ? (
-                          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', padding: '6px 0', flexWrap: 'wrap' }}>
-                            <input
-                              value={editingScreenshot.name}
-                              onChange={(e) => setEditingScreenshot(s => ({ ...s, name: e.target.value }))}
-                              placeholder="Name"
-                              className="mono"
-                              style={{ fontSize: '0.8rem', padding: '3px 6px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', flex: '1', minWidth: '100px' }}
-                            />
-                            <input
-                              value={editingScreenshot.tag}
-                              onChange={(e) => setEditingScreenshot(s => ({ ...s, tag: e.target.value }))}
-                              placeholder="Tag"
-                              className="mono"
-                              style={{ fontSize: '0.8rem', padding: '3px 6px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', width: '100px' }}
-                            />
-                            <button className="btn-primary" onClick={saveScreenshotEdit} style={{ fontSize: '0.75rem', padding: '3px 10px' }}>Save</button>
-                            <button className="btn-secondary" onClick={() => setEditingScreenshot(null)} style={{ fontSize: '0.75rem', padding: '3px 10px' }}>Cancel</button>
-                          </div>
-                        ) : (
-                          <div className="screenshot-info mono" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                            <span>{event.name}</span>
-                            {event.tag && <span style={{ color: 'var(--accent-primary)' }}>#{event.tag}</span>}
-                            <button
-                              onClick={() => setEditingScreenshot({ id: event.id, name: event.name || '', tag: event.tag || '' })}
-                              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.8rem', padding: '0 2px' }}
-                              title="Edit name / tag"
-                            >✏</button>
-                          </div>
-                        )}
-                      </div>
                     )}
                   </div>
                 );
@@ -1978,21 +2143,16 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
                     </optgroup>
                   </select>
                   <input
-                    type="text" value={inputTags} onChange={(e) => { setInputTags(e.target.value); setTagError(false); }}
-                    placeholder="tag (required)" className="mono"
+                    type="text" value={inputTags} onChange={(e) => setInputTags(e.target.value)}
+                    placeholder="tag (optional)" className="mono"
                     style={{
                       fontSize: '0.82rem', padding: '4px 10px',
                       background: 'rgba(1,4,9,0.6)',
-                      border: `1px solid ${tagError ? 'var(--accent-danger, #f85149)' : 'var(--border-color)'}`,
-                      color: tagError ? 'var(--accent-danger, #f85149)' : 'var(--text-muted)',
+                      border: `1px solid var(--border-color)`,
+                      color: 'var(--text-muted)',
                       borderRadius: '4px', width: '180px', outline: 'none',
                     }}
                   />
-                  {tagError && (
-                    <span style={{ fontSize: '0.78rem', color: 'var(--accent-danger, #f85149)', alignSelf: 'center' }}>
-                      ← required
-                    </span>
-                  )}
                   {inputTags && inputTags.split(',').map(t => t.trim()).filter(Boolean).map(t => (
                     <span key={t} className="mono" onClick={() => toggleTag(t)}
                       style={{ fontSize: '0.74rem', padding: '2px 7px', borderRadius: '10px',
@@ -2024,11 +2184,12 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
       </div>
 
       <style jsx>{`
-        .container { width: min(96vw, 1880px); margin: 0 auto; padding: clamp(12px, 1.2vw, 24px); height: calc(100vh - clamp(12px, 1.2vw, 24px)); display: flex; flex-direction: column; gap: 0.5rem; }
-.header { padding: 0.45rem 1.2rem; display: flex; flex-direction: row; align-items: center; gap: 0.6rem; }
+        .container { width: min(96vw, 1880px); margin: 0 auto; padding: clamp(12px, 1.2vw, 24px); height: calc(100vh - clamp(12px, 1.2vw, 24px) - var(--version-bar-height, 0px)); display: flex; flex-direction: column; gap: 0.5rem; }
+        .header { padding: 0.45rem 1.2rem; display: flex; flex-direction: row; align-items: center; gap: 0.6rem; }
 .header-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 0.45rem; flex-wrap: nowrap; min-height: unset; }
         .header-brand { font-size: 1.0rem; letter-spacing: 2px; white-space: nowrap; flex-shrink: 0; }
         .btn-compact { min-height: 30px !important; padding: 0.2rem 0.55rem !important; font-size: 0.8rem !important; }
+        .ai-usage-pill { font-size: 0.7rem; color: var(--text-muted); border: 1px solid rgba(88,166,255,0.25); border-radius: 999px; padding: 0.22rem 0.52rem; background: rgba(1,4,9,0.5); white-space: nowrap; }
         .objective-bar { padding: 0.7rem 1.2rem; font-size: 0.92rem; color: var(--text-muted); border-top: none; }
 
         .report-modal { width: 88%; max-width: 1240px; height: 88vh; padding: 1.25rem; gap: 0.75rem; overflow: hidden; }
@@ -2047,7 +2208,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
         .sidebar-rail { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.4rem; }
         .rail-btn { min-height: 38px; padding: 0.2rem; font-size: 0.85rem; }
         .sidebar-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.52); z-index: 1100; }
-        .sidebar.overlay { position: fixed; top: 14px; left: 14px; bottom: 14px; width: min(86vw, 420px); transform: translateX(calc(-100% - 24px)); transition: transform 0.22s ease; z-index: 1200; }
+        .sidebar.overlay { position: fixed; top: 14px; left: 14px; bottom: calc(14px + var(--version-bar-height, 0px)); width: min(86vw, 420px); transform: translateX(calc(-100% - 24px)); transition: transform 0.22s ease; z-index: 1200; }
         .sidebar.overlay.open { transform: translateX(0); }
         .sidebar-resizer { width: 100%; border-radius: 8px; cursor: col-resize; background: rgba(88, 166, 255, 0.09); border: 1px solid rgba(88, 166, 255, 0.2); }
         .sidebar-resizer.active { background: rgba(88, 166, 255, 0.2); border-color: rgba(88, 166, 255, 0.4); }
@@ -2065,7 +2226,8 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
         .timeline-feed { flex-grow: 1; overflow-y: auto; overflow-x: hidden; padding-right: 0.85rem; margin-bottom: 0; display: flex; flex-direction: column; gap: 1rem; min-height: 0; }
         .timeline-jump-controls { display: flex; flex-direction: column; justify-content: flex-end; gap: 0.35rem; padding-bottom: 0.2rem; }
         .timeline-jump-arrow { width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 1rem; line-height: 1; backdrop-filter: blur(3px); background: rgba(1,4,9,0.75); }
-        .timeline-event { background: rgba(1, 4, 9, 0.4); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.15rem; }
+        .timeline-event { background: rgba(1, 4, 9, 0.4); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.15rem; position: relative; }
+        .event-collapsed-summary { padding: 0.45rem 0.65rem; background: rgba(88,166,255,0.06); border-left: 2px solid rgba(88,166,255,0.45); border-radius: 4px; font-size: 0.82rem; color: var(--text-muted); white-space: pre-wrap; word-break: break-word; }
         .event-command { font-family: var(--font-mono); font-size: 1rem; margin-bottom: 0.5rem; color: #fff; }
         .event-output { background: rgba(1, 4, 9, 0.8); padding: 1rem; border-radius: 6px; font-size: 0.9rem; max-height: 320px; overflow-y: auto; border-left: 2px solid var(--accent-primary); white-space: pre-wrap; word-break: break-all; margin-bottom: 2px; }
         .event-note { font-size: 1.05rem; padding: 0.5rem 1rem; border-left: 3px solid var(--accent-secondary); background: rgba(88, 166, 255, 0.05); }
@@ -2103,6 +2265,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
           .timeline-feed { padding-right: 0.6rem; }
           .input-toolbar { gap: 0.4rem; margin-bottom: 0.35rem; }
           .input-extras { justify-content: flex-start; }
+          .ai-usage-pill { display: none; }
         }
 
         @media (max-width: 1280px) and (min-width: 1200px) {
@@ -2141,7 +2304,7 @@ const [timelineAtTop, setTimelineAtTop] = useState(true);
         }
 
         @media (max-width: 1199px) {
-          .container { width: min(98vw, 1880px); height: auto; min-height: 100vh; }
+          .container { width: min(98vw, 1880px); height: auto; min-height: calc(100vh - var(--version-bar-height, 0px)); }
           .layout { margin-top: 0.65rem; }
           .filter-row-secondary { gap: 0.4rem; }
           .report-modal { width: 96%; height: 92vh; padding: 0.9rem; }
