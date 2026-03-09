@@ -16,9 +16,30 @@ Retrieves all active sessions or a specific session by ID.
 Creates a new event in the session timeline.
 - **Payload**: `{ sessionId: string, type: 'note' | 'command' | 'screenshot', content?: string, command?: string, tags?: string[] }`
 
+### `GET /api/poc`
+Lists ordered Proof-of-Concept steps for a session (with hydrated linked events).
+- **Query Params**: `sessionId`
+- **Response**: `[{ id, stepOrder, title, goal, executionEventId, noteEventId, screenshotEventId, observation, executionEvent, noteEvent, screenshotEvent, ... }]`
+
+### `POST /api/poc`
+Creates a PoC step manually or from a timeline event.
+- **Payload (manual)**: `{ sessionId, title?, goal?, observation?, executionEventId?, noteEventId?, screenshotEventId? }`
+- **Payload (from timeline)**: `{ sessionId, sourceEventId, sourceEventType: 'command'|'note'|'screenshot', allowDuplicate?: boolean }`
+- **Response**: `{ step, created, duplicatePrevented }`
+
+### `PATCH /api/poc`
+Updates or reorders PoC steps.
+- **Payload (field update)**: `{ sessionId, id, title?, goal?, observation?, executionEventId?, noteEventId?, screenshotEventId? }`
+- **Payload (reorder)**: `{ sessionId, id, direction: 'up'|'down' }` or `{ sessionId, id, stepOrder: number }`
+
+### `DELETE /api/poc`
+Deletes one PoC step.
+- **Query Params**: `sessionId`, `id`
+
 ### `GET /api/report`
 Generates a report draft from timeline data.
 - **Query Params**: `sessionId`, `format` (`lab-report` | `executive-summary` | `technical-walkthrough` | `ctf-solution` | `bug-bounty` | `pentest`)
+- **PoC Integration**: `technical-walkthrough` and `pentest` include a generated `## Proof of Concept` section from `/api/poc` steps.
 
 ### `POST /api/writeup/enhance`
 Enhances writeup content with AI.

@@ -2,13 +2,14 @@ import { NextResponse } from 'next/server';
 import { getWriteup, saveWriteup } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { isApiTokenValid, isValidSessionId } from '@/lib/security';
+import { apiError } from '@/lib/api-error';
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const sessionId = searchParams.get('sessionId');
 
   if (!sessionId || !isValidSessionId(sessionId)) {
-    return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
+    return apiError('sessionId is required', 400);
   }
 
   const writeup = getWriteup(sessionId);
@@ -34,12 +35,12 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     if (!isApiTokenValid(request)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiError('Unauthorized', 401);
     }
     const { sessionId, content, contentJson = null, status, visibility } = await request.json();
 
     if (!sessionId || !isValidSessionId(sessionId)) {
-      return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
+      return apiError('sessionId is required', 400);
     }
 
     const writeup = saveWriteup(sessionId, content || '', status, visibility, contentJson);
@@ -50,6 +51,6 @@ export async function POST(request) {
     });
   } catch (error) {
     logger.error('Error in /api/writeup POST handler', error);
-    return NextResponse.json({ error: 'Failed to save writeup' }, { status: 500 });
+    return apiError('Failed to save writeup', 500);
   }
 }

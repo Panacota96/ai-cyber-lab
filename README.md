@@ -5,6 +5,9 @@ This repository contains the **AI Cyber Lab** project, centered around the devel
 
 The project integrates a professional Next.js-based web interface with a robust Linux security toolchain, persistent SQLite storage, and a multi-provider AI enhancement system.
 
+Current application release: **v0.2.0**  
+Release notes: [ctf-recon-tool/CHANGELOG.md](ctf-recon-tool/CHANGELOG.md)
+
 ---
 
 ## Repository Structure

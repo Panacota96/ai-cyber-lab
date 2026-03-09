@@ -1,30 +1,76 @@
 import { NextResponse } from 'next/server';
 import { exec } from 'child_process';
+import { z } from 'zod';
 import { updateTimelineEvent, addTimelineEvent } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { isApiTokenValid, isCommandExecutionEnabled, isValidSessionId } from '@/lib/security';
+import { rateLimit } from '@/lib/rate-limit';
+import { apiError } from '@/lib/api-error';
+
+const ExecuteSchema = z.object({
+  command: z.string().min(1).max(4000),
+  sessionId: z.string().optional().default('default'),
+  timeout: z.number().optional(),
+});
 
 // Module-level state — persists across requests in the same server process
 export const runningProcesses = new Map(); // eventId → ChildProcess
 export const cancelledEvents = new Set();  // eventIds cancelled by the user
 
+// F.2 — Host-protection blocklist (targets destructive actions on the host, not CTF targets)
+const CMD_MAX_LEN = 4000;
+const DEFAULT_BLOCKED_PATTERNS = [
+  /rm\s+-rf\s+\/(?:\s|$)/,
+  /dd\s+if=\/dev\/[sh]d/,
+  /mkfs\b/,
+  /:\(\)\s*\{/,
+  />\s*\/dev\/sda/,
+  /chmod\s+-R\s+777\s+\//,
+  /\b(shutdown|reboot|halt|poweroff)\b/,
+];
+
+function isCommandBlocked(cmd) {
+  const extra = (process.env.BLOCKED_COMMAND_PATTERNS || '')
+    .split(',').filter(Boolean).map(p => { try { return new RegExp(p, 'i'); } catch { return null; } }).filter(Boolean);
+  return [...DEFAULT_BLOCKED_PATTERNS, ...extra].some(re => re.test(cmd));
+}
+
 export async function POST(request) {
   try {
     if (!isApiTokenValid(request)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiError('Unauthorized', 401);
     }
     if (!isCommandExecutionEnabled()) {
-      return NextResponse.json({ error: 'Command execution is disabled in this environment.' }, { status: 403 });
+      return apiError('Command execution is disabled in this environment.', 403);
     }
 
-    const { command, sessionId = 'default', timeout = 120000 } = await request.json();
+    const parsed = ExecuteSchema.safeParse(await request.json());
+    if (!parsed.success) return apiError('Validation failed', 400, { details: parsed.error.errors });
+    const { command, sessionId, timeout = 120000 } = parsed.data;
     if (!isValidSessionId(sessionId)) {
-      return NextResponse.json({ error: 'Invalid sessionId' }, { status: 400 });
+      return apiError('Invalid sessionId', 400);
     }
 
-    if (!command || typeof command !== 'string' || !command.trim()) {
+    if (!command.trim()) {
       logger.warn('Execution attempted without command payload');
-      return NextResponse.json({ error: 'Command is required' }, { status: 400 });
+      return apiError('Command is required', 400);
+    }
+
+    // F.3 — Rate limiting
+    const rlKey = request.headers.get('x-api-token') || request.headers.get('x-forwarded-for') || 'global';
+    const rlLimit = Number(process.env.RATE_LIMIT_EXECUTE) || 60;
+    const rl = rateLimit(`execute:${rlKey}`, rlLimit);
+    if (!rl.ok) {
+      return apiError('Rate limit exceeded', 429, {}, { 'Retry-After': String(rl.retryAfter) });
+    }
+
+    // F.2 — Command length cap + host-protection blocklist
+    if (command.length > CMD_MAX_LEN) {
+      return apiError(`Command exceeds maximum length of ${CMD_MAX_LEN} characters`, 400);
+    }
+    if (isCommandBlocked(command)) {
+      logger.warn('SECURITY:BLOCKED_COMMAND', { sessionId, command: command.slice(0, 200) });
+      return apiError('Command blocked by security policy', 403);
     }
 
     const normalizedTimeout = Number.isFinite(Number(timeout))
@@ -41,7 +87,7 @@ export async function POST(request) {
       output: '',
     });
     if (!event) {
-      return NextResponse.json({ error: 'Failed to persist execution event' }, { status: 500 });
+      return apiError('Failed to persist execution event', 500);
     }
 
     // 2. Fire-and-forget — return running event to client without awaiting
@@ -50,7 +96,7 @@ export async function POST(request) {
     return NextResponse.json(event);
   } catch (error) {
     logger.error('API Error in /api/execute POST handler:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError('Internal server error', 500);
   }
 }
 

@@ -2,34 +2,35 @@ import { NextResponse } from 'next/server';
 import { getDbStats, clearLogs, vacuumDb } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { isAdminApiEnabled, isApiTokenValid } from '@/lib/security';
+import { apiError } from '@/lib/api-error';
 
 export async function GET(request) {
   try {
     if (!isApiTokenValid(request)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiError('Unauthorized', 401);
     }
     if (!isAdminApiEnabled()) {
-      return NextResponse.json({ error: 'Admin API disabled in this environment.' }, { status: 403 });
+      return apiError('Admin API disabled in this environment.', 403);
     }
     return NextResponse.json(getDbStats());
   } catch (error) {
     logger.error('Error fetching DB stats', error);
-    return NextResponse.json({ error: 'Failed to fetch stats' }, { status: 500 });
+    return apiError('Failed to fetch stats', 500);
   }
 }
 
 export async function POST(request) {
   try {
     if (!isApiTokenValid(request)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiError('Unauthorized', 401);
     }
     if (!isAdminApiEnabled()) {
-      return NextResponse.json({ error: 'Admin API disabled in this environment.' }, { status: 403 });
+      return apiError('Admin API disabled in this environment.', 403);
     }
 
     const { action } = await request.json();
     if (!['logs', 'vacuum', 'all'].includes(action)) {
-      return NextResponse.json({ error: 'Invalid action. Use: logs, vacuum, or all' }, { status: 400 });
+      return apiError('Invalid action. Use: logs, vacuum, or all', 400);
     }
     const result = {};
 
@@ -47,6 +48,6 @@ export async function POST(request) {
     return NextResponse.json({ success: true, ...result, stats: getDbStats() });
   } catch (error) {
     logger.error('Error in /api/admin/cleanup POST', error);
-    return NextResponse.json({ error: 'Cleanup failed' }, { status: 500 });
+    return apiError('Cleanup failed', 500);
   }
 }

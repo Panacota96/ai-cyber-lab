@@ -83,30 +83,30 @@ Main gaps: UX polish, operational robustness, reporting depth, test coverage, an
 | B.7 | Structured JSON logging mode | Ops | Medium |
 | A.1 | Mobile / tablet responsive layout | UX | High |
 | A.4 | Real-time fuzzy command suggestions | UX | Medium |
-| A.6 | Drag-and-drop report block reordering | UX | Low-Med |
-| A.10 | Timeline keyboard shortcuts (↑↓, Ctrl+F) | UX | Low |
+| A.6 | ~~Drag-and-drop report block reordering~~ ✓ DONE | UX | Low-Med |
+| A.10 | ~~Timeline keyboard shortcuts (↑↓, Ctrl+F)~~ ✓ DONE | UX | Low |
 | C.1 | ~~Command timeout UI + cancel button~~ ✓ DONE | Features | High |
 | C.4 | Session tagging + full-text search | Features | Medium |
-| C.8 | Output diff view for related commands | Features | Low-Med |
+| C.8 | ~~Output diff view for related commands~~ ✓ DONE | Features | Low-Med |
 | C.9 | Global search across all sessions | Features | Medium |
-| D.4 | PoC step recorder (screenshot + cmd + output) | Reporting | Medium |
+| D.4 | ~~PoC step recorder (screenshot + cmd + output)~~ ✓ DONE | Reporting | Medium |
 | D.5 | Multi-format export (DOCX, HTML, JSON) | Reporting | Medium |
-| D.6 | Report versioning + diff view | Reporting | Low-Med |
-| D.9 | CVSS score integration | Reporting | Low-Med |
+| D.6 | ~~Report versioning + diff view~~ ✓ DONE | Reporting | Low-Med |
+| D.9 | ~~CVSS score integration~~ ✓ DONE | Reporting | Low-Med |
 | E.1 | Coach skill difficulty levels (beginner/expert) | AI | Medium |
 | E.2 | Coach caching + context limit management | AI | Medium |
-| E.4 | Coach feedback loop (thumbs up/down) | AI | Low-Med |
-| E.6 | Multi-model coach comparison (parallel) | AI | Low-Med |
-| E.7 | Coach confidence scoring | AI | Low |
-| F.2 | Advanced command injection hardening | Security | High |
-| F.3 | Rate limiting on `/api/execute`, `/api/coach` | Security | Medium |
-| F.5 | Parameterized query audit in `updateTimelineEvent` | Security | High |
-| F.7 | API token rotation + expiration | Security | Medium |
-| F.9 | PDF export XSS protection audit | Security | Low |
-| G.3 | Logger module standardization | Code | Low-Med |
-| G.5 | Error handling consistency across endpoints | Code | Low-Med |
-| G.6 | API response schema validation (zod) | Code | Low-Med |
-| G.10 | OpenAPI/Swagger docs at `/api/docs` | Code | Low-Med |
+| E.4 | ~~Coach feedback loop (thumbs up/down)~~ ✓ DONE | AI | Low-Med |
+| E.6 | ~~Multi-model coach comparison (parallel)~~ ✓ DONE | AI | Low-Med |
+| E.7 | ~~Coach confidence scoring~~ ✓ DONE | AI | Low |
+| F.2 | ~~Advanced command injection hardening~~ ✓ DONE | Security | High |
+| F.3 | ~~Rate limiting on `/api/execute`, `/api/coach`~~ ✓ DONE | Security | Medium |
+| F.5 | ~~Parameterized query audit in `updateTimelineEvent`~~ ✓ DONE | Security | High |
+| F.7 | ~~API token rotation + expiration~~ ✓ DONE | Security | Medium |
+| F.9 | ~~PDF export XSS protection audit~~ ✓ DONE | Security | Low |
+| G.3 | ~~Logger module standardization~~ ✓ DONE | Code | Low-Med |
+| G.5 | ~~Error handling consistency across endpoints~~ ✓ DONE | Code | Low-Med |
+| G.6 | ~~API response schema validation (zod)~~ ✓ DONE | Code | Low-Med |
+| G.10 | ~~OpenAPI/Swagger docs at `/api/docs`~~ ✓ DONE | Code | Low-Med |
 
 ### Hard (1–3+ weeks each)
 

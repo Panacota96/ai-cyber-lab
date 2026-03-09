@@ -1,9 +1,20 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { z } from 'zod';
 import { getTimeline, getSession, recordAiUsage } from '@/lib/db';
 import { buildEstimatedUsage } from '@/lib/ai-cost';
 import { isApiTokenValid, isValidSessionId } from '@/lib/security';
+import { rateLimit } from '@/lib/rate-limit';
 import { config } from '@/lib/config';
+import { apiError } from '@/lib/api-error';
+
+const CoachSchema = z.object({
+  sessionId: z.string().min(1),
+  provider: z.enum(['claude', 'gemini', 'openai']).optional().default('claude'),
+  apiKey: z.string().optional().default(''),
+  skill: z.string().optional().default('enum-target'),
+  compare: z.boolean().optional().default(false),
+});
 
 const COACH_SYSTEM_PROMPT = `You are CTF-Coach, an expert CTF machine coach with a phase-driven methodology.
 You will receive a session timeline of executed commands, their outputs, notes, and screenshots.
@@ -34,7 +45,10 @@ Your response MUST follow this exact format:
 **Expected Signal**: <what output or result would confirm progress and what to do next>
 
 ---
-Be concise, direct, and technical. Never fabricate command outputs. If the session is empty, suggest starting with a full port scan.`;
+Be concise, direct, and technical. Never fabricate command outputs. If the session is empty, suggest starting with a full port scan.
+
+After your suggestion, add exactly one line at the very end of your response (after the closing ---) in this format:
+Confidence: <low|medium|high> — <one-sentence rationale>`;
 
 const COACH_SKILL_FOCUS = {
   'enum-target': `Focus on enumeration depth and breadth first.
@@ -169,11 +183,22 @@ async function* streamOpenAI(userMessage, apiKey, systemPrompt) {
 export async function POST(request) {
   try {
     if (!isApiTokenValid(request)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiError('Unauthorized', 401);
     }
-    const { sessionId, provider = 'claude', apiKey = '', skill = 'enum-target' } = await request.json();
-    if (!sessionId || !isValidSessionId(sessionId)) {
-      return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
+
+    // F.3 — Rate limiting
+    const rlKey = request.headers.get('x-api-token') || request.headers.get('x-forwarded-for') || 'global';
+    const rlLimit = Number(process.env.RATE_LIMIT_COACH) || 30;
+    const rl = rateLimit(`coach:${rlKey}`, rlLimit);
+    if (!rl.ok) {
+      return apiError('Rate limit exceeded', 429, {}, { 'Retry-After': String(rl.retryAfter) });
+    }
+
+    const parsed = CoachSchema.safeParse(await request.json());
+    if (!parsed.success) return apiError('Validation failed', 400, { details: parsed.error.errors });
+    const { sessionId, provider, apiKey, skill, compare } = parsed.data;
+    if (!isValidSessionId(sessionId)) {
+      return apiError('sessionId is required', 400);
     }
 
     const skillFocus = COACH_SKILL_FOCUS[skill] || COACH_SKILL_FOCUS['enum-target'];
@@ -230,15 +255,43 @@ Based on this timeline, what is the single best next action to take?`;
       }
     );
 
+    // E.6 — Multi-model compare mode: run all configured providers in parallel, return JSON
+    if (compare) {
+      const candidates = [];
+      const claudeKey = apiKey || config.anthropicApiKey;
+      if (claudeKey) candidates.push({ providerName: 'anthropic', model: COACH_MODELS.claude, fn: streamClaude, key: claudeKey });
+      const openaiKey = config.openaiApiKey;
+      if (openaiKey) candidates.push({ providerName: 'openai', model: COACH_MODELS.openai, fn: streamOpenAI, key: openaiKey });
+      const geminiKey = config.geminiApiKey;
+      if (geminiKey) candidates.push({ providerName: 'gemini', model: COACH_MODELS.gemini, fn: streamGemini, key: geminiKey });
+
+      if (candidates.length === 0) return apiError('No AI API key configured.', 503);
+
+      const collectAll = async ({ fn, key }) => {
+        let text = '';
+        for await (const chunk of fn(userMessage, key, systemPrompt)) text += chunk;
+        return text;
+      };
+
+      const results = await Promise.allSettled(candidates.map(c => collectAll(c)));
+      const responses = candidates.map((c, i) => ({
+        provider: c.providerName,
+        model: c.model,
+        content: results[i].status === 'fulfilled' ? results[i].value : `Error: ${results[i].reason?.message || 'failed'}`,
+        ok: results[i].status === 'fulfilled',
+      }));
+      return NextResponse.json({ responses });
+    }
+
     // Explicit provider override (manual selection from UI)
     if (provider === 'gemini') {
       const key = apiKey || config.geminiApiKey;
-      if (!key) return NextResponse.json({ error: 'Gemini API key required.' }, { status: 503 });
+      if (!key) return apiError('Gemini API key required.', 503);
       return createTrackedStream('gemini', COACH_MODELS.gemini, streamGemini, key);
     }
     if (provider === 'openai') {
       const key = apiKey || config.openaiApiKey;
-      if (!key) return NextResponse.json({ error: 'OpenAI API key required.' }, { status: 503 });
+      if (!key) return apiError('OpenAI API key required.', 503);
       return createTrackedStream('openai', COACH_MODELS.openai, streamOpenAI, key);
     }
 
@@ -258,10 +311,10 @@ Based on this timeline, what is the single best next action to take?`;
       return createTrackedStream('gemini', COACH_MODELS.gemini, streamGemini, geminiKey, { fallbackFrom: 'claude' });
     }
 
-    return NextResponse.json({ error: 'No AI API key configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_AI_API_KEY.' }, { status: 503 });
+    return apiError('No AI API key configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_AI_API_KEY.', 503);
 
   } catch (error) {
     console.error('[Coach Error]', error);
-    return NextResponse.json({ error: 'Coach failed', detail: error.message }, { status: 500 });
+    return apiError('Coach failed', 500, { detail: error.message });
   }
 }

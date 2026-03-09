@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/api-error';
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { buildEstimatedUsage, extractAnthropicUsage, extractGeminiUsage, extractOpenAiUsage } from '@/lib/ai-cost';
@@ -386,7 +387,7 @@ function safeRecordAiUsage({
 export async function POST(request) {
   try {
     if (!isApiTokenValid(request)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiError('Unauthorized', 401);
     }
     const {
       sessionId = 'default',
@@ -400,10 +401,10 @@ export async function POST(request) {
       evidenceContext = '',
     } = await request.json();
     if (!sessionId || !isValidSessionId(sessionId)) {
-      return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
+      return apiError('sessionId is required', 400);
     }
     if (!reportContent) {
-      return NextResponse.json({ error: 'reportContent is required' }, { status: 400 });
+      return apiError('reportContent is required', 400);
     }
 
     if (!REPORT_SKILLS.has(skill)) {
@@ -424,7 +425,7 @@ export async function POST(request) {
     );
     if (!key) {
       const providerName = provider === 'openai' ? 'OpenAI' : provider === 'gemini' ? 'Gemini' : 'Anthropic';
-      return NextResponse.json({ error: `${providerName} API key required.` }, { status: 503 });
+      return apiError(`${providerName} API key required.`, 503);
     }
 
     if (mode === 'section-patch') {
@@ -589,6 +590,6 @@ ${evidenceContext || '(none provided)'}`;
 
   } catch (error) {
     console.error('AI enhance failed:', error);
-    return NextResponse.json({ error: 'Enhancement failed' }, { status: 500 });
+    return apiError('Enhancement failed', 500);
   }
 }

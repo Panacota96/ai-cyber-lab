@@ -44,10 +44,14 @@ export function resolvePathWithin(baseDir, ...segments) {
 }
 
 export function isApiTokenValid(request) {
-  const configured = process.env.APP_API_TOKEN;
-  if (!configured) return true;
+  const tokens = [process.env.APP_API_TOKEN, process.env.APP_API_TOKEN_2].filter(Boolean);
+  if (tokens.length === 0) return true; // dev: no token configured
+
+  const expiresAt = process.env.APP_API_TOKEN_EXPIRES_AT;
+  if (expiresAt && Date.now() > new Date(expiresAt).getTime()) return false;
+
   const provided = request.headers.get('x-api-token') || '';
-  return constantTimeEquals(configured, provided);
+  return tokens.some(t => constantTimeEquals(t, provided));
 }
 
 export function isCommandExecutionEnabled() {

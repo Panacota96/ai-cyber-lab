@@ -11,6 +11,7 @@ import {
   sanitizeUploadFilename,
   requireSafeFilename,
 } from '@/lib/security';
+import { apiError } from '@/lib/api-error';
 
 function normalizeMime(mime) {
   const clean = String(mime || '').trim().toLowerCase();
@@ -22,7 +23,7 @@ function normalizeMime(mime) {
 export async function POST(request) {
   try {
     if (!isApiTokenValid(request)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiError('Unauthorized', 401);
     }
 
     const formData = await request.formData();
@@ -31,38 +32,32 @@ export async function POST(request) {
     const tag = String(formData.get('tag') || '').trim().slice(0, 64);
 
     if (!file) {
-      return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
+      return apiError('No file uploaded', 400);
     }
     if (!isValidSessionId(sessionId)) {
-      return NextResponse.json({ error: 'Invalid sessionId' }, { status: 400 });
+      return apiError('Invalid sessionId', 400);
     }
     if (typeof file.arrayBuffer !== 'function') {
-      return NextResponse.json({ error: 'Invalid file payload' }, { status: 400 });
+      return apiError('Invalid file payload', 400);
     }
 
     const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
     if (file.size > MAX_BYTES) {
-      return NextResponse.json({ error: 'File too large. Maximum size is 10MB.' }, { status: 413 });
+      return apiError('File too large. Maximum size is 10MB.', 413);
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const sniffed = sniffImage(buffer);
     if (!sniffed) {
-      return NextResponse.json(
-        { error: 'Unsupported image payload. Allowed formats: PNG, JPEG, GIF, WEBP.' },
-        { status: 415 }
-      );
+      return apiError('Unsupported image payload. Allowed formats: PNG, JPEG, GIF, WEBP.', 415);
     }
 
     const declaredMime = normalizeMime(String(file.type || '').split(';')[0]);
     if (declaredMime && !declaredMime.startsWith('image/')) {
-      return NextResponse.json({ error: 'Only image uploads are allowed.' }, { status: 415 });
+      return apiError('Only image uploads are allowed.', 415);
     }
     if (declaredMime && declaredMime !== normalizeMime(sniffed.mime)) {
-      return NextResponse.json(
-        { error: `Image MIME mismatch. Declared ${declaredMime}, detected ${sniffed.mime}.` },
-        { status: 415 }
-      );
+      return apiError(`Image MIME mismatch. Declared ${declaredMime}, detected ${sniffed.mime}.`, 415);
     }
 
     const safeOriginalName = sanitizeUploadFilename(file.name);
@@ -76,7 +71,6 @@ export async function POST(request) {
 
     fs.writeFileSync(filePath, buffer);
 
-    // Add screenshot event to timeline
     const event = addTimelineEvent(sessionId, {
       type: 'screenshot',
       filename: filename,
@@ -86,10 +80,9 @@ export async function POST(request) {
     });
 
     logger.info(`Screenshot uploaded: ${filename} for session ${sessionId}`);
-    
     return NextResponse.json(event);
   } catch (error) {
     logger.error('Error in /api/upload POST handler', error);
-    return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
+    return apiError('Upload failed', 500);
   }
 }

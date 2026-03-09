@@ -121,6 +121,33 @@ db.exec(`
     FOREIGN KEY (session_id) REFERENCES sessions(id)
   );
 
+  CREATE TABLE IF NOT EXISTS coach_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    response_hash TEXT NOT NULL,
+    rating INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS poc_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    step_order INTEGER NOT NULL,
+    title TEXT,
+    goal TEXT,
+    execution_event_id TEXT,
+    note_event_id TEXT,
+    screenshot_event_id TEXT,
+    observation TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_poc_steps_session_order
+    ON poc_steps(session_id, step_order);
+
   -- Ensure default session exists
   INSERT OR IGNORE INTO sessions (id, name) VALUES ('default', 'Default Session');
 `);
@@ -179,10 +206,12 @@ export function deleteSession(sessionId) {
     requireValidSessionId(sessionId);
     const deleteEvents = db.prepare('DELETE FROM timeline_events WHERE session_id = ?');
     const deleteWriteup = db.prepare('DELETE FROM writeups WHERE session_id = ?');
+    const deletePocSteps = db.prepare('DELETE FROM poc_steps WHERE session_id = ?');
     const deletesess = db.prepare('DELETE FROM sessions WHERE id = ?');
     db.transaction(() => {
       deleteEvents.run(sessionId);
       deleteWriteup.run(sessionId);
+      deletePocSteps.run(sessionId);
       deletesess.run(sessionId);
     })();
     const screenshotPath = resolvePathWithin(SESSIONS_DIR, sessionId);
@@ -254,13 +283,15 @@ export function getCommandHistory(sessionId, limit = 50) {
   }
 }
 
+const TIMELINE_UPDATABLE_COLS = new Set(['status', 'output', 'command', 'tags', 'name', 'filename', 'tag', 'content']);
+
 export function updateTimelineEvent(sessionId = 'default', id, updates) {
     try {
         requireValidSessionId(sessionId);
-        const keys = Object.keys(updates);
+        const keys = Object.keys(updates).filter(k => TIMELINE_UPDATABLE_COLS.has(k));
         if (keys.length === 0) return null;
         const setClause = keys.map(k => `${k} = ?`).join(', ');
-        const values = Object.values(updates);
+        const values = keys.map(k => updates[k]);
         
         const stmt = db.prepare(`UPDATE timeline_events SET ${setClause} WHERE id = ? AND session_id = ?`);
         const result = stmt.run(...values, id, sessionId);
@@ -280,6 +311,329 @@ export function deleteTimelineEvent(sessionId, eventId) {
     return result.changes > 0;
   } catch (error) {
     console.error(`Error deleting timeline event ${eventId}:`, error);
+    return false;
+  }
+}
+
+function normalizePocStepOrderTx(sessionId) {
+  const rows = db.prepare(`
+    SELECT id
+    FROM poc_steps
+    WHERE session_id = ?
+    ORDER BY step_order ASC, id ASC
+  `).all(sessionId);
+  const update = db.prepare(`
+    UPDATE poc_steps
+    SET step_order = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+  for (let i = 0; i < rows.length; i += 1) {
+    update.run(i + 1, rows[i].id);
+  }
+}
+
+function buildPocStepFromRow(row, eventMap) {
+  return {
+    id: Number(row.id),
+    sessionId: row.session_id,
+    stepOrder: Number(row.step_order),
+    title: row.title || '',
+    goal: row.goal || '',
+    executionEventId: row.execution_event_id || null,
+    noteEventId: row.note_event_id || null,
+    screenshotEventId: row.screenshot_event_id || null,
+    observation: row.observation || '',
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    executionEvent: row.execution_event_id ? (eventMap.get(row.execution_event_id) || null) : null,
+    noteEvent: row.note_event_id ? (eventMap.get(row.note_event_id) || null) : null,
+    screenshotEvent: row.screenshot_event_id ? (eventMap.get(row.screenshot_event_id) || null) : null,
+  };
+}
+
+function hydratePocRows(sessionId, rows) {
+  const eventIds = new Set();
+  for (const row of rows) {
+    if (row.execution_event_id) eventIds.add(row.execution_event_id);
+    if (row.note_event_id) eventIds.add(row.note_event_id);
+    if (row.screenshot_event_id) eventIds.add(row.screenshot_event_id);
+  }
+
+  const eventMap = new Map();
+  if (eventIds.size > 0) {
+    const ids = [...eventIds];
+    const placeholders = ids.map(() => '?').join(', ');
+    const eventRows = db.prepare(`
+      SELECT *
+      FROM timeline_events
+      WHERE session_id = ?
+        AND id IN (${placeholders})
+    `).all(sessionId, ...ids);
+    for (const eventRow of eventRows) {
+      eventMap.set(eventRow.id, eventRow);
+    }
+  }
+
+  return rows.map((row) => buildPocStepFromRow(row, eventMap));
+}
+
+function getHydratedPocStep(sessionId, id) {
+  const row = db.prepare(`
+    SELECT *
+    FROM poc_steps
+    WHERE session_id = ? AND id = ?
+  `).get(sessionId, id);
+  if (!row) return null;
+  return hydratePocRows(sessionId, [row])[0] || null;
+}
+
+function ensureTimelineEventInSession(sessionId, eventId) {
+  if (!eventId) return true;
+  const row = db.prepare(`
+    SELECT id
+    FROM timeline_events
+    WHERE session_id = ? AND id = ?
+  `).get(sessionId, eventId);
+  return Boolean(row?.id);
+}
+
+const POC_SOURCE_TO_COLUMN = {
+  command: 'execution_event_id',
+  note: 'note_event_id',
+  screenshot: 'screenshot_event_id',
+};
+
+export function listPocSteps(sessionId) {
+  try {
+    requireValidSessionId(sessionId);
+    const rows = db.prepare(`
+      SELECT *
+      FROM poc_steps
+      WHERE session_id = ?
+      ORDER BY step_order ASC, id ASC
+    `).all(sessionId);
+    return hydratePocRows(sessionId, rows);
+  } catch (error) {
+    console.error(`Error listing PoC steps for session ${sessionId}:`, error);
+    return [];
+  }
+}
+
+export function createPocStep(sessionId, input = {}) {
+  try {
+    requireValidSessionId(sessionId);
+
+    const sourceEventId = input?.sourceEventId || null;
+    const sourceEventType = input?.sourceEventType || null;
+    const sourceColumn = sourceEventType ? POC_SOURCE_TO_COLUMN[sourceEventType] : null;
+    const allowDuplicate = Boolean(input?.allowDuplicate);
+
+    const refs = {
+      executionEventId: input?.executionEventId || null,
+      noteEventId: input?.noteEventId || null,
+      screenshotEventId: input?.screenshotEventId || null,
+    };
+    if (sourceColumn && sourceEventId) {
+      if (sourceColumn === 'execution_event_id') refs.executionEventId = sourceEventId;
+      if (sourceColumn === 'note_event_id') refs.noteEventId = sourceEventId;
+      if (sourceColumn === 'screenshot_event_id') refs.screenshotEventId = sourceEventId;
+    }
+
+    const allRefs = [refs.executionEventId, refs.noteEventId, refs.screenshotEventId].filter(Boolean);
+    for (const refId of allRefs) {
+      if (!ensureTimelineEventInSession(sessionId, refId)) {
+        throw new Error(`Referenced timeline event not found in session: ${refId}`);
+      }
+    }
+
+    if (sourceColumn && sourceEventId && !allowDuplicate) {
+      const existing = db.prepare(`
+        SELECT id
+        FROM poc_steps
+        WHERE session_id = ? AND ${sourceColumn} = ?
+        ORDER BY step_order ASC, id ASC
+        LIMIT 1
+      `).get(sessionId, sourceEventId);
+      if (existing?.id) {
+        return {
+          step: getHydratedPocStep(sessionId, existing.id),
+          created: false,
+          duplicatePrevented: true,
+        };
+      }
+    }
+
+    const nextOrder = db.prepare(`
+      SELECT COALESCE(MAX(step_order), 0) + 1 AS next_order
+      FROM poc_steps
+      WHERE session_id = ?
+    `).get(sessionId)?.next_order || 1;
+
+    let defaultTitle = `Step ${nextOrder}`;
+    if (sourceEventId) {
+      const sourceEvent = db.prepare(`
+        SELECT type, command, content, name, filename
+        FROM timeline_events
+        WHERE session_id = ? AND id = ?
+      `).get(sessionId, sourceEventId);
+      if (sourceEvent?.type === 'command') defaultTitle = `Execute: ${sourceEvent.command || 'command'}`;
+      else if (sourceEvent?.type === 'note') defaultTitle = 'Observation Note';
+      else if (sourceEvent?.type === 'screenshot') defaultTitle = sourceEvent.name || sourceEvent.filename || 'Screenshot Evidence';
+    }
+
+    const title = String(input?.title || '').trim() || defaultTitle;
+    const goal = String(input?.goal || '').trim();
+    const observation = String(input?.observation || '').trim();
+
+    const insert = db.prepare(`
+      INSERT INTO poc_steps (
+        session_id,
+        step_order,
+        title,
+        goal,
+        execution_event_id,
+        note_event_id,
+        screenshot_event_id,
+        observation,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `);
+    const result = insert.run(
+      sessionId,
+      nextOrder,
+      title,
+      goal || null,
+      refs.executionEventId,
+      refs.noteEventId,
+      refs.screenshotEventId,
+      observation || null
+    );
+
+    return {
+      step: getHydratedPocStep(sessionId, result.lastInsertRowid),
+      created: true,
+      duplicatePrevented: false,
+    };
+  } catch (error) {
+    console.error(`Error creating PoC step for session ${sessionId}:`, error);
+    return null;
+  }
+}
+
+export function updatePocStep(sessionId, id, updates = {}) {
+  try {
+    requireValidSessionId(sessionId);
+
+    const mapped = {};
+    if (updates.title !== undefined) mapped.title = updates.title === null ? null : String(updates.title).trim();
+    if (updates.goal !== undefined) mapped.goal = updates.goal === null ? null : String(updates.goal).trim();
+    if (updates.observation !== undefined) mapped.observation = updates.observation === null ? null : String(updates.observation).trim();
+    if (updates.executionEventId !== undefined) mapped.execution_event_id = updates.executionEventId || null;
+    if (updates.noteEventId !== undefined) mapped.note_event_id = updates.noteEventId || null;
+    if (updates.screenshotEventId !== undefined) mapped.screenshot_event_id = updates.screenshotEventId || null;
+
+    const keys = Object.keys(mapped);
+    if (keys.length === 0) {
+      return getHydratedPocStep(sessionId, id);
+    }
+
+    for (const eventKey of ['execution_event_id', 'note_event_id', 'screenshot_event_id']) {
+      if (mapped[eventKey] && !ensureTimelineEventInSession(sessionId, mapped[eventKey])) {
+        throw new Error(`Referenced timeline event not found in session: ${mapped[eventKey]}`);
+      }
+    }
+
+    const setClause = keys.map((key) => `${key} = ?`).join(', ');
+    const values = keys.map((key) => mapped[key]);
+    const result = db.prepare(`
+      UPDATE poc_steps
+      SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+      WHERE session_id = ? AND id = ?
+    `).run(...values, sessionId, id);
+    if (result.changes === 0) return null;
+    return getHydratedPocStep(sessionId, id);
+  } catch (error) {
+    console.error(`Error updating PoC step ${id} for session ${sessionId}:`, error);
+    return null;
+  }
+}
+
+export function setPocStepOrder(sessionId, id, targetOrder) {
+  try {
+    requireValidSessionId(sessionId);
+    const normalizedTarget = Number(targetOrder);
+    if (!Number.isFinite(normalizedTarget)) return null;
+
+    const rows = db.prepare(`
+      SELECT id
+      FROM poc_steps
+      WHERE session_id = ?
+      ORDER BY step_order ASC, id ASC
+    `).all(sessionId);
+    const currentIndex = rows.findIndex((row) => Number(row.id) === Number(id));
+    if (currentIndex < 0) return null;
+
+    const clampedOrder = Math.max(1, Math.min(rows.length, Math.floor(normalizedTarget)));
+    if (currentIndex === clampedOrder - 1) {
+      return getHydratedPocStep(sessionId, id);
+    }
+
+    const reordered = rows.map((row) => row.id);
+    const [movedId] = reordered.splice(currentIndex, 1);
+    reordered.splice(clampedOrder - 1, 0, movedId);
+
+    db.transaction(() => {
+      const update = db.prepare(`
+        UPDATE poc_steps
+        SET step_order = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `);
+      for (let i = 0; i < reordered.length; i += 1) {
+        update.run(i + 1, reordered[i]);
+      }
+    })();
+
+    return getHydratedPocStep(sessionId, id);
+  } catch (error) {
+    console.error(`Error reordering PoC step ${id} for session ${sessionId}:`, error);
+    return null;
+  }
+}
+
+export function movePocStep(sessionId, id, direction = 'up') {
+  try {
+    requireValidSessionId(sessionId);
+    const step = db.prepare(`
+      SELECT id, step_order
+      FROM poc_steps
+      WHERE session_id = ? AND id = ?
+    `).get(sessionId, id);
+    if (!step) return null;
+    const delta = direction === 'down' ? 1 : -1;
+    return setPocStepOrder(sessionId, id, Number(step.step_order) + delta);
+  } catch (error) {
+    console.error(`Error moving PoC step ${id} for session ${sessionId}:`, error);
+    return null;
+  }
+}
+
+export function deletePocStep(sessionId, id) {
+  try {
+    requireValidSessionId(sessionId);
+    const result = db.transaction(() => {
+      const del = db.prepare(`
+        DELETE FROM poc_steps
+        WHERE session_id = ? AND id = ?
+      `).run(sessionId, id);
+      if (del.changes > 0) {
+        normalizePocStepOrderTx(sessionId);
+      }
+      return del;
+    })();
+    return result.changes > 0;
+  } catch (error) {
+    console.error(`Error deleting PoC step ${id} for session ${sessionId}:`, error);
     return false;
   }
 }
@@ -485,6 +839,7 @@ export function getDbStats() {
   return {
     sessions: db.prepare('SELECT COUNT(*) as n FROM sessions').get().n,
     events: db.prepare('SELECT COUNT(*) as n FROM timeline_events').get().n,
+    pocSteps: db.prepare('SELECT COUNT(*) as n FROM poc_steps').get().n,
     logs: db.prepare('SELECT COUNT(*) as n FROM app_logs').get().n,
     aiUsage: db.prepare('SELECT COUNT(*) as n FROM ai_usage').get().n,
     writeupVersions: db.prepare('SELECT COUNT(*) as n FROM writeup_versions').get().n,
@@ -497,4 +852,30 @@ export function clearLogs() {
 
 export function vacuumDb() {
   db.exec('VACUUM');
+}
+
+// ── Coach Feedback (E.4) ──────────────────────────────────────────────────────
+
+export function saveCoachFeedback(sessionId, responseHash, rating) {
+  try {
+    requireValidSessionId(sessionId);
+    // Upsert: if same hash already rated, update the rating
+    db.prepare(`
+      INSERT INTO coach_feedback (session_id, response_hash, rating)
+      VALUES (?, ?, ?)
+      ON CONFLICT DO NOTHING
+    `).run(sessionId, responseHash, rating);
+    // If a row already existed (ON CONFLICT did nothing), update it
+    db.prepare(`
+      UPDATE coach_feedback SET rating = ? WHERE session_id = ? AND response_hash = ?
+    `).run(rating, sessionId, responseHash);
+    return true;
+  } catch (e) { return false; }
+}
+
+export function getCoachFeedback(sessionId) {
+  try {
+    requireValidSessionId(sessionId);
+    return db.prepare('SELECT response_hash, rating FROM coach_feedback WHERE session_id = ?').all(sessionId);
+  } catch (e) { return []; }
 }

@@ -28,11 +28,14 @@ WORKDIR /app
 
 # Install dependencies
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 # Copy source code
 COPY . .
 
-# For development, run Next.js dev server
+# Build production artifacts
+RUN npm run build
+
+# Run Next.js production server
 EXPOSE 3000
-CMD ["npm", "run", "dev"]
+CMD ["npm", "run", "start"]

@@ -1,6 +1,8 @@
 # Helm's Paladin
 
 > A terminal-style CTF reconnaissance assistant — run recon commands, capture evidence, and generate AI-enhanced writeup reports, all from one browser tab.
+>
+> **Current Version:** `v0.2.0` • [Changelog](./CHANGELOG.md)
 
 ---
 

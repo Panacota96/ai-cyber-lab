@@ -4,6 +4,7 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { logger } from '@/lib/logger';
 import { isAdminApiEnabled, isApiTokenValid } from '@/lib/security';
+import { apiError } from '@/lib/api-error';
 
 const DB_PATH = path.join(process.cwd(), 'data', 'ctf_assistant.db');
 
@@ -24,21 +25,21 @@ export async function GET(request) {
 
   try {
     if (!isApiTokenValid(request)) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return apiError('Unauthorized', 401);
     }
     if (!isAdminApiEnabled()) {
-      return NextResponse.json({ error: 'Admin API disabled in this environment.' }, { status: 403 });
+      return apiError('Admin API disabled in this environment.', 403);
     }
 
     const { searchParams } = new URL(request.url);
     const format = (searchParams.get('format') || 'db').toLowerCase();
 
     if (!['db', 'sql'].includes(format)) {
-      return NextResponse.json({ error: 'Invalid format. Use: db or sql' }, { status: 400 });
+      return apiError('Invalid format. Use: db or sql', 400);
     }
 
     if (!fs.existsSync(DB_PATH)) {
-      return NextResponse.json({ error: 'Database file not found.' }, { status: 404 });
+      return apiError('Database file not found.', 404);
     }
 
     const baseName = `ctf_assistant-backup-${makeTimestamp()}`;
@@ -67,20 +68,14 @@ export async function GET(request) {
           format: 'sql',
           elapsedMs: Date.now() - startedAt,
         });
-        return NextResponse.json(
-          { error: 'SQL export unavailable: sqlite3 CLI is not installed in runtime environment.' },
-          { status: 501 }
-        );
+        return apiError('SQL export unavailable: sqlite3 CLI is not installed in runtime environment.', 501);
       }
       logger.error('DB SQL export failed', {
         format: 'sql',
         detail: dump.error.message,
         elapsedMs: Date.now() - startedAt,
       });
-      return NextResponse.json(
-        { error: 'SQL export failed', detail: dump.error.message },
-        { status: 500 }
-      );
+      return apiError('SQL export failed', 500, { detail: dump.error.message });
     }
 
     if (dump.status !== 0) {
@@ -91,10 +86,7 @@ export async function GET(request) {
         detail: stderr,
         elapsedMs: Date.now() - startedAt,
       });
-      return NextResponse.json(
-        { error: 'SQL export failed', detail: stderr },
-        { status: 500 }
-      );
+      return apiError('SQL export failed', 500, { detail: stderr });
     }
 
     const sqlDump = dump.stdout || '';
@@ -109,7 +101,7 @@ export async function GET(request) {
     });
   } catch (error) {
     logger.error('Error exporting DB backup', error);
-    return NextResponse.json({ error: 'Backup export failed' }, { status: 500 });
+    return apiError('Backup export failed', 500);
   }
 }
 

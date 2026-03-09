@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getWriteupVersions, getWriteupVersionForSession } from '@/lib/db';
 import { isValidSessionId } from '@/lib/security';
+import { apiError } from '@/lib/api-error';
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -8,12 +9,12 @@ export async function GET(request) {
   const versionId = searchParams.get('versionId');
 
   if (!sessionId || !isValidSessionId(sessionId)) {
-    return NextResponse.json({ error: 'sessionId required' }, { status: 400 });
+    return apiError('sessionId required', 400);
   }
 
   if (versionId) {
     const version = getWriteupVersionForSession(sessionId, versionId);
-    if (!version) return NextResponse.json({ error: 'Version not found' }, { status: 404 });
+    if (!version) return apiError('Version not found', 404);
     let contentJson = null;
     if (version.content_json) {
       try {

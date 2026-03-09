@@ -170,12 +170,79 @@ function newestTimelineIds(events, count = TIMELINE_AUTO_EXPAND_COUNT) {
     .map((event) => event.id);
 }
 
+// C.8 — LCS-based unified line diff. Returns array of {type:'equal'|'add'|'remove', text} objects.
+function computeLineDiff(a, b) {
+  const aLines = a.split('\n');
+  const bLines = b.split('\n');
+  const m = aLines.length, n = bLines.length;
+  // Build LCS table
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = aLines[i-1] === bLines[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1]);
+  // Backtrack
+  const ops = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && aLines[i-1] === bLines[j-1]) {
+      ops.push({ type: 'equal', text: aLines[i-1] }); i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
+      ops.push({ type: 'add', text: bLines[j-1] }); j--;
+    } else {
+      ops.push({ type: 'remove', text: aLines[i-1] }); i--;
+    }
+  }
+  return ops.reverse();
+}
+
 function summarizeTimelineEvent(event) {
   if (!event) return '';
   if (event.type === 'command') return event.command || '(command)';
   if (event.type === 'note') return (event.content || '').replace(/\s+/g, ' ').trim();
   if (event.type === 'screenshot') return event.name || event.filename || 'Screenshot';
   return event.content || '';
+}
+
+function clipPocOutput(text, max = 900) {
+  const value = String(text || '');
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}... [truncated]`;
+}
+
+function buildPocSectionMarkdown(sessionId, pocSteps = []) {
+  if (!Array.isArray(pocSteps) || pocSteps.length === 0) return '';
+
+  const sorted = [...pocSteps].sort((a, b) => Number(a.stepOrder || 0) - Number(b.stepOrder || 0));
+  let md = '## Proof of Concept\n\n';
+  sorted.forEach((step, idx) => {
+    const title = step.title || `Step ${idx + 1}`;
+    const execution = step.executionEvent || null;
+    const note = step.noteEvent || null;
+    const screenshot = step.screenshotEvent || null;
+    md += `### ${idx + 1}. ${title}\n\n`;
+    md += `**Goal:** ${step.goal || '_Not specified_'}\n\n`;
+    if (execution) {
+      md += `**Execution:** \`${execution.command || '(command unavailable)'}\`\n\n`;
+      if (execution.output) {
+        md += `\`\`\`text\n${clipPocOutput(execution.output, 1000)}\n\`\`\`\n\n`;
+      }
+    } else if (step.executionEventId) {
+      md += `**Execution:** _Linked command not found (${step.executionEventId})_\n\n`;
+    } else {
+      md += `**Execution:** _Not linked_\n\n`;
+    }
+    if (screenshot?.filename) {
+      md += `**Evidence:** ${screenshot.name || 'Screenshot'}\n\n`;
+      md += `![${screenshot.name || 'Screenshot'}](/api/media/${sessionId}/${screenshot.filename})\n\n`;
+    } else if (step.screenshotEventId) {
+      md += `**Evidence:** _Linked screenshot not found (${step.screenshotEventId})_\n\n`;
+    } else {
+      md += `**Evidence:** _Not linked_\n\n`;
+    }
+    const observation = step.observation || note?.content || '';
+    md += `**Observation:** ${observation || '_Not specified_'}\n\n`;
+  });
+  return md.trim();
 }
 
 export default function Home() {
@@ -225,6 +292,10 @@ export default function Home() {
   const [coachResult, setCoachResult] = useState('');
   const [isCoaching, setIsCoaching] = useState(false);
   const [coachSkill, setCoachSkill] = useState('enum-target');
+  // E.6 — Multi-model compare mode
+  const [coachCompareMode, setCoachCompareMode] = useState(false);
+  const [coachCompareResults, setCoachCompareResults] = useState([]);
+  const [coachCompareTab, setCoachCompareTab] = useState(0);
 
   // Timeline filter state — persisted to localStorage
   const [filterType, setFilterType] = useState(() => {
@@ -276,6 +347,8 @@ export default function Home() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportFormat, setReportFormat] = useState('technical-walkthrough');
   const [pdfStyle, setPdfStyle] = useState('terminal-dark');
+  const [pocSteps, setPocSteps] = useState([]);
+  const [pocBusyEventId, setPocBusyEventId] = useState(null);
   const [writeupVisibility, setWriteupVisibility] = useState('draft');
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [aiProvider, setAiProvider] = useState('claude');
@@ -294,12 +367,23 @@ export default function Home() {
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [writeupVersions, setWriteupVersions] = useState([]);
 
+  // D.9 — CVSS score for note input
+  const [cvssScore, setCvssScore] = useState('');
+
+  // E.4 — Coach feedback (hash → rating)
+  const [coachFeedbackRatings, setCoachFeedbackRatings] = useState({});
+
+  // C.8 — Output diff view
+  const [compareEventIds, setCompareEventIds] = useState(new Set());
+  const [showDiffModal, setShowDiffModal] = useState(false);
+
   const bottomRef = useRef(null);
   const timelineFeedRef = useRef(null);
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
   const resizeStateRef = useRef({ startX: 0, startWidth: SIDEBAR_DEFAULT_WIDTH });
   const timelineSeenIdsRef = useRef(new Set());
+  const filterKeywordRef = useRef(null);
 
   const apiFetch = useCallback((url, options = {}) => {
     const headers = new Headers(options.headers || {});
@@ -394,8 +478,23 @@ export default function Home() {
     }
   }, [currentSession, apiFetch]);
 
+  const fetchPocSteps = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/api/poc?sessionId=${currentSession}`);
+      if (!res.ok) {
+        setPocSteps([]);
+        return;
+      }
+      const data = await res.json();
+      setPocSteps(Array.isArray(data) ? data : []);
+    } catch (_) {
+      setPocSteps([]);
+    }
+  }, [currentSession, apiFetch]);
+
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
   useEffect(() => { fetchAiUsage(); }, [fetchAiUsage]);
+  useEffect(() => { fetchPocSteps(); }, [fetchPocSteps]);
 
   useEffect(() => {
     fetchTimeline();
@@ -406,6 +505,7 @@ export default function Home() {
   useEffect(() => {
     timelineSeenIdsRef.current = new Set();
     setExpandedTimelineEvents(new Set());
+    setPocSteps([]);
   }, [currentSession]);
 
   const fetchHealth = useCallback(async () => {
@@ -498,6 +598,40 @@ export default function Home() {
     } catch (_) { /* localStorage unavailable */ }
   }, [filterType, filterStatus, filterKeyword, filterTag]);
 
+  // A.10 — Keyboard shortcuts
+  useEffect(() => {
+    const isInputFocused = () => {
+      const el = document.activeElement;
+      return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+    };
+    const onKeyDown = (e) => {
+      // Ctrl/Cmd+F → focus search filter
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        filterKeywordRef.current?.focus();
+        return;
+      }
+      // Escape → clear filters and blur
+      if (e.key === 'Escape') {
+        setFilterType('all');
+        setFilterStatus('all');
+        setFilterKeyword('');
+        setFilterTag('');
+        document.activeElement?.blur();
+        return;
+      }
+      // J/K vim-style scroll (only when no input focused)
+      if (!isInputFocused()) {
+        const feed = timelineFeedRef.current;
+        if (!feed) return;
+        if (e.key === 'j') { feed.scrollTop += 80; }
+        if (e.key === 'k') { feed.scrollTop -= 80; }
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (viewportWidth < 1200) {
       setSidebarDrawerOpen(false);
@@ -516,8 +650,10 @@ export default function Home() {
     setIsLoading(true);
     const val = inputVal;
     const tags = inputTags.split(',').map(t => t.trim()).filter(Boolean);
+    const cvss = cvssScore.trim();
     setInputVal('');
     setInputTags('');
+    setCvssScore('');
     setHistoryIdx(-1);
     if (inputType === 'command') {
       setInputHistory(prev => [val, ...prev.slice(0, 49)]);
@@ -538,7 +674,7 @@ export default function Home() {
         const res = await apiFetch('/api/timeline', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'note', content: val, sessionId: currentSession, tags })
+          body: JSON.stringify({ type: 'note', content: cvss ? `CVSS:${cvss} | ${val}` : val, sessionId: currentSession, tags })
         });
         const newEvent = await res.json();
         setTimeline(prev => [...prev, newEvent]);
@@ -643,6 +779,127 @@ export default function Home() {
     finally { setEditingScreenshot(null); }
   };
 
+  // ── PoC step handlers ─────────────────────────────────────────────────────
+
+  const upsertPocStepLocal = useCallback((step) => {
+    if (!step?.id) return;
+    setPocSteps((prev) => {
+      const next = [...prev.filter((item) => item.id !== step.id), step];
+      next.sort((a, b) => Number(a.stepOrder || 0) - Number(b.stepOrder || 0));
+      return next;
+    });
+  }, []);
+
+  const updatePocFieldLocal = (stepId, field, value) => {
+    setPocSteps((prev) => prev.map((step) => (
+      step.id === stepId ? { ...step, [field]: value } : step
+    )));
+  };
+
+  const addEventToPoc = async (event, allowDuplicate = false) => {
+    if (!event?.id || !['command', 'note', 'screenshot'].includes(event.type)) return;
+    setPocBusyEventId(event.id);
+    try {
+      const res = await apiFetch('/api/poc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          sourceEventId: event.id,
+          sourceEventType: event.type,
+          allowDuplicate,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to add event to PoC');
+        return;
+      }
+      if (data?.step) {
+        upsertPocStepLocal(data.step);
+      }
+    } catch (error) {
+      console.error('Failed to add PoC step', error);
+    } finally {
+      setPocBusyEventId(null);
+    }
+  };
+
+  const addManualPocStep = async () => {
+    try {
+      const res = await apiFetch('/api/poc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          title: `Step ${pocSteps.length + 1}`,
+          goal: '',
+          observation: '',
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to create PoC step');
+        return;
+      }
+      if (data?.step) upsertPocStepLocal(data.step);
+    } catch (error) {
+      console.error('Failed to create PoC step', error);
+    }
+  };
+
+  const persistPocStepUpdate = async (id, patch) => {
+    try {
+      const res = await apiFetch('/api/poc', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, id, ...patch }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to update PoC step');
+        return;
+      }
+      if (data?.step) upsertPocStepLocal(data.step);
+    } catch (error) {
+      console.error('Failed to update PoC step', error);
+    }
+  };
+
+  const movePocStepEntry = async (id, direction) => {
+    try {
+      const res = await apiFetch('/api/poc', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, id, direction }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to reorder PoC step');
+        return;
+      }
+      await fetchPocSteps();
+    } catch (error) {
+      console.error('Failed to reorder PoC step', error);
+    }
+  };
+
+  const deletePocStepEntry = async (id) => {
+    if (!confirm('Delete this PoC step?')) return;
+    try {
+      const res = await apiFetch(`/api/poc?sessionId=${currentSession}&id=${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to delete PoC step');
+        return;
+      }
+      setPocSteps((prev) => prev.filter((step) => step.id !== id));
+      fetchPocSteps();
+    } catch (error) {
+      console.error('Failed to delete PoC step', error);
+    }
+  };
+
   // ── Report handlers ───────────────────────────────────────────────────────
 
   const applyReportBlocks = useCallback((nextBlocks) => {
@@ -661,6 +918,21 @@ export default function Home() {
     }
     applyReportBlocks(markdownToReportBlocks(content));
   }, [applyReportBlocks]);
+
+  const getReportMarkdownWithPoc = useCallback((blocks = reportBlocks) => {
+    const baseMarkdown = reportBlocksToMarkdown(blocks).trim();
+    const formatNeedsPoc = reportFormat === 'technical-walkthrough' || reportFormat === 'pentest';
+    if (!formatNeedsPoc || pocSteps.length === 0) {
+      return baseMarkdown;
+    }
+    if (/^##\s+Proof of Concept\b/im.test(baseMarkdown)) {
+      return baseMarkdown;
+    }
+    const pocSection = buildPocSectionMarkdown(currentSession, pocSteps);
+    if (!pocSection) return baseMarkdown;
+    if (!baseMarkdown) return pocSection;
+    return `${baseMarkdown}\n\n${pocSection}`;
+  }, [reportBlocks, reportFormat, pocSteps, currentSession]);
 
   const addReportBlock = (blockType = 'section') => {
     let newBlock = newSectionBlock('New Section', '');
@@ -698,6 +970,7 @@ export default function Home() {
     setAnalystNameError(false);
     try {
       setIsLoading(true);
+      await fetchPocSteps();
       const existingRes = await apiFetch(`/api/writeup?sessionId=${currentSession}`);
       const existing = await existingRes.json().catch(() => null);
       const hasExisting = Boolean(
@@ -739,7 +1012,7 @@ export default function Home() {
   const saveReport = async () => {
     try {
       setIsLoading(true);
-      const markdown = reportBlocksToMarkdown(reportBlocks);
+      const markdown = getReportMarkdownWithPoc(reportBlocks);
       await apiFetch('/api/writeup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -762,7 +1035,7 @@ export default function Home() {
     if (!reportDraft && reportBlocks.length === 0) return;
     setIsEnhancing(true);
     try {
-      const markdown = reportBlocksToMarkdown(reportBlocks);
+      const markdown = getReportMarkdownWithPoc(reportBlocks);
       const evidenceContext = timeline.slice(-60).map((e) => {
         if (e.type === 'command') return `[${e.timestamp}] COMMAND ${e.status || ''}: ${e.command || ''}`;
         if (e.type === 'note') return `[${e.timestamp}] NOTE: ${e.content || ''}`;
@@ -829,8 +1102,28 @@ export default function Home() {
   const runCoach = async () => {
     setIsCoaching(true);
     setCoachResult('');
+    setCoachCompareResults([]);
     setShowCoachPanel(true);
     try {
+      // E.6 — Compare mode: non-streaming, all providers in parallel
+      if (coachCompareMode) {
+        const res = await apiFetch('/api/coach', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: currentSession, provider: aiProvider, apiKey: apiKeys[aiProvider] || '', skill: coachSkill, compare: true }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          setCoachResult(`Error: ${err.error || 'Coach unavailable.'}`);
+          return;
+        }
+        const { responses } = await res.json();
+        setCoachCompareResults(responses || []);
+        setCoachCompareTab(0);
+        return;
+      }
+
+      // Normal streaming mode
       const res = await apiFetch('/api/coach', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -858,6 +1151,31 @@ export default function Home() {
     }
   };
 
+  // E.4 — Submit coach feedback (thumbs up/down)
+  const submitCoachFeedback = async (responseText, rating) => {
+    if (!responseText) return;
+    try {
+      const encoder = new TextEncoder();
+      const buf = await crypto.subtle.digest('SHA-256', encoder.encode(responseText));
+      const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+      setCoachFeedbackRatings(prev => ({ ...prev, [hash]: rating }));
+      await apiFetch('/api/coach/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, hash, rating }),
+      });
+    } catch (_) { /* silently ignore */ }
+  };
+
+  // C.8 — Toggle a command event into the compare selection (max 2)
+  const toggleCompareEvent = (id) => {
+    setCompareEventIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); } else if (next.size < 2) { next.add(id); }
+      return next;
+    });
+  };
+
   const downloadMarkdown = async (inlineImages = true) => {
     try {
       const res = await apiFetch('/api/export/markdown', {
@@ -866,6 +1184,7 @@ export default function Home() {
         body: JSON.stringify({
           sessionId: currentSession,
           format: reportFormat,
+          analystName: analystName.trim() || 'Unknown',
           inlineImages,
         }),
       });
@@ -889,7 +1208,7 @@ export default function Home() {
 
   const downloadPdf = async () => {
     try {
-      const markdown = reportBlocksToMarkdown(reportBlocks);
+      const markdown = getReportMarkdownWithPoc(reportBlocks);
       const res = await apiFetch('/api/export/pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1135,6 +1454,34 @@ export default function Home() {
       url: `/api/media/${currentSession}/${e.filename}`,
     }));
 
+  const pocLinkedEventIds = new Set();
+  pocSteps.forEach((step) => {
+    if (step.executionEventId) pocLinkedEventIds.add(step.executionEventId);
+    if (step.noteEventId) pocLinkedEventIds.add(step.noteEventId);
+    if (step.screenshotEventId) pocLinkedEventIds.add(step.screenshotEventId);
+  });
+
+  const pocCommandOptions = timeline
+    .filter((event) => event.type === 'command')
+    .map((event) => ({
+      id: event.id,
+      label: event.command || '(command)',
+    }));
+
+  const pocNoteOptions = timeline
+    .filter((event) => event.type === 'note')
+    .map((event) => ({
+      id: event.id,
+      label: summarizeTimelineEvent(event) || '(note)',
+    }));
+
+  const pocScreenshotOptions = timeline
+    .filter((event) => event.type === 'screenshot')
+    .map((event) => ({
+      id: event.id,
+      label: event.name || event.filename || 'Screenshot',
+    }));
+
   const aiTotals = aiUsageSummary?.totals || null;
   const aiUsageLabel = aiTotals
     ? `AI $${Number(aiTotals.estimatedCostUsd || 0).toFixed(4)} · ${aiTotals.calls || 0} calls · ${aiTotals.totalTokens || 0} tok`
@@ -1356,7 +1703,20 @@ export default function Home() {
               )}
 
               {reportBlocks.map((block, idx) => (
-                <div key={block.id} className="report-block-card">
+                <div key={block.id} className="report-block-card"
+                  draggable
+                  onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(idx)); }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                    if (isNaN(fromIdx) || fromIdx === idx) return;
+                    const next = [...reportBlocks];
+                    const [moved] = next.splice(fromIdx, 1);
+                    next.splice(idx, 0, moved);
+                    applyReportBlocks(next);
+                  }}
+                  style={{ cursor: 'grab' }}>
                   <div className="report-block-header">
                     <label className="mono" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', color: selectedReportBlocks.includes(block.id) ? 'var(--accent-secondary)' : 'var(--text-muted)' }}>
                       <input
@@ -1466,6 +1826,132 @@ export default function Home() {
               ))}
             </div>
 
+            <div className="poc-editor">
+              <div className="poc-editor-header">
+                <span className="mono" style={{ fontSize: '0.8rem', color: 'var(--accent-secondary)' }}>PoC Steps</span>
+                <button
+                  type="button"
+                  className="btn-secondary mono"
+                  style={{ fontSize: '0.75rem', padding: '3px 9px' }}
+                  onClick={addManualPocStep}
+                >
+                  + Step
+                </button>
+              </div>
+              {pocSteps.length === 0 && (
+                <div className="mono" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', border: '1px dashed var(--border-color)', borderRadius: '6px', padding: '0.65rem' }}>
+                  Add timeline evidence using <strong>Add to PoC</strong>, or create a manual step here.
+                </div>
+              )}
+              {pocSteps.map((step, idx) => (
+                <div key={step.id} className="poc-step-card">
+                  <div className="poc-step-header">
+                    <span className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Step {idx + 1}</span>
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.3rem' }}>
+                      <button
+                        type="button"
+                        className="btn-secondary mono"
+                        style={{ fontSize: '0.72rem', padding: '2px 7px' }}
+                        disabled={idx === 0}
+                        onClick={() => movePocStepEntry(step.id, 'up')}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary mono"
+                        style={{ fontSize: '0.72rem', padding: '2px 7px' }}
+                        disabled={idx === pocSteps.length - 1}
+                        onClick={() => movePocStepEntry(step.id, 'down')}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary mono"
+                        style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--accent-danger)', borderColor: 'var(--accent-danger)' }}
+                        onClick={() => deletePocStepEntry(step.id)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+
+                  <input
+                    value={step.title || ''}
+                    onChange={(e) => updatePocFieldLocal(step.id, 'title', e.target.value)}
+                    onBlur={(e) => persistPocStepUpdate(step.id, { title: e.target.value })}
+                    className="mono"
+                    placeholder="Step title"
+                    style={{ fontSize: '0.8rem', marginBottom: '0.4rem' }}
+                  />
+
+                  <input
+                    value={step.goal || ''}
+                    onChange={(e) => updatePocFieldLocal(step.id, 'goal', e.target.value)}
+                    onBlur={(e) => persistPocStepUpdate(step.id, { goal: e.target.value })}
+                    className="mono"
+                    placeholder="Goal"
+                    style={{ fontSize: '0.8rem', marginBottom: '0.4rem' }}
+                  />
+
+                  <div className="poc-step-links">
+                    <select
+                      value={step.executionEventId || ''}
+                      onChange={(e) => {
+                        const value = e.target.value || null;
+                        updatePocFieldLocal(step.id, 'executionEventId', value);
+                        persistPocStepUpdate(step.id, { executionEventId: value });
+                      }}
+                      style={{ fontSize: '0.76rem', padding: '4px 8px' }}
+                    >
+                      <option value="">Execution command...</option>
+                      {pocCommandOptions.map((option) => (
+                        <option key={option.id} value={option.id}>{option.label}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={step.noteEventId || ''}
+                      onChange={(e) => {
+                        const value = e.target.value || null;
+                        updatePocFieldLocal(step.id, 'noteEventId', value);
+                        persistPocStepUpdate(step.id, { noteEventId: value });
+                      }}
+                      style={{ fontSize: '0.76rem', padding: '4px 8px' }}
+                    >
+                      <option value="">Observation note...</option>
+                      {pocNoteOptions.map((option) => (
+                        <option key={option.id} value={option.id}>{option.label}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={step.screenshotEventId || ''}
+                      onChange={(e) => {
+                        const value = e.target.value || null;
+                        updatePocFieldLocal(step.id, 'screenshotEventId', value);
+                        persistPocStepUpdate(step.id, { screenshotEventId: value });
+                      }}
+                      style={{ fontSize: '0.76rem', padding: '4px 8px' }}
+                    >
+                      <option value="">Screenshot evidence...</option>
+                      {pocScreenshotOptions.map((option) => (
+                        <option key={option.id} value={option.id}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <textarea
+                    value={step.observation || ''}
+                    onChange={(e) => updatePocFieldLocal(step.id, 'observation', e.target.value)}
+                    onBlur={(e) => persistPocStepUpdate(step.id, { observation: e.target.value })}
+                    className="mono"
+                    placeholder="Observation"
+                    style={{ minHeight: '72px', resize: 'vertical', fontSize: '0.8rem', lineHeight: 1.45 }}
+                  />
+                </div>
+              ))}
+            </div>
+
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'space-between', marginTop: '0.75rem', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button className="btn-secondary" onClick={loadVersionHistory} style={{ fontSize: '0.8rem' }}>
@@ -1543,6 +2029,45 @@ export default function Home() {
         </div>
       )}
 
+      {/* ── C.8 — Output Diff Modal ───────────────────────────────────────── */}
+      {showDiffModal && (() => {
+        const ids = [...compareEventIds];
+        const evA = timeline.find(e => e.id === ids[0]);
+        const evB = timeline.find(e => e.id === ids[1]);
+        if (!evA || !evB) return null;
+        const diff = computeLineDiff(evA.output || '', evB.output || '');
+        const hasChanges = diff.some(d => d.type !== 'equal');
+        return (
+          <div className="overlay" onClick={() => setShowDiffModal(false)}>
+            <div className="modal glass-panel" style={{ width: '760px', maxWidth: '95vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexShrink: 0 }}>
+                <h3 style={{ fontSize: '1rem', margin: 0 }}>Output Diff</h3>
+                <button className="btn-secondary" onClick={() => setShowDiffModal(false)}>Close</button>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', flexShrink: 0 }}>
+                <div style={{ flex: 1, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  <span style={{ background: 'rgba(248,81,73,0.15)', border: '1px solid rgba(248,81,73,0.4)', borderRadius: '4px', padding: '2px 6px', color: '#f85149' }}>A</span>
+                  {' '}<span className="mono">{evA.command}</span>
+                </div>
+                <div style={{ flex: 1, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  <span style={{ background: 'rgba(63,185,80,0.15)', border: '1px solid rgba(63,185,80,0.4)', borderRadius: '4px', padding: '2px 6px', color: '#3fb950' }}>B</span>
+                  {' '}<span className="mono">{evB.command}</span>
+                </div>
+              </div>
+              <pre className="mono" style={{ flex: 1, overflowY: 'auto', fontSize: '0.75rem', lineHeight: 1.5, padding: '0.5rem', background: 'rgba(1,4,9,0.5)', borderRadius: '4px', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                {!hasChanges ? (
+                  <span style={{ color: 'var(--text-muted)' }}>Outputs are identical.</span>
+                ) : diff.map((line, i) => {
+                  if (line.type === 'equal') return <span key={i} style={{ color: 'var(--text-muted)' }}>{' '}{line.text}{'\n'}</span>;
+                  if (line.type === 'remove') return <span key={i} style={{ color: '#f85149', background: 'rgba(248,81,73,0.08)', display: 'block' }}>{'- '}{line.text}</span>;
+                  return <span key={i} style={{ color: '#3fb950', background: 'rgba(63,185,80,0.08)', display: 'block' }}>{'+  '}{line.text}</span>;
+                })}
+              </pre>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── AI Coach Panel ────────────────────────────────────────────────── */}
       {showCoachPanel && (
         <div style={{ position: 'fixed', bottom: 0, right: 0, width: '420px', maxHeight: '60vh', zIndex: 200, display: 'flex', flexDirection: 'column', background: 'var(--bg-secondary, #161b22)', border: '1px solid var(--accent-secondary)', borderBottom: 'none', borderRadius: '8px 8px 0 0', boxShadow: '0 -4px 24px rgba(0,0,0,0.5)' }}>
@@ -1564,6 +2089,13 @@ export default function Home() {
                 <option value="stego">Stego</option>
                 <option value="analyze-file">Analyze File</option>
               </select>
+              <button
+                onClick={() => setCoachCompareMode(m => !m)}
+                className="btn-secondary"
+                style={{ fontSize: '0.7rem', padding: '2px 8px', opacity: coachCompareMode ? 1 : 0.55, border: coachCompareMode ? '1px solid var(--accent-secondary)' : undefined }}
+                title="Compare all configured AI providers">
+                Compare
+              </button>
               <button className="btn-secondary" onClick={runCoach} disabled={isCoaching} style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
                 {isCoaching ? 'Thinking...' : 'Refresh'}
               </button>
@@ -1571,16 +2103,76 @@ export default function Home() {
             </div>
           </div>
           <div className="mono" style={{ padding: '0.75rem', overflowY: 'auto', flex: 1, fontSize: '0.78rem', lineHeight: 1.6, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            {isCoaching && !coachResult ? <span style={{ color: 'var(--text-muted)' }}>Analyzing timeline...</span> : coachResult || <span style={{ color: 'var(--text-muted)' }}>Click Refresh to get a coaching suggestion.</span>}
+            {/* E.6 — Compare mode tabbed view */}
+            {coachCompareMode && (isCoaching || coachCompareResults.length > 0) && (() => {
+              if (isCoaching) return <span style={{ color: 'var(--text-muted)' }}>Querying all models...</span>;
+              return (
+                <div>
+                  <div style={{ display: 'flex', gap: '0.3rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                    {coachCompareResults.map((r, i) => (
+                      <button key={r.provider} onClick={() => setCoachCompareTab(i)}
+                        style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: '4px', border: `1px solid ${i === coachCompareTab ? 'var(--accent-secondary)' : 'var(--border-color)'}`, background: i === coachCompareTab ? 'rgba(88,166,255,0.12)' : 'transparent', color: i === coachCompareTab ? 'var(--accent-secondary)' : 'var(--text-muted)', cursor: 'pointer' }}>
+                        {r.provider}
+                        {!r.ok && <span style={{ color: '#f85149', marginLeft: '4px' }}>✗</span>}
+                      </button>
+                    ))}
+                  </div>
+                  {coachCompareResults[coachCompareTab] && (
+                    <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: coachCompareResults[coachCompareTab].ok ? 'var(--text-primary)' : '#f85149' }}>
+                      {coachCompareResults[coachCompareTab].content}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            {(!coachCompareMode || (!isCoaching && coachCompareResults.length === 0)) && (isCoaching && !coachResult ? <span style={{ color: 'var(--text-muted)' }}>Analyzing timeline...</span> : (() => {
+              if (!coachResult) return <span style={{ color: 'var(--text-muted)' }}>Click Refresh to get a coaching suggestion.</span>;
+              // E.7 — Parse confidence line
+              const confMatch = coachResult.match(/\nConfidence:\s*(low|medium|high)\s*[—–-]\s*(.+)$/im);
+              const displayText = confMatch ? coachResult.slice(0, confMatch.index).trimEnd() : coachResult;
+              const confLevel = confMatch?.[1]?.toLowerCase();
+              const confRationale = confMatch?.[2]?.trim();
+              const confColors = { low: '#e09400', medium: '#388bfd', high: '#3fb950' };
+              const confBg = { low: 'rgba(224,148,0,0.12)', medium: 'rgba(56,139,253,0.12)', high: 'rgba(63,185,80,0.12)' };
+              return <>
+                {displayText}
+                {confLevel && (
+                  <div style={{ marginTop: '0.6rem', padding: '0.35rem 0.65rem', background: confBg[confLevel], border: `1px solid ${confColors[confLevel]}40`, borderRadius: '5px', fontSize: '0.74rem', display: 'flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'normal' }}>
+                    <span style={{ color: confColors[confLevel], fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Confidence: {confLevel}</span>
+                    {confRationale && <span style={{ color: 'var(--text-muted)' }}>— {confRationale}</span>}
+                  </div>
+                )}
+              </>;
+            })())}
             {!isCoaching && coachResult && (() => {
               const DANGEROUS = /rm\s+-rf|dd\s+if=|mkfs\.|:\s*\(\)\s*\{|>\s*\/dev\/sd[a-z]|chmod\s+[0-7]*7[0-7]*\s+\/|fork\s+bomb|shred\s+-/i;
               const codeBlocks = [...coachResult.matchAll(/```[\w]*\n?([\s\S]*?)```/g)].map(m => m[1]);
               const hasDanger = codeBlocks.some(b => DANGEROUS.test(b)) || DANGEROUS.test(coachResult);
-              return hasDanger ? (
-                <div style={{ marginTop: '0.6rem', padding: '0.4rem 0.65rem', background: 'rgba(210,153,34,0.12)', border: '1px solid rgba(210,153,34,0.4)', borderRadius: '5px', color: 'var(--accent-warning)', fontSize: '0.75rem' }}>
-                  ⚠ Potentially destructive command detected — verify carefully before running
+              // E.4 — derive feedback hash from raw response (sync, approximate)
+              const displayText = coachResult.replace(/\nConfidence:\s*(low|medium|high)[^\n]*/i, '').trim();
+              const currentHash = (() => {
+                // Use a simple FNV-like hash for immediate UI state; the real SHA-256 is computed async on click
+                let h = 0;
+                for (let i = 0; i < Math.min(displayText.length, 500); i++) {
+                  h = (Math.imul(31, h) + displayText.charCodeAt(i)) | 0;
+                }
+                return String(h);
+              })();
+              const currentRating = coachFeedbackRatings[currentHash];
+              return <>
+                {hasDanger && (
+                  <div style={{ marginTop: '0.6rem', padding: '0.4rem 0.65rem', background: 'rgba(210,153,34,0.12)', border: '1px solid rgba(210,153,34,0.4)', borderRadius: '5px', color: 'var(--accent-warning)', fontSize: '0.75rem' }}>
+                    ⚠ Potentially destructive command detected — verify carefully before running
+                  </div>
+                )}
+                <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Was this helpful?</span>
+                  <button onClick={() => submitCoachFeedback(displayText, 1)} title="Thumbs up"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', opacity: currentRating === 1 ? 1 : 0.4, transition: 'opacity 0.15s' }}>👍</button>
+                  <button onClick={() => submitCoachFeedback(displayText, -1)} title="Thumbs down"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', opacity: currentRating === -1 ? 1 : 0.4, transition: 'opacity 0.15s' }}>👎</button>
                 </div>
-              ) : null;
+              </>;
             })()}
           </div>
         </div>
@@ -1844,8 +2436,9 @@ export default function Home() {
                 {allTimelineTags.map(t => <option key={t} value={t}>#{t}</option>)}
               </select>
               <input
+                ref={filterKeywordRef}
                 type="text" value={filterKeyword} onChange={(e) => setFilterKeyword(e.target.value)}
-                placeholder="Search..." className="mono"
+                placeholder="Search... (Ctrl+F)" className="mono"
                 style={{ fontSize: '0.8rem', padding: '3px 8px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', flex: '1 1 120px', outline: 'none', minWidth: '80px' }}
               />
               {(filterType !== 'all' || filterStatus !== 'all' || filterKeyword || filterTag) && (
@@ -1880,6 +2473,19 @@ export default function Home() {
                 style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="DB stats">
                 ⚙
               </button>
+              {compareEventIds.size === 2 && (
+                <>
+                  <button
+                    onClick={() => setShowDiffModal(true)}
+                    className="mono"
+                    style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap', borderRadius: '4px', border: '1px solid rgba(88,166,255,0.5)', color: 'var(--accent-secondary)', background: 'transparent', cursor: 'pointer' }}
+                    title="Compare selected command outputs">
+                    Diff →
+                  </button>
+                  <button onClick={() => setCompareEventIds(new Set())} className="mono btn-secondary"
+                    style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="Clear diff selection">✕</button>
+                </>
+              )}
               {selectedScreenshots.size > 0 && (
                 <>
                   <button
@@ -1918,6 +2524,7 @@ export default function Home() {
                 const visibleOutput = isExpanded ? event.output : outputLines.slice(0, PREVIEW_LINES).join('\n');
                 const isTimelineEventExpanded = !timelineCollapsed || expandedTimelineEvents.has(event.id);
                 const compactSummary = summarizeTimelineEvent(event);
+                const isEventInPoc = pocLinkedEventIds.has(event.id);
                 const tags = (() => { try { return JSON.parse(event.tags || '[]'); } catch { return []; } })();
 
                 return (
@@ -1932,6 +2539,20 @@ export default function Home() {
                       {tags.length > 0 && tags.map(t => (
                         <span key={t} style={{ fontSize: '0.74rem', padding: '2px 7px', borderRadius: '10px', background: 'rgba(88,166,255,0.12)', color: 'var(--accent-secondary)', border: '1px solid rgba(88,166,255,0.2)' }}>#{t}</span>
                       ))}
+                      {isEventInPoc && (
+                        <span className="mono" style={{ fontSize: '0.7rem', padding: '2px 7px', borderRadius: '10px', border: '1px solid rgba(63,185,80,0.45)', color: '#3fb950', background: 'rgba(63,185,80,0.1)' }}>
+                          In PoC
+                        </span>
+                      )}
+                      <button
+                        onClick={() => addEventToPoc(event, isEventInPoc)}
+                        className="mono"
+                        style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(88,166,255,0.35)', color: 'var(--accent-secondary)', background: 'transparent', cursor: 'pointer', lineHeight: 1.4 }}
+                        title={isEventInPoc ? 'Add another PoC step from this event' : 'Add event to PoC steps'}
+                        disabled={pocBusyEventId === event.id}
+                      >
+                        {pocBusyEventId === event.id ? '…' : (isEventInPoc ? 'Add again' : 'Add to PoC')}
+                      </button>
                       {timelineCollapsed && (
                         <button
                           onClick={() => toggleTimelineEventDetails(event.id)}
@@ -1961,6 +2582,14 @@ export default function Home() {
                         {event.type === 'command' && (
                           <>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <input
+                                type="checkbox"
+                                title="Select for diff comparison"
+                                checked={compareEventIds.has(event.id)}
+                                onChange={() => toggleCompareEvent(event.id)}
+                                disabled={!compareEventIds.has(event.id) && compareEventIds.size >= 2}
+                                style={{ accentColor: 'var(--accent-secondary)', cursor: 'pointer', flexShrink: 0 }}
+                              />
                               <div className="event-command" style={{ flex: 1 }}><span style={{ color: 'var(--accent-primary)' }}>$</span> {event.command}</div>
                               {(event.status === 'failed' || event.status === 'error') && (
                                 <button onClick={() => { setInputType('command'); setInputVal(event.command); inputRef.current?.focus(); }}
@@ -2006,7 +2635,25 @@ export default function Home() {
                           </>
                         )}
 
-                        {event.type === 'note' && <div className="event-note">{event.content}</div>}
+                        {event.type === 'note' && (() => {
+                          const cvssMatch = (event.content || '').match(/^CVSS:([\d.]+(?:\/[^\s|]+)?)\s*\|\s*/);
+                          const noteText = cvssMatch ? event.content.slice(cvssMatch[0].length) : event.content;
+                          const score = cvssMatch ? parseFloat(cvssMatch[1]) : null;
+                          const cvssColor = score === null ? null : score >= 9 ? '#f85149' : score >= 7 ? '#e09400' : score >= 4 ? '#d29922' : '#388bfd';
+                          const cvssLabel = score === null ? null : score >= 9 ? 'Critical' : score >= 7 ? 'High' : score >= 4 ? 'Medium' : 'Low';
+                          return (
+                            <div className="event-note">
+                              {cvssMatch && (
+                                <span style={{ marginRight: '0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                                  <span style={{ background: `${cvssColor}22`, border: `1px solid ${cvssColor}66`, color: cvssColor, borderRadius: '4px', padding: '1px 6px', fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.5px' }}>
+                                    {cvssLabel} {cvssMatch[1]}
+                                  </span>
+                                </span>
+                              )}
+                              {noteText}
+                            </div>
+                          );
+                        })()}
 
                         {event.type === 'screenshot' && (
                           <div className="event-screenshot">
@@ -2117,6 +2764,20 @@ export default function Home() {
                 </button>
               </div>
             </div>
+            {/* D.9 — CVSS score input (note mode only) */}
+            {inputType === 'note' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
+                <input
+                  type="text" value={cvssScore} onChange={(e) => setCvssScore(e.target.value)}
+                  placeholder="CVSS score (e.g. 7.5)" className="mono"
+                  style={{ fontSize: '0.82rem', padding: '4px 10px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px', width: '180px', outline: 'none' }}
+                />
+                <a href="https://www.first.org/cvss/calculator/3.1" target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textDecoration: 'none', opacity: 0.7, whiteSpace: 'nowrap' }}>
+                  ↗ CVSS Calculator
+                </a>
+              </div>
+            )}
             {/* Stage tag selector */}
             {inputType !== 'screenshot' && (
               <div className="tag-block">
@@ -2197,6 +2858,11 @@ export default function Home() {
         .report-editor { flex-grow: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; background: rgba(1,4,9,0.5); padding: 0.7rem; display: flex; flex-direction: column; gap: 0.6rem; }
         .report-block-card { border: 1px solid rgba(88,166,255,0.22); border-radius: 8px; background: rgba(1,4,9,0.58); padding: 0.65rem; display: flex; flex-direction: column; }
         .report-block-header { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.42rem; }
+        .poc-editor { border: 1px solid var(--border-color); border-radius: 8px; background: rgba(1,4,9,0.46); padding: 0.7rem; max-height: 32vh; overflow-y: auto; display: flex; flex-direction: column; gap: 0.55rem; }
+        .poc-editor-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+        .poc-step-card { border: 1px solid rgba(63,185,80,0.3); border-radius: 8px; background: rgba(12,25,16,0.45); padding: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; }
+        .poc-step-header { display: flex; align-items: center; gap: 0.45rem; }
+        .poc-step-links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.4rem; }
 
         .layout { position: relative; display: grid; grid-template-columns: var(--sidebar-width) var(--resizer-width) minmax(400px, 1fr); flex-grow: 1; min-height: 0; gap: 0.75rem; margin-top: 0.75rem; }
 .layout.layout-overlay { grid-template-columns: minmax(0, 1fr); }
@@ -2284,6 +2950,7 @@ export default function Home() {
           .event-command { font-size: 0.93rem; margin-bottom: 0.38rem; }
           .event-output { font-size: 0.82rem; max-height: 245px; padding: 0.84rem; }
           .event-note { font-size: 0.95rem; padding: 0.44rem 0.78rem; }
+          .poc-step-links { grid-template-columns: 1fr; }
           .input-area { padding: 0.76rem; gap: 0.35rem; }
           .input-toolbar { margin-bottom: 0.2rem; gap: 0.36rem; }
           .input-timeout { gap: 4px; }
@@ -2308,6 +2975,7 @@ export default function Home() {
           .layout { margin-top: 0.65rem; }
           .filter-row-secondary { gap: 0.4rem; }
           .report-modal { width: 96%; height: 92vh; padding: 0.9rem; }
+          .poc-step-links { grid-template-columns: 1fr; }
           .timeline-scroll-shell { grid-template-columns: minmax(0, 1fr); gap: 0.45rem; margin-bottom: 0.65rem; }
           .timeline-jump-controls { flex-direction: row; justify-content: flex-end; align-items: center; padding-bottom: 0; }
           .timeline-jump-arrow { width: 30px; height: 30px; min-width: 30px; min-height: 30px; }

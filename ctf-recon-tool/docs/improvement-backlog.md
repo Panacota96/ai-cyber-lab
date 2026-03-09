@@ -209,12 +209,13 @@ format: knowledge-sync compatible
 **What:** Auto-embed screenshot data URIs in exported reports.
 **Files:** `app/api/export/markdown/route.js`, `app/api/export/pdf/route.js`
 **Difficulty:** Easy | **Impact:** Medium
-**Status:** Implemented (2026-03-09). Added `POST /api/export/markdown` with `inlineImages=true` default; `/api/report` content remains unchanged.
+**Status:** Implemented (2026-03-09). Added `POST /api/export/markdown` with `inlineImages=true` default for export-only inlining.
 
 ### D.4 — Proof-of-Concept Step Recorder
 **What:** Guided UI to record finding proof (screenshot + command + output, structured).
-**Files:** `app/page.js`, `app/lib/db.js`
+**Files:** `app/page.js`, `app/lib/db.js`, `app/api/poc/route.js`, `app/lib/report-formats.js`, `app/api/report/route.js`, `app/api/export/markdown/route.js`
 **Difficulty:** Medium | **Impact:** Medium
+**Status:** Implemented (2026-03-09). Added dedicated `poc_steps` table + `/api/poc` CRUD/reorder API, timeline `Add to PoC`/`In PoC` UX, report modal PoC editor, and PoC section injection for `technical-walkthrough` and `pentest`.
 
 ### D.5 — Multi-Format Export (DOCX, HTML, JSON)
 **What:** Export beyond PDF: Word doc, HTML, raw JSON.
@@ -449,3 +450,4 @@ format: knowledge-sync compatible
 | 2026-03-09 | E.10 — AI usage/cost tracking added (`ai_usage` table, `/api/ai/usage`, coach + writeup enhance instrumentation, UI summary badge) |
 | 2026-03-09 | F.4 — Magic-byte image validation added for uploads with extension normalization; media serving now infers MIME from bytes first |
 | 2026-03-09 | G.9 — Dependency audit completed: `npm audit` reports 0 vulnerabilities; safe updates applied (`react/react-dom` to 19.2.4), major-risk packages deferred |
+| 2026-03-09 | D.4 — PoC recorder implemented with `poc_steps` storage, `/api/poc` CRUD/reorder API, timeline add/indicator UX, report modal PoC editor, and PoC injection into technical/pentest report generation |

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getSession, getTimeline as getTimelineEvents } from '@/lib/db';
+import { getSession, getTimeline as getTimelineEvents, listPocSteps } from '@/lib/db';
 import { labReport, executiveSummary, technicalWalkthrough, ctfSolution, bugBountyReport, pentestReport } from '@/lib/report-formats';
 import { isValidSessionId } from '@/lib/security';
+import { apiError } from '@/lib/api-error';
 
 const FORMATS = {
   'lab-report': labReport,
@@ -19,22 +20,25 @@ export async function GET(request) {
   const analystName = searchParams.get('analystName') || 'Unknown';
 
   if (!sessionId || !isValidSessionId(sessionId)) {
-    return NextResponse.json({ error: 'Session ID required' }, { status: 400 });
+    return apiError('Session ID required', 400);
   }
 
   try {
     const session = getSession(sessionId);
     if (!session) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+      return apiError('Session not found', 404);
     }
 
     const events = getTimelineEvents(sessionId);
+    const pocSteps = (format === 'technical-walkthrough' || format === 'pentest')
+      ? listPocSteps(sessionId)
+      : [];
     const generator = FORMATS[format] || labReport;
-    const report = generator(session, events, analystName);
+    const report = generator(session, events, analystName, { pocSteps });
 
     return NextResponse.json({ report });
   } catch (error) {
     console.error('Report generation failed', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return apiError('Internal Server Error', 500);
   }
 }

@@ -1,7 +1,8 @@
+import { apiError } from '@/lib/api-error';
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { getSession, getTimeline } from '@/lib/db';
+import { getSession, getTimeline, listPocSteps } from '@/lib/db';
 import {
   labReport,
   executiveSummary,
@@ -108,20 +109,24 @@ export async function POST(request) {
     const payload = await request.json();
     const sessionId = payload?.sessionId;
     const format = payload?.format || 'technical-walkthrough';
+    const analystName = String(payload?.analystName || 'Unknown');
     const inlineImages = normalizeBoolean(payload?.inlineImages, true);
 
     if (!sessionId || !isValidSessionId(sessionId)) {
-      return NextResponse.json({ error: 'sessionId is required' }, { status: 400 });
+      return apiError('sessionId is required', 400);
     }
 
     const session = getSession(sessionId);
     if (!session) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+      return apiError('Session not found', 404);
     }
 
     const events = getTimeline(sessionId);
+    const pocSteps = (format === 'technical-walkthrough' || format === 'pentest')
+      ? listPocSteps(sessionId)
+      : [];
     const generator = FORMATS[format] || technicalWalkthrough;
-    const markdown = generator(session, events);
+    const markdown = generator(session, events, analystName, { pocSteps });
     const output = inlineImages ? inlineMarkdownImages(markdown) : markdown;
 
     const sessionToken = sanitizeDownloadToken(session.name || sessionId, sessionId);
@@ -137,6 +142,6 @@ export async function POST(request) {
       },
     });
   } catch (error) {
-    return NextResponse.json({ error: 'Markdown export failed', detail: error.message }, { status: 500 });
+    return apiError('Markdown export failed', 500, { detail: error.message });
   }
 }
