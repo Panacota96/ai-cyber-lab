@@ -67,6 +67,12 @@ The PDF renders from the current writeup text — including any AI-enhanced edit
 ### Writeup Versioning
 Every save creates a version snapshot. Restore any previous version from the Version History modal.
 
+### Toolbox Sidebar
+
+- Collapsible sidebar — click `«` to hide it and give the timeline full width; click `»` in the toolbar to restore it
+- Drag the resize handle to set sidebar width between 260 and 420 px
+- FLAGS tab lists cheatsheet flags for each tool; **Expand All / Collapse All** buttons control all sections at once (default: all collapsed)
+
 ### DB Maintenance
 Built-in maintenance modal to clear accumulated logs and run SQLite VACUUM to reclaim disk space.
 

@@ -1,6 +1,6 @@
 ---
 title: Helm's Paladin — Improvement Backlog
-updated: 2026-03-08
+updated: 2026-03-09
 source: automated codebase scan (claude-sonnet-4-6)
 format: knowledge-sync compatible
 ---
@@ -414,3 +414,8 @@ format: knowledge-sync compatible
 | 2026-03-08 | Filter toolbar merged from 2 rows → 1 row; type labels shortened (CMD/SS/NOTE); icon-only export/db/focus buttons |
 | 2026-03-08 | Collapsible input area added (▲/▼ toggle, hides form when not needed) |
 | 2026-03-08 | Output preview truncated to 4 lines by default (was 10); "Show more" expands inline |
+| 2026-03-09 | Sidebar `«`/`»` collapse implemented — sidebar becomes fixed overlay when collapsed, `»` re-expand button appears in filter toolbar, central panel expands to full width |
+| 2026-03-09 | CSS grid layout hardened — `minmax(400px, 1fr)` min-width for central panel; `.layout.layout-collapsed` single-column override prevents black-screen when sidebar is out of grid flow |
+| 2026-03-09 | Input area collapse button (`▼`) removed — form is now always visible to guarantee usability |
+| 2026-03-09 | History focus mode (`⊞`/`⊡` button) removed — caused unrecoverable full-collapse layout on re-load |
+| 2026-03-09 | FLAGS tab: Expand All / Collapse All buttons added; all flag sections default to collapsed |

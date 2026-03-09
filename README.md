@@ -11,7 +11,7 @@ The project integrates a professional Next.js-based web interface with a robust 
 
 ### 1. [Application: ctf-recon-tool/](file:///c:/Users/david/OneDrive%20-%20Pontificia%20Universidad%20Javeriana/Documents/GitHub/ai-cyber-lab/ctf-recon-tool/)
 The core software application. It includes:
-*   **Next.js 16 Web Interface**: Real-time terminal-style dashboard.
+*   **Next.js 15 Web Interface**: Real-time terminal-style dashboard.
 *   **Docker Configuration**: Pre-configured environment for security tool execution.
 *   **[Templates/](file:///c:/Users/david/OneDrive%20-%20Pontificia%20Universidad%20Javeriana/Documents/GitHub/ai-cyber-lab/ctf-recon-tool/templates/)**: Professional CTF writeup templates integrated from the `ctf-writeups` collection.
 
