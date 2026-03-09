@@ -422,6 +422,28 @@ const SPEC = {
         responses: { '200': { description: 'Markdown file download' } },
       },
     },
+    '/export/html': {
+      post: {
+        summary: 'Export session as standalone HTML',
+        operationId: 'exportHtml',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' }, format: { type: 'string' }, analystName: { type: 'string' }, inlineImages: { type: 'boolean', default: true } } } } },
+        },
+        responses: { '200': { description: 'HTML file download', content: { 'text/html': {} } } },
+      },
+    },
+    '/export/json': {
+      post: {
+        summary: 'Export full session bundle as JSON',
+        operationId: 'exportJsonBundle',
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' }, format: { type: 'string' }, analystName: { type: 'string' }, inlineImages: { type: 'boolean', default: false } } } } },
+        },
+        responses: { '200': { description: 'JSON bundle file download', content: { 'application/json': {} } } },
+      },
+    },
     '/health': {
       get: {
         summary: 'Health check',

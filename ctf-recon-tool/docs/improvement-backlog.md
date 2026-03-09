@@ -221,6 +221,7 @@ format: knowledge-sync compatible
 **What:** Export beyond PDF: Word doc, HTML, raw JSON.
 **Files:** `app/api/export/`, `package.json`
 **Difficulty:** Medium | **Impact:** Medium
+**Status:** Partially implemented (2026-03-09). D.5 phase 1 delivered `POST /api/export/html` and `POST /api/export/json` with shared export bundle assembly, report modal download actions, and docs updates. DOCX remains pending for phase 2.
 
 ### D.6 — Report Versioning + Diff
 **What:** Changelog between writeup versions; side-by-side markdown diff.
@@ -451,3 +452,4 @@ format: knowledge-sync compatible
 | 2026-03-09 | F.4 — Magic-byte image validation added for uploads with extension normalization; media serving now infers MIME from bytes first |
 | 2026-03-09 | G.9 — Dependency audit completed: `npm audit` reports 0 vulnerabilities; safe updates applied (`react/react-dom` to 19.2.4), major-risk packages deferred |
 | 2026-03-09 | D.4 — PoC recorder implemented with `poc_steps` storage, `/api/poc` CRUD/reorder API, timeline add/indicator UX, report modal PoC editor, and PoC injection into technical/pentest report generation |
+| 2026-03-09 | D.5 phase 1 — Multi-format export added (`/api/export/html`, `/api/export/json`) with standalone styled HTML, full JSON bundle output, and report modal download buttons |

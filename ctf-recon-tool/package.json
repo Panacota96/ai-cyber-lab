@@ -11,6 +11,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
     "@google/genai": "^1.0.0",
+    "@xyflow/react": "^12.10.1",
     "better-sqlite3": "^11.5.0",
     "lucide-react": "^0.460.0",
     "multer": "^1.4.5-lts.1",

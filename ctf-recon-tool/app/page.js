@@ -1,9 +1,13 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { CHEATSHEET } from '@/lib/cheatsheet';
 import { SUGGESTIONS, DIFFICULTY_COLORS, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH, SUGGESTED_TAGS } from '@/lib/constants';
+
+// Lazy-load DiscoveryGraph (React Flow requires client-only; no SSR)
+const DiscoveryGraph = dynamic(() => import('@/components/DiscoveryGraph'), { ssr: false });
 
 function loadFavorites() {
   try { return new Set(JSON.parse(localStorage.getItem('flagFavorites') || '[]')); }
@@ -1232,6 +1236,66 @@ export default function Home() {
     }
   };
 
+  const downloadHtml = async (inlineImages = true) => {
+    try {
+      const res = await apiFetch('/api/export/html', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          format: reportFormat,
+          analystName: analystName.trim() || 'Unknown',
+          inlineImages,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        alert(`HTML export failed: ${err.detail || err.error}`);
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const sessionName = sessions.find(s => s.id === currentSession)?.name?.replace(/\s+/g, '-') || currentSession;
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${sessionName}-${reportFormat}.html`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      alert(`HTML download error: ${err.message}`);
+    }
+  };
+
+  const downloadJson = async (inlineImages = false) => {
+    try {
+      const res = await apiFetch('/api/export/json', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          format: reportFormat,
+          analystName: analystName.trim() || 'Unknown',
+          inlineImages,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        alert(`JSON export failed: ${err.detail || err.error}`);
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const sessionName = sessions.find(s => s.id === currentSession)?.name?.replace(/\s+/g, '-') || currentSession;
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${sessionName}-${reportFormat}-bundle.json`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      alert(`JSON download error: ${err.message}`);
+    }
+  };
+
   const toggleTag = (tag) => {
     const current = inputTags.split(',').map(t => t.trim()).filter(Boolean);
     const idx = current.indexOf(tag);
@@ -1991,6 +2055,12 @@ export default function Home() {
                 <button className="btn-secondary" onClick={() => downloadMarkdown(true)} style={{ fontSize: '0.8rem' }}>
                   [ Download Markdown ]
                 </button>
+                <button className="btn-secondary" onClick={() => downloadHtml(true)} style={{ fontSize: '0.8rem' }}>
+                  [ Download HTML ]
+                </button>
+                <button className="btn-secondary" onClick={() => downloadJson(false)} style={{ fontSize: '0.8rem' }}>
+                  [ Download JSON ]
+                </button>
                 <button className="btn-secondary" onClick={downloadPdf} style={{ fontSize: '0.8rem' }}>
                   [ Download PDF ]
                 </button>
@@ -2239,7 +2309,7 @@ export default function Home() {
 
           <>
               <div className="tab-switcher mono" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
-                {[['tools', 'TOOLS'], ['flags', 'FLAGS'], ['history', 'HIST']].map(([tab, label]) => (
+                {[['tools', 'TOOLS'], ['flags', 'FLAGS'], ['history', 'HIST'], ['graph', 'GRAPH']].map(([tab, label]) => (
                   <span key={tab} style={{ cursor: 'pointer', whiteSpace: 'nowrap', color: sidebarTab === tab ? 'var(--accent-primary)' : 'var(--text-muted)', fontSize: '0.82rem', letterSpacing: '0.5px' }}
                     onClick={() => setSidebarTab(tab)}>
                     [{label}]
@@ -2377,6 +2447,23 @@ export default function Home() {
                 </div>
               )}
 
+              {sidebarTab === 'graph' && (
+                <div className="animate-fade" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
+                  <div style={{ flex: 1, minHeight: '400px', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+                    <DiscoveryGraph
+                      sessionId={currentSession}
+                      timeline={timeline}
+                      apiFetch={apiFetch}
+                      onAddToReport={(dataUrl) => {
+                        if (!dataUrl) return;
+                        applyReportBlocks([...reportBlocks, newImageBlock('Discovery Map', dataUrl, 'Discovery Map', 'Auto-generated attack graph', '')]);
+                        setShowReportModal(true);
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
               {sidebarTab === 'history' && (
                 <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', overflowY: 'auto' }}>
                   <input
@@ -2472,6 +2559,10 @@ export default function Home() {
               <button onClick={loadDbStats} className="mono btn-secondary"
                 style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="DB stats">
                 ⚙
+              </button>
+              <button onClick={() => setSidebarTab('graph')} className="mono btn-secondary"
+                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="Open discovery graph">
+                🗺
               </button>
               {compareEventIds.size === 2 && (
                 <>

@@ -90,7 +90,7 @@ Main gaps: UX polish, operational robustness, reporting depth, test coverage, an
 | C.8 | ~~Output diff view for related commands~~ ✓ DONE | Features | Low-Med |
 | C.9 | Global search across all sessions | Features | Medium |
 | D.4 | ~~PoC step recorder (screenshot + cmd + output)~~ ✓ DONE | Reporting | Medium |
-| D.5 | Multi-format export (DOCX, HTML, JSON) | Reporting | Medium |
+| D.5 | Multi-format export (DOCX, HTML, JSON) ◐ PARTIAL (HTML + JSON done, DOCX pending) | Reporting | Medium |
 | D.6 | ~~Report versioning + diff view~~ ✓ DONE | Reporting | Low-Med |
 | D.9 | ~~CVSS score integration~~ ✓ DONE | Reporting | Low-Med |
 | E.1 | Coach skill difficulty levels (beginner/expert) | AI | Medium |

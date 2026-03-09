@@ -148,6 +148,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_poc_steps_session_order
     ON poc_steps(session_id, step_order);
 
+  CREATE TABLE IF NOT EXISTS graph_state (
+    session_id TEXT PRIMARY KEY,
+    nodes      TEXT NOT NULL DEFAULT '[]',
+    edges      TEXT NOT NULL DEFAULT '[]',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+  );
+
   -- Ensure default session exists
   INSERT OR IGNORE INTO sessions (id, name) VALUES ('default', 'Default Session');
 `);
@@ -878,4 +886,26 @@ export function getCoachFeedback(sessionId) {
     requireValidSessionId(sessionId);
     return db.prepare('SELECT response_hash, rating FROM coach_feedback WHERE session_id = ?').all(sessionId);
   } catch (e) { return []; }
+}
+
+// ── Graph State ─────────────────────────────────────────────────────────────
+export function getGraphState(sessionId) {
+  try {
+    requireValidSessionId(sessionId);
+    const row = db.prepare('SELECT nodes, edges FROM graph_state WHERE session_id = ?').get(sessionId);
+    if (!row) return { nodes: [], edges: [] };
+    return { nodes: JSON.parse(row.nodes || '[]'), edges: JSON.parse(row.edges || '[]') };
+  } catch (e) { return { nodes: [], edges: [] }; }
+}
+
+export function saveGraphState(sessionId, nodes, edges) {
+  try {
+    requireValidSessionId(sessionId);
+    db.prepare(`
+      INSERT INTO graph_state (session_id, nodes, edges, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(session_id) DO UPDATE SET nodes = excluded.nodes, edges = excluded.edges, updated_at = excluded.updated_at
+    `).run(sessionId, JSON.stringify(nodes), JSON.stringify(edges));
+    return true;
+  } catch (e) { return false; }
 }
