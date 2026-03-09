@@ -3,9 +3,10 @@ import { exec } from 'child_process';
 import { updateTimelineEvent, addTimelineEvent } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { isApiTokenValid, isCommandExecutionEnabled, isValidSessionId } from '@/lib/security';
-import util from 'util';
 
-const execAsync = util.promisify(exec);
+// Module-level state — persists across requests in the same server process
+export const runningProcesses = new Map(); // eventId → ChildProcess
+export const cancelledEvents = new Set();  // eventIds cancelled by the user
 
 export async function POST(request) {
   try {
@@ -32,7 +33,7 @@ export async function POST(request) {
 
     logger.info(`Received command execution request for session ${sessionId}: ${command}`);
 
-    // 1. Create a queued event
+    // 1. Create a running event immediately
     const event = addTimelineEvent(sessionId, {
       type: 'command',
       command: command.trim(),
@@ -43,10 +44,9 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Failed to persist execution event' }, { status: 500 });
     }
 
-    // 2. We don't await the execution here so we can return the running event
+    // 2. Fire-and-forget — return running event to client without awaiting
     executeAndRecord(sessionId, event.id, command.trim(), normalizedTimeout);
 
-    // Return the initial running state to the client
     return NextResponse.json(event);
   } catch (error) {
     logger.error('API Error in /api/execute POST handler:', error);
@@ -54,32 +54,38 @@ export async function POST(request) {
   }
 }
 
-async function executeAndRecord(sessionId, eventId, command, timeout = 120000) {
-  try {
-    const isWindows = process.platform === 'win32';
-    const escapedCommand = isWindows ? command.replace(/"/g, '\\"') : command;
-    const shellCommand = isWindows ? `powershell.exe -Command "${escapedCommand}"` : command;
+function executeAndRecord(sessionId, eventId, command, timeout = 120000) {
+  const isWindows = process.platform === 'win32';
+  const escapedCommand = isWindows ? command.replace(/"/g, '\\"') : command;
+  const shellCommand = isWindows ? `powershell.exe -Command "${escapedCommand}"` : command;
 
-    const { stdout, stderr } = await execAsync(shellCommand, { timeout });
+  const child = exec(shellCommand, { timeout }, (error, stdout, stderr) => {
+    runningProcesses.delete(eventId);
+
+    // If cancelled by user, the cancel route already wrote the DB record — skip
+    if (cancelledEvents.has(eventId)) {
+      cancelledEvents.delete(eventId);
+      return;
+    }
+
+    if (error) {
+      const isTimeout = error.killed || error.signal === 'SIGTERM';
+      logger.error(`Command ${eventId} in session ${sessionId} ${isTimeout ? 'timed out' : 'failed'}`, { command, error });
+      updateTimelineEvent(sessionId, eventId, {
+        status: isTimeout ? 'timeout' : 'failed',
+        output: isTimeout
+          ? `Command timed out after ${timeout / 1000}s.`
+          : (error.message || 'Unknown error occurred'),
+      });
+      return;
+    }
 
     logger.info(`Command ${eventId} in session ${sessionId} completed successfully`);
-
     const output = stdout
       + (stderr ? '\n\n[stderr]:\n' + stderr : '')
       || 'Command executed successfully with no output.';
+    updateTimelineEvent(sessionId, eventId, { status: 'success', output });
+  });
 
-    updateTimelineEvent(sessionId, eventId, {
-      status: 'success',
-      output,
-    });
-  } catch (error) {
-    const isTimeout = error.killed || error.signal === 'SIGTERM';
-    logger.error(`Command ${eventId} in session ${sessionId} ${isTimeout ? 'timed out' : 'failed'}`, { command, error });
-    updateTimelineEvent(sessionId, eventId, {
-      status: isTimeout ? 'timeout' : 'failed',
-      output: isTimeout
-        ? `Command timed out after ${timeout / 1000}s.`
-        : (error.message || 'Unknown error occurred'),
-    });
-  }
+  runningProcesses.set(eventId, child);
 }

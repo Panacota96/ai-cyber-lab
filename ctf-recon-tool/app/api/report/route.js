@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession, getTimeline as getTimelineEvents } from '@/lib/db';
-import { labReport, executiveSummary, technicalWalkthrough, ctfSolution } from '@/lib/report-formats';
+import { labReport, executiveSummary, technicalWalkthrough, ctfSolution, bugBountyReport, pentestReport } from '@/lib/report-formats';
 import { isValidSessionId } from '@/lib/security';
 
 const FORMATS = {
@@ -8,6 +8,8 @@ const FORMATS = {
   'executive-summary': executiveSummary,
   'technical-walkthrough': technicalWalkthrough,
   'ctf-solution': ctfSolution,
+  'bug-bounty': bugBountyReport,
+  'pentest': pentestReport,
 };
 
 export async function GET(request) {

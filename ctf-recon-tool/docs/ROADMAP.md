@@ -29,12 +29,12 @@ Main gaps: UX polish, operational robustness, reporting depth, test coverage, an
 | 2 | ~~Create `.env.example` + README setup section~~ ✓ DONE | `.env.example`, `README.md` | — |
 | 3 | ~~Integrate dotenv for config loading~~ ✓ DONE | `app/lib/config.js` | — |
 | 4 | ~~Write `docker-compose.yml`~~ ✓ DONE | `docker-compose.yml` | — |
-| 5 | Create `scripts/init.sh` startup script | `scripts/init.sh` | 1h |
-| 6 | Command templates with `{target}` substitution | `app/page.js` | 2h |
-| 7 | Fuzzy search in history sidebar | `app/page.js` | 2h |
-| 8 | Session event filtering (all/success/failed/running) | `app/page.js` | 3h |
-| 9 | Command timeout UI + cancel button | `app/page.js`, `app/api/execute/route.js` | 3h |
-| 10 | Report format presets (CTF, Bug Bounty, Pentest) | `app/lib/report-formats.js` | 2h |
+| 5 | ~~Create `scripts/init.sh` startup script~~ ✓ DONE | `scripts/init.sh` | — |
+| 6 | ~~Command templates with `{target}` substitution~~ ✓ DONE | `app/page.js` | — |
+| 7 | ~~Fuzzy search in history sidebar~~ ✓ DONE | `app/page.js` | — |
+| 8 | ~~Session event filtering (all/success/failed/running)~~ ✓ DONE | `app/page.js` | — |
+| 9 | ~~Command timeout UI + cancel button~~ ✓ DONE | `app/page.js`, `app/api/execute/route.js`, `app/api/execute/cancel/route.js` | — |
+| 10 | ~~Report format presets (CTF, Bug Bounty, Pentest)~~ ✓ DONE | `app/lib/report-formats.js`, `app/api/report/route.js` | — |
 
 ---
 

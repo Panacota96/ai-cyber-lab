@@ -292,8 +292,9 @@ export default function Home() {
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1600));
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [favorites, setFavorites] = useState(() => (typeof window !== 'undefined' ? loadFavorites() : new Set()));
-  const [collapsedTools, setCollapsedTools] = useState(new Set());
+  const [collapsedTools, setCollapsedTools] = useState(() => new Set(CHEATSHEET.map((_, i) => i)));
   const [cmdHistory, setCmdHistory] = useState([]);
+  const [historySearch, setHistorySearch] = useState('');
 
   // Command timeout (seconds)
   const [cmdTimeout, setCmdTimeout] = useState(120);
@@ -329,8 +330,7 @@ export default function Home() {
   const [lastSyncTime, setLastSyncTime] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('connecting'); // 'connected'|'disconnected'|'connecting'
   const [healthData, setHealthData] = useState(null); // null = loading, otherwise /api/health response
-  const [historyFocus, setHistoryFocus] = useState(false);
-  const [timelineAtTop, setTimelineAtTop] = useState(true);
+const [timelineAtTop, setTimelineAtTop] = useState(true);
   const [timelineAtBottom, setTimelineAtBottom] = useState(true);
   const [timelineFollowEnabled, setTimelineFollowEnabled] = useState(true);
 
@@ -507,7 +507,6 @@ export default function Home() {
     try {
       const storedWidth = Number(localStorage.getItem('ui.sidebarWidth') || '');
       const storedCollapsed = localStorage.getItem('ui.sidebarCollapsed');
-      const storedHistoryFocus = localStorage.getItem('ui.historyFocus');
       if (Number.isFinite(storedWidth) && storedWidth > 0) {
         setSidebarWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, storedWidth)));
       }
@@ -515,9 +514,6 @@ export default function Home() {
         setSidebarCollapsed(storedCollapsed === 'true');
       } else if (window.innerWidth >= 1200 && window.innerWidth <= 1365) {
         setSidebarCollapsed(true);
-      }
-      if (storedHistoryFocus === 'true' || storedHistoryFocus === 'false') {
-        setHistoryFocus(storedHistoryFocus === 'true');
       }
     } catch (_) {
       // localStorage unavailable
@@ -528,11 +524,10 @@ export default function Home() {
     try {
       localStorage.setItem('ui.sidebarWidth', String(Math.round(sidebarWidth)));
       localStorage.setItem('ui.sidebarCollapsed', sidebarCollapsed ? 'true' : 'false');
-      localStorage.setItem('ui.historyFocus', historyFocus ? 'true' : 'false');
     } catch (_) {
       // localStorage unavailable
     }
-  }, [sidebarWidth, sidebarCollapsed, historyFocus]);
+  }, [sidebarWidth, sidebarCollapsed]);
 
   // Persist filter state to localStorage
   useEffect(() => {
@@ -576,10 +571,12 @@ export default function Home() {
 
     try {
       if (inputType === 'command') {
+        const sessionTarget = sessions.find(s => s.id === currentSession)?.target || '';
+        const resolvedCmd = sessionTarget ? val.replace(/\{TARGET\}/gi, sessionTarget) : val;
         const res = await apiFetch('/api/execute', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: val, sessionId: currentSession, tags, timeout: cmdTimeout * 1000 })
+          body: JSON.stringify({ command: resolvedCmd, sessionId: currentSession, tags, timeout: cmdTimeout * 1000 })
         });
         const newEvent = await res.json();
         setTimeline(prev => [...prev, newEvent]);
@@ -1021,8 +1018,10 @@ export default function Home() {
   };
 
   const appendFlag = (flag) => {
+    const sessionTarget = sessions.find(s => s.id === currentSession)?.target || '';
+    const resolved = sessionTarget ? flag.replace(/\{TARGET\}/gi, sessionTarget) : flag;
     setInputType('command');
-    setInputVal(prev => prev.includes(flag) ? prev : `${prev} ${flag}`.trim());
+    setInputVal(prev => prev.includes(resolved) ? prev : `${prev} ${resolved}`.trim());
   };
 
   const toggleFavorite = (flag) => {
@@ -1032,6 +1031,19 @@ export default function Home() {
       localStorage.setItem('flagFavorites', JSON.stringify([...next]));
       return next;
     });
+  };
+
+  const handleCancelCommand = async (eventId, sessionId) => {
+    try {
+      await apiFetch('/api/execute/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventId, sessionId }),
+      });
+      setTimeline(prev => prev.map(e =>
+        e.id === eventId ? { ...e, status: 'cancelled', output: '[Cancelled by user]' } : e
+      ));
+    } catch (err) { console.error('Cancel failed', err); }
   };
 
   const toggleOutput = (id) => {
@@ -1053,14 +1065,10 @@ export default function Home() {
 
   const isOverlaySidebar = viewportWidth < 1200;
   const activeSidebarWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, sidebarWidth));
-  const hideSidebarForFocus = historyFocus;
-  // When collapsed: sidebar takes 0px in grid (drawer overlay instead of rail strip)
-  const layoutSidebarWidth = hideSidebarForFocus || sidebarCollapsed
-    ? 0
-    : (isOverlaySidebar ? activeSidebarWidth : activeSidebarWidth);
+  const layoutSidebarWidth = sidebarCollapsed ? 0 : activeSidebarWidth;
   const layoutVars = {
     '--sidebar-width': `${layoutSidebarWidth}px`,
-    '--resizer-width': isOverlaySidebar || sidebarCollapsed || hideSidebarForFocus ? '0px' : '10px',
+    '--resizer-width': isOverlaySidebar || sidebarCollapsed ? '0px' : '10px',
   };
 
   const currentSessionData = sessions.find(s => s.id === currentSession);
@@ -1103,15 +1111,15 @@ export default function Home() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <main className={`container ${historyFocus ? 'focus-mode' : ''}`}>
-      <header className={`header glass-panel ${historyFocus ? 'header-compact' : ''}`}>
+    <main className="container">
+      <header className="header glass-panel">
         <div className="header-row">
           {/* Brand */}
           <span className="dnd-title header-brand">HW</span>
 
           {/* Session selector + contextual meta */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flex: '1 1 auto', minWidth: 0, overflow: 'hidden' }}>
-            {(isOverlaySidebar || sidebarCollapsed) && !historyFocus && (
+            {(isOverlaySidebar || sidebarCollapsed) && (
               <button className="btn-secondary btn-compact" onClick={() => setSidebarDrawerOpen(true)} title="Toolbox">☰</button>
             )}
             <select value={currentSession} onChange={(e) => setCurrentSession(e.target.value)}
@@ -1177,7 +1185,7 @@ export default function Home() {
         </div>
       </header>
 
-      {currentSessionData?.objective && !historyFocus && (
+      {currentSessionData?.objective && (
         <div className="glass-panel objective-bar">
           <span style={{ color: 'var(--accent-secondary)' }}>Objective:</span> {currentSessionData.objective}
         </div>
@@ -1228,6 +1236,8 @@ export default function Home() {
                   <option value="executive-summary">Executive Summary</option>
                   <option value="technical-walkthrough">Technical Walkthrough</option>
                   <option value="ctf-solution">CTF Solution</option>
+                  <option value="bug-bounty">Bug Bounty</option>
+                  <option value="pentest">Pentest Report</option>
                 </select>
                 <select value={pdfStyle} onChange={(e) => setPdfStyle(e.target.value)}
                   style={{ fontSize: '0.8rem', padding: '4px 8px' }}>
@@ -1526,13 +1536,12 @@ export default function Home() {
         </div>
       )}
 
-      <div className={`layout ${isOverlaySidebar ? 'layout-overlay' : ''} ${sidebarCollapsed ? 'layout-collapsed' : ''} ${historyFocus ? 'layout-history-focus' : ''}`} style={layoutVars}>
-        {!hideSidebarForFocus && (isOverlaySidebar || sidebarCollapsed) && sidebarDrawerOpen && (
+      <div className={`layout ${isOverlaySidebar ? 'layout-overlay' : ''} ${sidebarCollapsed ? 'layout-collapsed' : ''}`} style={layoutVars}>
+        {(isOverlaySidebar || sidebarCollapsed) && sidebarDrawerOpen && (
           <div className="sidebar-backdrop" onClick={() => setSidebarDrawerOpen(false)} />
         )}
 
         {/* ── Sidebar ──────────────────────────────────────────────────────── */}
-        {!hideSidebarForFocus && (
         <aside className={`sidebar glass-panel ${(isOverlaySidebar || sidebarCollapsed) ? 'overlay' : ''} ${sidebarDrawerOpen ? 'open' : ''}`}>
           <div className="sidebar-header">
             <h3>Toolbox</h3>
@@ -1622,6 +1631,10 @@ export default function Home() {
                       </div>
                     </div>
                   )}
+                  <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem' }}>
+                    <button className="btn-secondary" onClick={() => setCollapsedTools(new Set())} style={{ fontSize: '0.8rem', padding: '3px 8px' }}>Expand All</button>
+                    <button className="btn-secondary" onClick={() => setCollapsedTools(new Set(CHEATSHEET.map((_, i) => i)))} style={{ fontSize: '0.8rem', padding: '3px 8px' }}>Collapse All</button>
+                  </div>
                   {CHEATSHEET.map((tool, i) => {
                     const isCollapsed = collapsedTools.has(i);
                     return (
@@ -1672,10 +1685,18 @@ export default function Home() {
 
               {sidebarTab === 'history' && (
                 <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', overflowY: 'auto' }}>
-                  {cmdHistory.length === 0 ? (
+                  <input
+                    type="text"
+                    value={historySearch}
+                    onChange={(e) => setHistorySearch(e.target.value)}
+                    placeholder="Search history..."
+                    className="mono"
+                    style={{ fontSize: '0.78rem', padding: '3px 6px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', borderRadius: '4px', color: 'var(--text-primary)', outline: 'none' }}
+                  />
+                  {cmdHistory.filter(cmd => !historySearch || cmd.command.toLowerCase().includes(historySearch.toLowerCase())).length === 0 ? (
                     <p className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>No commands yet.</p>
                   ) : (
-                    cmdHistory.map((cmd, i) => (
+                    cmdHistory.filter(cmd => !historySearch || cmd.command.toLowerCase().includes(historySearch.toLowerCase())).map((cmd, i) => (
                       <div key={cmd.id || i} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(1,4,9,0.4)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '4px 6px' }}>
                         <span className={`badge badge-${cmd.status}`} style={{ fontSize: '0.65rem', padding: '1px 4px', whiteSpace: 'nowrap' }}>{(cmd.status || '?').toUpperCase()}</span>
                         <span className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={cmd.command}>{cmd.command}</span>
@@ -1688,17 +1709,19 @@ export default function Home() {
               )}
             </>
         </aside>
-        )}
 
-        {!hideSidebarForFocus && !isOverlaySidebar && !sidebarCollapsed && (
+        {!isOverlaySidebar && !sidebarCollapsed && (
           <div className={`sidebar-resizer ${isResizingSidebar ? 'active' : ''}`} onMouseDown={startSidebarResize} role="separator" aria-orientation="vertical" aria-label="Resize toolbox panel" />
         )}
 
         {/* ── Timeline ──────────────────────────────────────────────────────── */}
-        <section className={`timeline-container glass-panel ${historyFocus ? 'history-focus' : ''}`}>
+        <section className="timeline-container glass-panel">
           {/* Filter bar — single row */}
           <div className="filter-toolbar">
             <div className="filter-row">
+              {sidebarCollapsed && !isOverlaySidebar && (
+                <button className="btn-secondary mono sidebar-toggle-btn" onClick={toggleSidebarCollapse} title="Pin sidebar" style={{ marginRight: '0.25rem' }}>»</button>
+              )}
               {['all', 'command', 'note', 'screenshot'].map(t => (
                 <button key={t} onClick={() => setFilterType(t)}
                   className="mono"
@@ -1736,14 +1759,6 @@ export default function Home() {
               <button onClick={loadDbStats} className="mono btn-secondary"
                 style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="DB stats">
                 ⚙
-              </button>
-              <button
-                onClick={() => setHistoryFocus(v => !v)}
-                className="mono btn-secondary"
-                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }}
-                title={historyFocus ? 'Exit focus mode' : 'History focus mode'}
-              >
-                {historyFocus ? '⊡' : '⊞'}
               </button>
             </div>
           </div>
@@ -1823,6 +1838,10 @@ export default function Home() {
                             <span className="mono">
                               {`${Math.floor((Date.now() - new Date(event.timestamp).getTime()) / 1000)}s elapsed`}
                             </span>
+                            <button
+                              onClick={() => handleCancelCommand(event.id, event.session_id || currentSession)}
+                              style={{ background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', color: '#ff5050', fontSize: '0.75rem', padding: '1px 6px', cursor: 'pointer' }}
+                            >✕ Cancel</button>
                           </div>
                         )}
                       </>
@@ -1907,20 +1926,7 @@ export default function Home() {
           </div>
 
           {/* ── Input area ────────────────────────────────────────────────── */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: inputCollapsed ? '0' : '0.3rem' }}>
-            <button type="button" onClick={() => setInputCollapsed(v => !v)}
-              className="mono btn-secondary"
-              style={{ fontSize: '0.75rem', padding: '2px 8px', whiteSpace: 'nowrap', flexShrink: 0 }}
-              title={inputCollapsed ? 'Expand input' : 'Collapse input'}>
-              {inputCollapsed ? '▲ Input' : '▼'}
-            </button>
-            {inputCollapsed && (
-              <span className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                input collapsed — click ▲ to expand
-              </span>
-            )}
-          </div>
-          <form className={`input-area${inputCollapsed ? ' input-area--collapsed' : ''}`} onSubmit={handleSubmit}>
+          <form className="input-area" onSubmit={handleSubmit}>
             <div className="input-toolbar">
               <select value={inputType} onChange={(e) => setInputType(e.target.value)} style={{ width: '120px' }}>
                 <option value="command">Command</option>
@@ -2006,7 +2012,7 @@ export default function Home() {
                 value={inputVal}
                 onChange={(e) => { setInputVal(e.target.value); setHistoryIdx(-1); }}
                 onKeyDown={handleKeyDown}
-                placeholder={inputType === 'command' ? '$ Enter command... (↑↓ history)' : 'Type a note...'}
+                placeholder={inputType === 'command' ? '$ command... use {TARGET} for session IP  (↑↓ history)' : 'Type a note...'}
                 disabled={isLoading}
               />
               <button type="submit" className="btn-primary" disabled={isLoading || !inputVal.trim()}>
@@ -2019,10 +2025,8 @@ export default function Home() {
 
       <style jsx>{`
         .container { width: min(96vw, 1880px); margin: 0 auto; padding: clamp(12px, 1.2vw, 24px); height: calc(100vh - clamp(12px, 1.2vw, 24px)); display: flex; flex-direction: column; gap: 0.5rem; }
-        .container.focus-mode { gap: 0.35rem; }
-        .header { padding: 0.45rem 1.2rem; display: flex; flex-direction: row; align-items: center; gap: 0.6rem; }
-        .header.header-compact { padding: 0.35rem 0.85rem; gap: 0.4rem; }
-        .header-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 0.45rem; flex-wrap: nowrap; min-height: unset; }
+.header { padding: 0.45rem 1.2rem; display: flex; flex-direction: row; align-items: center; gap: 0.6rem; }
+.header-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 0.45rem; flex-wrap: nowrap; min-height: unset; }
         .header-brand { font-size: 1.0rem; letter-spacing: 2px; white-space: nowrap; flex-shrink: 0; }
         .btn-compact { min-height: 30px !important; padding: 0.2rem 0.55rem !important; font-size: 0.8rem !important; }
         .objective-bar { padding: 0.7rem 1.2rem; font-size: 0.92rem; color: var(--text-muted); border-top: none; }
@@ -2033,9 +2037,9 @@ export default function Home() {
         .report-block-card { border: 1px solid rgba(88,166,255,0.22); border-radius: 8px; background: rgba(1,4,9,0.58); padding: 0.65rem; display: flex; flex-direction: column; }
         .report-block-header { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.42rem; }
 
-        .layout { position: relative; display: grid; grid-template-columns: var(--sidebar-width) var(--resizer-width) minmax(0, 1fr); flex-grow: 1; min-height: 0; gap: 0.75rem; margin-top: 0.75rem; }
-        .layout.layout-history-focus { margin-top: 0.35rem; }
-        .layout.layout-overlay { grid-template-columns: minmax(0, 1fr); }
+        .layout { position: relative; display: grid; grid-template-columns: var(--sidebar-width) var(--resizer-width) minmax(400px, 1fr); flex-grow: 1; min-height: 0; gap: 0.75rem; margin-top: 0.75rem; }
+.layout.layout-overlay { grid-template-columns: minmax(0, 1fr); }
+        .layout.layout-collapsed { grid-template-columns: minmax(0, 1fr); }
         .sidebar { width: 100%; padding: 1rem 1rem 1.1rem; display: flex; flex-direction: column; overflow-y: auto; min-height: 0; }
         .sidebar.collapsed { padding: 0.75rem 0.45rem; overflow: hidden; }
         .sidebar-header { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; margin-bottom: 0.8rem; }
@@ -2065,15 +2069,7 @@ export default function Home() {
         .event-command { font-family: var(--font-mono); font-size: 1rem; margin-bottom: 0.5rem; color: #fff; }
         .event-output { background: rgba(1, 4, 9, 0.8); padding: 1rem; border-radius: 6px; font-size: 0.9rem; max-height: 320px; overflow-y: auto; border-left: 2px solid var(--accent-primary); white-space: pre-wrap; word-break: break-all; margin-bottom: 2px; }
         .event-note { font-size: 1.05rem; padding: 0.5rem 1rem; border-left: 3px solid var(--accent-secondary); background: rgba(88, 166, 255, 0.05); }
-        .timeline-container.history-focus { padding: 1.32rem 1.45rem; }
-        .timeline-container.history-focus .timeline-event { padding: 1.22rem; }
-        .timeline-container.history-focus .event-header { margin-bottom: 0.72rem; }
-        .timeline-container.history-focus .event-header .mono { font-size: 0.9rem !important; }
-        .timeline-container.history-focus .event-command { font-size: 1.08rem; }
-        .timeline-container.history-focus .event-output { font-size: 0.96rem; line-height: 1.6; max-height: 410px; }
-        .timeline-container.history-focus .event-note { font-size: 1.14rem; line-height: 1.65; padding: 0.7rem 1rem; }
-        .timeline-container.history-focus .input-area { padding: 1.25rem; gap: 0.7rem; }
-        .loader { width: 12px; height: 12px; border: 2px solid var(--accent-warning); border-bottom-color: transparent; border-radius: 50%; display: inline-block; animation: rotation 1s linear infinite; }
+.loader { width: 12px; height: 12px; border: 2px solid var(--accent-warning); border-bottom-color: transparent; border-radius: 50%; display: inline-block; animation: rotation 1s linear infinite; }
         @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .input-area { background: rgba(1, 4, 9, 0.6); padding: 1.15rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.5rem; }
         .input-toolbar { display: flex; justify-content: space-between; margin-bottom: 0.45rem; flex-wrap: wrap; gap: 0.5rem; }
