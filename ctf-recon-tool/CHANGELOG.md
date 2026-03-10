@@ -2,6 +2,21 @@
 
 All notable changes to Helm's Watch are documented in this file.
 
+## [0.3.0] - 2026-03-10
+
+### Added
+- Request-scoped nonce-based CSP for production app pages via `proxy.js`, with dedicated validation coverage.
+
+### Changed
+- Project metadata, READMEs, and API docs now align on release `v0.3.0`.
+- Project version footer now resolves to `v0.3.0` via `NEXT_PUBLIC_APP_VERSION`.
+- OpenAPI metadata now uses the package version instead of a stale hardcoded API version.
+- Companion template and HTB example READMEs now explicitly track the current Helm's Watch release line.
+
+### Fixed
+- Restored frontend hydration by moving app-page CSP handling to a request-scoped nonce flow instead of a broken global inline-script block.
+- Health-driven UI capability status and command-execution behavior now stay aligned in Docker/runtime checks.
+
 ## [0.2.0] - 2026-03-09
 
 ### Added

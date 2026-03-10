@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
+import pkg from '../../../package.json';
 
 const SPEC = {
   openapi: '3.1.0',
   info: {
-    title: "Helm's Paladin API",
-    version: '1.0.0',
-    description: 'CTF reconnaissance assistant — session management, command execution, AI coaching, and reporting.',
+    title: "Helm's Watch API",
+    version: pkg.version,
+    description: "Helm's Watch API for session management, command execution, AI workflows, and reporting.",
   },
   servers: [{ url: '/api', description: 'Current server' }],
   components: {

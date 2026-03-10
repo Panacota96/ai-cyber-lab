@@ -2,7 +2,7 @@
 
 > Desktop-first cyber lab workspace for commands, evidence, AI-assisted analysis, and export-ready writeups.
 >
-> **Current Version:** `v0.2.0`  
+> **Current Version:** `v0.3.0`  
 > [Changelog](./CHANGELOG.md) | [Roadmap](./docs/ROADMAP.md) | [Improvement Backlog](./docs/improvement-backlog.md)
 
 ## Overview

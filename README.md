@@ -2,7 +2,7 @@
 
 AI Cyber Lab is the repository that houses Helm's Watch, a desktop-first cyber lab workspace for CTF, lab, and pentest documentation.
 
-Current application release: **v0.2.0**
+Current application release: **v0.3.0**
 
 ## Start Here
 - [Application README](./ctf-recon-tool/README.md)

@@ -128,3 +128,71 @@
 {"timestamp":"2026-03-09T23:57:55.021Z","level":"INFO","message":"Screenshot metadata updated: 1773100675000g1y9i28","metadata":{}}
 {"timestamp":"2026-03-09T23:57:55.582Z","level":"INFO","message":"Finding created for session: sess-92329fc0","metadata":{}}
 {"timestamp":"2026-03-09T23:57:55.603Z","level":"INFO","message":"Finding deleted: 9 from session: sess-92329fc0","metadata":{}}
+{"timestamp":"2026-03-10T00:33:42.436Z","level":"WARN","message":"Command execution rejected because it is disabled in the current environment","metadata":{"nodeEnv":"production","sessionId":"sess-2292fd63"}}
+{"timestamp":"2026-03-10T00:33:42.478Z","level":"INFO","message":"Received command execution request for session sess-1118f6bb: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:33:42.549Z","level":"INFO","message":"Command 1773102822496x9nw2xs in session sess-1118f6bb completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:33:42.615Z","level":"INFO","message":"Received command execution request for session sess-d0440d96: sleep 5","metadata":{}}
+{"timestamp":"2026-03-10T00:33:44.165Z","level":"INFO","message":"Received command execution request for session sess-602692cb: sleep 10","metadata":{}}
+{"timestamp":"2026-03-10T00:33:44.297Z","level":"INFO","message":"Received command execution request for session sess-68c2f74e: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:33:44.319Z","level":"INFO","message":"Command 177310282430803x3e9d in session sess-68c2f74e completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:33:44.326Z","level":"WARN","message":"Timeline event update did not persist during command execution","metadata":{"sessionId":"sess-68c2f74e","eventId":"177310282430803x3e9d","updates":{"status":"success","output":"Command executed successfully with no output."}}}
+{"timestamp":"2026-03-10T00:33:44.357Z","level":"INFO","message":"Received command execution request for session sess-1b554f61: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:33:44.367Z","level":"INFO","message":"Command 1773102824361d6b1y3g in session sess-1b554f61 completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:33:44.372Z","level":"ERROR","message":"Failed to update timeline event during command execution","metadata":{"sessionId":"sess-1b554f61","eventId":"1773102824361d6b1y3g","error":{}}}
+{"timestamp":"2026-03-10T00:33:44.951Z","level":"INFO","message":"Screenshot uploaded: 1773102824895-proof.png for session sess-44e5d5fe","metadata":{}}
+{"timestamp":"2026-03-10T00:33:44.995Z","level":"INFO","message":"Screenshot uploaded: 1773102824987-proof.png for session sess-825556ce","metadata":{}}
+{"timestamp":"2026-03-10T00:33:45.055Z","level":"INFO","message":"Screenshot uploaded: 1773102825042-proof.png for session sess-05e10ede","metadata":{}}
+{"timestamp":"2026-03-10T00:33:45.077Z","level":"INFO","message":"Screenshot metadata updated: 1773102825043bya6rhb","metadata":{}}
+{"timestamp":"2026-03-10T00:33:45.406Z","level":"INFO","message":"Finding created for session: sess-08e94f34","metadata":{}}
+{"timestamp":"2026-03-10T00:33:45.432Z","level":"INFO","message":"Finding deleted: 8 from session: sess-08e94f34","metadata":{}}
+{"timestamp":"2026-03-10T00:36:17.072Z","level":"WARN","message":"Command execution rejected because it is disabled in the current environment","metadata":{"nodeEnv":"production","sessionId":"sess-587b5929"}}
+{"timestamp":"2026-03-10T00:36:17.110Z","level":"INFO","message":"Received command execution request for session sess-bd6f3066: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:36:17.127Z","level":"INFO","message":"Command 1773102977118o821hfi in session sess-bd6f3066 completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:36:17.368Z","level":"INFO","message":"Received command execution request for session sess-dbf6cf29: sleep 5","metadata":{}}
+{"timestamp":"2026-03-10T00:36:18.922Z","level":"INFO","message":"Received command execution request for session sess-a506d876: sleep 10","metadata":{}}
+{"timestamp":"2026-03-10T00:36:19.002Z","level":"INFO","message":"Received command execution request for session sess-1c7c8e59: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:36:19.026Z","level":"INFO","message":"Command 1773102979012je4g5qr in session sess-1c7c8e59 completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:36:19.037Z","level":"WARN","message":"Timeline event update did not persist during command execution","metadata":{"sessionId":"sess-1c7c8e59","eventId":"1773102979012je4g5qr","updates":{"status":"success","output":"Command executed successfully with no output."}}}
+{"timestamp":"2026-03-10T00:36:19.071Z","level":"INFO","message":"Received command execution request for session sess-669f3d2b: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:36:19.087Z","level":"INFO","message":"Command 1773102979081396y4u6 in session sess-669f3d2b completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:36:19.099Z","level":"ERROR","message":"Failed to update timeline event during command execution","metadata":{"sessionId":"sess-669f3d2b","eventId":"1773102979081396y4u6","error":{}}}
+{"timestamp":"2026-03-10T00:36:19.539Z","level":"INFO","message":"Screenshot uploaded: 1773102979531-proof.png for session sess-4a6dfbbb","metadata":{}}
+{"timestamp":"2026-03-10T00:36:19.569Z","level":"INFO","message":"Screenshot uploaded: 1773102979563-proof.png for session sess-df533244","metadata":{}}
+{"timestamp":"2026-03-10T00:36:19.613Z","level":"INFO","message":"Screenshot uploaded: 1773102979594-proof.png for session sess-81f1a2ee","metadata":{}}
+{"timestamp":"2026-03-10T00:36:19.655Z","level":"INFO","message":"Screenshot metadata updated: 1773102979595vh2y24s","metadata":{}}
+{"timestamp":"2026-03-10T00:36:20.031Z","level":"INFO","message":"Finding created for session: sess-e6ac4e08","metadata":{}}
+{"timestamp":"2026-03-10T00:36:20.055Z","level":"INFO","message":"Finding deleted: 4 from session: sess-e6ac4e08","metadata":{}}
+{"timestamp":"2026-03-10T00:38:28.277Z","level":"WARN","message":"Command execution rejected because it is disabled in the current environment","metadata":{"nodeEnv":"production","sessionId":"sess-8741885e"}}
+{"timestamp":"2026-03-10T00:38:28.334Z","level":"INFO","message":"Received command execution request for session sess-28416b01: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:38:28.350Z","level":"INFO","message":"Command 1773103108342x5tubsh in session sess-28416b01 completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:38:28.393Z","level":"INFO","message":"Received command execution request for session sess-207c08c7: sleep 5","metadata":{}}
+{"timestamp":"2026-03-10T00:38:29.950Z","level":"INFO","message":"Received command execution request for session sess-fdbb04aa: sleep 10","metadata":{}}
+{"timestamp":"2026-03-10T00:38:30.026Z","level":"INFO","message":"Received command execution request for session sess-99ada023: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:38:30.050Z","level":"INFO","message":"Command 1773103110035s3mmi3n in session sess-99ada023 completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:38:30.064Z","level":"WARN","message":"Timeline event update did not persist during command execution","metadata":{"sessionId":"sess-99ada023","eventId":"1773103110035s3mmi3n","updates":{"status":"success","output":"Command executed successfully with no output."}}}
+{"timestamp":"2026-03-10T00:38:30.094Z","level":"INFO","message":"Received command execution request for session sess-939fd031: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:38:30.109Z","level":"INFO","message":"Command 17731031101014dvfwah in session sess-939fd031 completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:38:30.116Z","level":"ERROR","message":"Failed to update timeline event during command execution","metadata":{"sessionId":"sess-939fd031","eventId":"17731031101014dvfwah","error":{}}}
+{"timestamp":"2026-03-10T00:38:31.692Z","level":"INFO","message":"Screenshot uploaded: 1773103111684-proof.png for session sess-2d0f48bf","metadata":{}}
+{"timestamp":"2026-03-10T00:38:31.760Z","level":"INFO","message":"Screenshot uploaded: 1773103111719-proof.png for session sess-7278796d","metadata":{}}
+{"timestamp":"2026-03-10T00:38:31.792Z","level":"INFO","message":"Screenshot uploaded: 1773103111785-proof.png for session sess-1516de70","metadata":{}}
+{"timestamp":"2026-03-10T00:38:31.805Z","level":"INFO","message":"Screenshot metadata updated: 1773103111786o3t5rvl","metadata":{}}
+{"timestamp":"2026-03-10T00:38:32.314Z","level":"INFO","message":"Finding created for session: sess-7cbc0fa5","metadata":{}}
+{"timestamp":"2026-03-10T00:38:32.340Z","level":"INFO","message":"Finding deleted: 8 from session: sess-7cbc0fa5","metadata":{}}
+{"timestamp":"2026-03-10T00:40:45.638Z","level":"WARN","message":"Command execution rejected because it is disabled in the current environment","metadata":{"nodeEnv":"production","sessionId":"sess-67e9b84f"}}
+{"timestamp":"2026-03-10T00:40:45.694Z","level":"INFO","message":"Received command execution request for session sess-e3cdb80a: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:40:45.848Z","level":"INFO","message":"Command 1773103245838pwmgdkx in session sess-e3cdb80a completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:40:45.883Z","level":"INFO","message":"Received command execution request for session sess-3c805d0a: sleep 5","metadata":{}}
+{"timestamp":"2026-03-10T00:40:47.435Z","level":"INFO","message":"Received command execution request for session sess-250754cd: sleep 10","metadata":{}}
+{"timestamp":"2026-03-10T00:40:47.504Z","level":"INFO","message":"Received command execution request for session sess-73c16880: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:40:47.519Z","level":"INFO","message":"Command 1773103247512hy0xc96 in session sess-73c16880 completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:40:47.528Z","level":"WARN","message":"Timeline event update did not persist during command execution","metadata":{"sessionId":"sess-73c16880","eventId":"1773103247512hy0xc96","updates":{"status":"success","output":"Command executed successfully with no output."}}}
+{"timestamp":"2026-03-10T00:40:47.559Z","level":"INFO","message":"Received command execution request for session sess-c1cec601: echo test","metadata":{}}
+{"timestamp":"2026-03-10T00:40:47.578Z","level":"INFO","message":"Command 1773103247569cwei8x3 in session sess-c1cec601 completed successfully","metadata":{}}
+{"timestamp":"2026-03-10T00:40:47.586Z","level":"ERROR","message":"Failed to update timeline event during command execution","metadata":{"sessionId":"sess-c1cec601","eventId":"1773103247569cwei8x3","error":{}}}
+{"timestamp":"2026-03-10T00:40:48.463Z","level":"INFO","message":"Screenshot uploaded: 1773103248391-proof.png for session sess-73b2f781","metadata":{}}
+{"timestamp":"2026-03-10T00:40:48.502Z","level":"INFO","message":"Screenshot uploaded: 1773103248494-proof.png for session sess-368ebb33","metadata":{}}
+{"timestamp":"2026-03-10T00:40:48.534Z","level":"INFO","message":"Screenshot uploaded: 1773103248529-proof.png for session sess-7ea6acc9","metadata":{}}
+{"timestamp":"2026-03-10T00:40:48.557Z","level":"INFO","message":"Screenshot metadata updated: 1773103248530ko5r1r0","metadata":{}}
+{"timestamp":"2026-03-10T00:40:49.173Z","level":"INFO","message":"Finding created for session: sess-4fa3aa5d","metadata":{}}
+{"timestamp":"2026-03-10T00:40:49.221Z","level":"INFO","message":"Finding deleted: 8 from session: sess-4fa3aa5d","metadata":{}}

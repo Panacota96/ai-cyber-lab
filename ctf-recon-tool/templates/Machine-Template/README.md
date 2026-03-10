@@ -1,6 +1,6 @@
 # Machine Template (Obsidian)
 
-Use this folder as the operator-side companion structure for a Helm's Watch session, especially when you want a file-based notebook next to the in-app timeline, findings, and exports.
+Use this folder as the operator-side companion structure for a Helm's Watch `v0.3.0` session, especially when you want a file-based notebook next to the in-app timeline, findings, and exports.
 
 ## Files
 - `Index.md`
