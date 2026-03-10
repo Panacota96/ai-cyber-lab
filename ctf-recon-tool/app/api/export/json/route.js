@@ -6,6 +6,7 @@ import {
   sanitizeDownloadToken,
 } from '@/lib/export-utils';
 import { isValidSessionId } from '@/lib/security';
+import { normalizeAnalystName } from '@/lib/text-sanitize';
 
 function getAppVersion() {
   return process.env.NEXT_PUBLIC_APP_VERSION || 'unknown';
@@ -16,7 +17,7 @@ export async function POST(request) {
     const payload = await request.json();
     const sessionId = String(payload?.sessionId || '').trim();
     const format = String(payload?.format || 'technical-walkthrough');
-    const analystName = String(payload?.analystName || 'Unknown').trim() || 'Unknown';
+    const analystName = normalizeAnalystName(payload?.analystName);
     const inlineImages = normalizeBoolean(payload?.inlineImages, false);
 
     if (!sessionId || !isValidSessionId(sessionId)) {
@@ -46,6 +47,7 @@ export async function POST(request) {
       },
       timeline: bundle.timeline,
       pocSteps: bundle.pocSteps,
+      findings: bundle.findings,
       writeup: bundle.writeup,
     };
 

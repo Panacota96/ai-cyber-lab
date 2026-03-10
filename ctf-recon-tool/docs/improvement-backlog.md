@@ -1,6 +1,6 @@
 ---
 title: Helm's Paladin — Improvement Backlog
-updated: 2026-03-09
+updated: 2026-03-10
 source: automated codebase scan (claude-sonnet-4-6)
 format: knowledge-sync compatible
 ---
@@ -13,12 +13,6 @@ format: knowledge-sync compatible
 ---
 
 ## A. Frontend / UI/UX
-
-### A.1 — Mobile / Tablet Responsive Layout
-**What:** Improve responsive design for tablets (768–1024px) and mobile.
-**Why:** CTF practitioners work across devices; desktop-only limits utility.
-**Files:** `app/page.js`, `app/globals.css`
-**Difficulty:** Medium | **Impact:** High
 
 ### A.2 — Collapsible Timeline with Auto-Expand Recent
 **What:** Toggle to collapse/expand all events; auto-expand newest N events.
@@ -202,8 +196,9 @@ format: knowledge-sync compatible
 
 ### D.2 — AI Auto-Finding Extraction + Severity Tagging
 **What:** AI-assisted detection of findings from output; tag Critical/High/Medium/Low.
-**Files:** `app/api/coach/route.js`, `app/lib/report-gen.js`
+**Files:** `app/api/findings/route.js`, `app/api/findings/extract/route.js`, `app/lib/db.js`, `app/page.js`, `app/lib/report-formats.js`
 **Difficulty:** Hard | **Impact:** High
+**Status:** Implemented (2026-03-09). Added dedicated `findings` table + `/api/findings` CRUD and manual `POST /api/findings/extract` proposal workflow with severity tagging and evidence links; integrated findings into report generation and export bundle JSON.
 
 ### D.3 — Inline Images in Markdown/PDF
 **What:** Auto-embed screenshot data URIs in exported reports.
@@ -221,7 +216,7 @@ format: knowledge-sync compatible
 **What:** Export beyond PDF: Word doc, HTML, raw JSON.
 **Files:** `app/api/export/`, `package.json`
 **Difficulty:** Medium | **Impact:** Medium
-**Status:** Partially implemented (2026-03-09). D.5 phase 1 delivered `POST /api/export/html` and `POST /api/export/json` with shared export bundle assembly, report modal download actions, and docs updates. DOCX remains pending for phase 2.
+**Status:** Implemented (2026-03-09). Phase 1 delivered `POST /api/export/html` + `POST /api/export/json`; phase 2 completed `POST /api/export/docx`, report modal DOCX download action, and full docs coverage.
 
 ### D.6 — Report Versioning + Diff
 **What:** Changelog between writeup versions; side-by-side markdown diff.
@@ -366,6 +361,7 @@ format: knowledge-sync compatible
 **What:** Jest/Vitest covering DB layer, API endpoints, report generation.
 **Files:** `tests/`, `package.json`
 **Difficulty:** Hard | **Impact:** High
+**Status:** In progress (2026-03-09). Phase 1 delivered with Vitest foundation, isolated test DB runtime, and critical-path coverage for findings DB/helpers, findings/report/export APIs, and report format/export bundle behavior.
 
 ### G.2 — TypeScript Gradual Conversion
 **What:** `tsconfig.json`; convert `db.js`, `security.js`, API routes first.
@@ -453,3 +449,7 @@ format: knowledge-sync compatible
 | 2026-03-09 | G.9 — Dependency audit completed: `npm audit` reports 0 vulnerabilities; safe updates applied (`react/react-dom` to 19.2.4), major-risk packages deferred |
 | 2026-03-09 | D.4 — PoC recorder implemented with `poc_steps` storage, `/api/poc` CRUD/reorder API, timeline add/indicator UX, report modal PoC editor, and PoC injection into technical/pentest report generation |
 | 2026-03-09 | D.5 phase 1 — Multi-format export added (`/api/export/html`, `/api/export/json`) with standalone styled HTML, full JSON bundle output, and report modal download buttons |
+| 2026-03-09 | D.5 phase 2 — DOCX export completed (`/api/export/docx`) with clean professional layout, embedded screenshots, and default evidence appendix |
+| 2026-03-09 | Wave 1 hardening completed — `SEC.1`, `SEC.3`, `SEC.4`, `SEC.5`, `SEC.6`, `EX.4`, `EX.10`, and `GR.15` implemented with structured process runtime, tracked child-process shutdown, CSP/security headers, strict graph validation, ANSI stripping, and plain-text sanitization for analyst/screenshot fields |
+| 2026-03-10 | Wave 2 delivery/data-safety completed — `GH.1`, `GH.2`, `GH.5`, `GH.10`, `GH.11`, `CQ.1`, `CQ.2`, `CQ.4`, `CD.1`, `CD.2`, `CD.3` implemented with repo-root GitHub workflows, `skip-changelog` PR bypass label, bounded rate limiting, additive DB indexes, execute finalization hardening, and evidence JSON parse warnings |
+| 2026-03-10 | Timeline invalid-date regression fixed — failed execute/note/upload responses no longer append fake events; client now safely parses SQLite timestamps and falls back to neutral time labels |

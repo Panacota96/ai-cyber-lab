@@ -1,49 +1,45 @@
-# AI Cyber Lab: Helm's Paladin Reconstruction Project
+# AI Cyber Lab
 
-## Overview
-This repository contains the **AI Cyber Lab** project, centered around the development and deployment of **Helm's Paladin**—a specialized reconnaissance assistant designed for Capture The Flag (CTF) competitions and penetration testing engagements. 
+AI Cyber Lab is the repository that houses Helm's Watch, a desktop-first cyber lab workspace for CTF, lab, and pentest documentation.
 
-The project integrates a professional Next.js-based web interface with a robust Linux security toolchain, persistent SQLite storage, and a multi-provider AI enhancement system.
+Current application release: **v0.2.0**
 
-Current application release: **v0.2.0**  
-Release notes: [ctf-recon-tool/CHANGELOG.md](ctf-recon-tool/CHANGELOG.md)
+## Start Here
+- [Application README](./ctf-recon-tool/README.md)
+- [Roadmap](./ctf-recon-tool/docs/ROADMAP.md)
+- [Changelog](./ctf-recon-tool/CHANGELOG.md)
+- [Laboratory Report](./laboratory_report.md)
 
----
+## Repository Layout
+- [`ctf-recon-tool/`](./ctf-recon-tool/) - Active Next.js application, Docker runtime, templates, examples, and release tracking.
+- [`docs/`](./docs/) - Shared project documentation split by domain.
+- [`laboratory_report.md`](./laboratory_report.md) - Academic writeup for the project.
 
-## Repository Structure
+## Documentation Map
+- [AI docs](./docs/ai/)
+- [Backend docs](./docs/backend/)
+- [Frontend docs](./docs/frontend/)
+- [Implementation docs](./docs/implementation/)
+- [Testing docs](./docs/testing/)
+- [Usage docs](./docs/usage/)
 
-### 1. [Application: ctf-recon-tool/](file:///c:/Users/david/OneDrive%20-%20Pontificia%20Universidad%20Javeriana/Documents/GitHub/ai-cyber-lab/ctf-recon-tool/)
-The core software application. It includes:
-*   **Next.js 15 Web Interface**: Real-time terminal-style dashboard.
-*   **Docker Configuration**: Pre-configured environment for security tool execution.
-*   **[Templates/](file:///c:/Users/david/OneDrive%20-%20Pontificia%20Universidad%20Javeriana/Documents/GitHub/ai-cyber-lab/ctf-recon-tool/templates/)**: Professional CTF writeup templates integrated from the `ctf-writeups` collection.
+## Helm's Watch at a Glance
+Helm's Watch is the current operator workspace in this repo. It combines:
+- timeline-first session tracking for commands, notes, screenshots, findings, and PoC steps
+- AI Coach and AI Reporter workflows
+- report generation in six formats with Markdown, PDF, HTML, JSON, and DOCX exports
+- SQLite-backed persistence and Docker-first operation
 
-### 2. [Technical Documentation: docs/](file:///c:/Users/david/OneDrive%20-%20Pontificia%20Universidad%20Javeriana/Documents/GitHub/ai-cyber-lab/docs/)
-A comprehensive technical suite covering all aspects of the implementation:
-*   **[AI Reference](file:///c:/Users/david/OneDrive%20-%20Pontificia%20Universidad%20Javeriana/Documents/GitHub/ai-cyber-lab/docs/ai/SKILLS.md)**: Skill routing, models, and prompting strategies.
-*   **[Backend Architecture](file:///c:/Users/david/OneDrive%20-%20Pontificia%20Universidad%20Javeriana/Documents/GitHub/ai-cyber-lab/docs/backend/API_REFERENCE.md)**: RESTful API definitions and SQLite database schema.
-*   **[Frontend Design](file:///c:/Users/david/OneDrive%20-%20Pontificia%20Universidad%20Javeriana/Documents/GitHub/ai-cyber-lab/docs/frontend/ARCHITECTURE.md)**: React 19 component structure and theme system.
-*   **[Deployment Guide](file:///c:/Users/david/OneDrive%20-%20Pontificia%20Universidad%20Javeriana/Documents/GitHub/ai-cyber-lab/docs/implementation/DOCKER_BUILD.md)**: Docker orchestration and environment setup.
-*   **[User Guide & Verification](file:///c:/Users/david/OneDrive%20-%20Pontificia%20Universidad%20Javeriana/Documents/GitHub/ai-cyber-lab/docs/usage/USER_GUIDE.md)**: Operational instructions and quality assurance procedures.
+For implementation details, setup, and current feature coverage, use the [application README](./ctf-recon-tool/README.md).
 
-### 3. [Laboratory Report: laboratory_report.md](file:///c:/Users/david/OneDrive%20-%20Pontificia%20Universidad%20Javeriana/Documents/GitHub/ai-cyber-lab/laboratory_report.md)
-The formal academic writeup of the project, following the ESME/Javeriana structural conventions (Overview, Task Sets, Conclusion).
-
----
-
-## Getting Started
-
-### Prerequisites
-*   Docker and Docker Compose
-*   (Optional) Node.js 20+ for local development
-
-### Deployment
-To initialize the environment and start the assistant:
+## Quick Start
 ```bash
 cd ctf-recon-tool
 docker compose up -d --build
 ```
-The application will be accessible at [http://localhost:3000](http://localhost:3000).
 
----
-*Note: This project is maintained for CTF reconnaissance and security research purposes.*
+Then open `http://localhost:3000`.
+
+## Notes
+- The product is desktop/laptop-first. Mobile and tablet UI work is intentionally out of scope.
+- Some runtime identifiers still use `helms-paladin` for Docker and compatibility, even though the current product name is Helm's Watch.

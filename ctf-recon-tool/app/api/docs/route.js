@@ -65,6 +65,23 @@ const SPEC = {
           screenshotEvent: { $ref: '#/components/schemas/TimelineEvent' },
         },
       },
+      Finding: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer' },
+          sessionId: { type: 'string' },
+          title: { type: 'string' },
+          severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
+          description: { type: 'string' },
+          impact: { type: 'string' },
+          remediation: { type: 'string' },
+          source: { type: 'string' },
+          evidenceEventIds: { type: 'array', items: { type: 'string' } },
+          evidenceEvents: { type: 'array', items: { $ref: '#/components/schemas/TimelineEvent' } },
+          createdAt: { type: 'string', format: 'date-time', nullable: true },
+          updatedAt: { type: 'string', format: 'date-time', nullable: true },
+        },
+      },
     },
   },
   paths: {
@@ -243,6 +260,124 @@ const SPEC = {
           '200': { description: 'Deleted' },
           '401': { description: 'Unauthorized' },
           '404': { description: 'PoC step not found' },
+        },
+      },
+    },
+    '/findings': {
+      get: {
+        summary: 'List persisted findings for a session',
+        operationId: 'listFindings',
+        parameters: [{ name: 'sessionId', in: 'query', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'Array of findings',
+            content: { 'application/json': { schema: { type: 'array', items: { $ref: '#/components/schemas/Finding' } } } },
+          },
+        },
+      },
+      post: {
+        summary: 'Create a finding',
+        operationId: 'createFinding',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId', 'title'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  title: { type: 'string' },
+                  severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'], default: 'medium' },
+                  description: { type: 'string' },
+                  impact: { type: 'string' },
+                  remediation: { type: 'string' },
+                  source: { type: 'string', default: 'manual' },
+                  evidenceEventIds: { type: 'array', items: { type: 'string' } },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Created finding' },
+          '401': { description: 'Unauthorized' },
+        },
+      },
+      patch: {
+        summary: 'Update a finding',
+        operationId: 'updateFinding',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId', 'id'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  id: { type: 'integer' },
+                  title: { type: 'string' },
+                  severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
+                  description: { type: 'string' },
+                  impact: { type: 'string' },
+                  remediation: { type: 'string' },
+                  source: { type: 'string' },
+                  evidenceEventIds: { type: 'array', items: { type: 'string' } },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Updated finding' },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Finding not found' },
+        },
+      },
+      delete: {
+        summary: 'Delete a finding',
+        operationId: 'deleteFinding',
+        security: [{ ApiToken: [] }],
+        parameters: [
+          { name: 'sessionId', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'id', in: 'query', required: true, schema: { type: 'integer' } },
+        ],
+        responses: {
+          '200': { description: 'Deleted' },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Finding not found' },
+        },
+      },
+    },
+    '/findings/extract': {
+      post: {
+        summary: 'Extract finding proposals with AI from timeline evidence',
+        operationId: 'extractFindings',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  provider: { type: 'string', enum: ['claude', 'gemini', 'openai'], default: 'claude' },
+                  apiKey: { type: 'string' },
+                  maxEvents: { type: 'integer', default: 80, minimum: 10, maximum: 300 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Proposal list (not persisted)' },
+          '401': { description: 'Unauthorized' },
+          '502': { description: 'Model returned malformed JSON' },
         },
       },
     },
@@ -442,6 +577,36 @@ const SPEC = {
           content: { 'application/json': { schema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' }, format: { type: 'string' }, analystName: { type: 'string' }, inlineImages: { type: 'boolean', default: false } } } } },
         },
         responses: { '200': { description: 'JSON bundle file download', content: { 'application/json': {} } } },
+      },
+    },
+    '/export/docx': {
+      post: {
+        summary: 'Export session as DOCX',
+        operationId: 'exportDocx',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  format: { type: 'string' },
+                  analystName: { type: 'string' },
+                  inlineImages: { type: 'boolean', default: true },
+                  includeAppendix: { type: 'boolean', default: true },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'DOCX file download',
+            content: { 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': {} },
+          },
+        },
       },
     },
     '/health': {

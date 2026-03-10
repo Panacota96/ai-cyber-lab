@@ -4,6 +4,7 @@ import { getSession, getTimeline } from '@/lib/db';
 import path from 'path';
 import fs from 'fs';
 import { isValidSessionId, requireSafeFilename, resolvePathWithin } from '@/lib/security';
+import { normalizeAnalystName } from '@/lib/text-sanitize';
 
 // Map report format name to a display title
 const FORMAT_TITLES = {
@@ -354,7 +355,7 @@ export async function POST(request) {
     if (!markdownContent) {
       return apiError('content is required', 400);
     }
-    const safeAnalystName = String(analystName || 'Unknown').slice(0, 120);
+    const safeAnalystName = normalizeAnalystName(analystName);
 
     const theme = PDF_STYLES[pdfStyle] || PDF_STYLES['terminal-dark'];
     if (sessionId && !isValidSessionId(sessionId)) {
@@ -413,7 +414,7 @@ export async function GET(request) {
   const sessionId = searchParams.get('sessionId');
   const format = searchParams.get('format') || 'lab-report';
   const pdfStyle = searchParams.get('pdfStyle') || 'terminal-dark';
-  const safeAnalystName = String(searchParams.get('analystName') || 'Unknown').slice(0, 120);
+  const safeAnalystName = normalizeAnalystName(searchParams.get('analystName'));
 
   if (!sessionId || !isValidSessionId(sessionId)) {
     return apiError('sessionId required', 400);

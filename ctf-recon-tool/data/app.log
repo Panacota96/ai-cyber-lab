@@ -34,3 +34,97 @@
 {"timestamp":"2026-03-07T20:47:37.089Z","level":"INFO","message":"Screenshot uploaded: 1772916457043-imagen_2026-03-07_214735189.png for session html---source-code","metadata":{}}
 {"timestamp":"2026-03-07T20:48:50.648Z","level":"INFO","message":"Screenshot metadata updated: 1772916457063puvzsm3","metadata":{}}
 {"timestamp":"2026-03-07T20:49:37.432Z","level":"INFO","message":"New timeline event added of type: note to session: html---source-code","metadata":{}}
+{"timestamp":"2026-03-09T21:22:48.726Z","level":"INFO","message":"Finding created for session: sess-fad74e92","metadata":{}}
+{"timestamp":"2026-03-09T21:22:48.851Z","level":"INFO","message":"Finding deleted: 1 from session: sess-fad74e92","metadata":{}}
+{"timestamp":"2026-03-09T21:24:23.556Z","level":"INFO","message":"Finding created for session: sess-69166fc7","metadata":{}}
+{"timestamp":"2026-03-09T21:24:23.586Z","level":"INFO","message":"Finding deleted: 1 from session: sess-69166fc7","metadata":{}}
+{"timestamp":"2026-03-09T21:24:58.977Z","level":"INFO","message":"Finding created for session: sess-cb56d14a","metadata":{}}
+{"timestamp":"2026-03-09T21:24:59.007Z","level":"INFO","message":"Finding deleted: 5 from session: sess-cb56d14a","metadata":{}}
+{"timestamp":"2026-03-09T21:25:29.700Z","level":"INFO","message":"Finding created for session: sess-fb7d94f4","metadata":{}}
+{"timestamp":"2026-03-09T21:25:31.163Z","level":"INFO","message":"Finding deleted: 1 from session: sess-fb7d94f4","metadata":{}}
+{"timestamp":"2026-03-09T21:26:47.386Z","level":"INFO","message":"Finding created for session: sess-6dd4ed15","metadata":{}}
+{"timestamp":"2026-03-09T21:26:47.423Z","level":"INFO","message":"Finding deleted: 9 from session: sess-6dd4ed15","metadata":{}}
+{"timestamp":"2026-03-09T21:28:51.474Z","level":"INFO","message":"Finding created for session: sess-a7b32f50","metadata":{}}
+{"timestamp":"2026-03-09T21:28:51.503Z","level":"INFO","message":"Finding deleted: 1 from session: sess-a7b32f50","metadata":{}}
+{"timestamp":"2026-03-09T22:37:43.920Z","level":"INFO","message":"Received command execution request for session sess-3437d69e: echo test","metadata":{}}
+{"timestamp":"2026-03-09T22:37:43.937Z","level":"INFO","message":"Command 1773095863927fzy2xap in session sess-3437d69e completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T22:37:43.974Z","level":"INFO","message":"Received command execution request for session sess-a8220db1: sleep 5","metadata":{}}
+{"timestamp":"2026-03-09T22:37:45.570Z","level":"INFO","message":"Received command execution request for session sess-ad8f658c: sleep 10","metadata":{}}
+{"timestamp":"2026-03-09T22:37:46.570Z","level":"ERROR","message":"Command 1773095865570ag2cuu5 in session sess-ad8f658c failed","metadata":{"command":"sleep 10","code":1,"signal":"SIGTERM"}}
+{"timestamp":"2026-03-09T22:37:46.570Z","level":"INFO","message":"Screenshot uploaded: 1773095866570-proof.png for session sess-2a426302","metadata":{}}
+{"timestamp":"2026-03-09T22:37:46.570Z","level":"INFO","message":"Screenshot uploaded: 1773095866570-proof.png for session sess-68d2c6b4","metadata":{}}
+{"timestamp":"2026-03-09T22:37:46.570Z","level":"INFO","message":"Screenshot uploaded: 1773095866570-proof.png for session sess-508346c2","metadata":{}}
+{"timestamp":"2026-03-09T22:37:46.570Z","level":"INFO","message":"Screenshot metadata updated: 1773095866570c1h6eku","metadata":{}}
+{"timestamp":"2026-03-09T22:37:46.570Z","level":"INFO","message":"Finding created for session: sess-10cdac31","metadata":{}}
+{"timestamp":"2026-03-09T22:37:46.570Z","level":"INFO","message":"Finding deleted: 4 from session: sess-10cdac31","metadata":{}}
+{"timestamp":"2026-03-09T22:39:33.155Z","level":"INFO","message":"Received command execution request for session sess-4f7fd5f9: echo test","metadata":{}}
+{"timestamp":"2026-03-09T22:39:33.173Z","level":"INFO","message":"Command 1773095973163n2sxvtv in session sess-4f7fd5f9 completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T22:39:33.205Z","level":"INFO","message":"Received command execution request for session sess-17838418: sleep 5","metadata":{}}
+{"timestamp":"2026-03-09T22:39:34.740Z","level":"INFO","message":"Received command execution request for session sess-ffe39748: sleep 10","metadata":{}}
+{"timestamp":"2026-03-09T22:40:41.971Z","level":"INFO","message":"Received command execution request for session sess-393f4d89: echo test","metadata":{}}
+{"timestamp":"2026-03-09T22:40:42.117Z","level":"ERROR","message":"Failed to start command execution","metadata":{"sessionId":"sess-393f4d89","eventId":"17730960421094mnl3ky","error":{}}}
+{"timestamp":"2026-03-09T22:40:42.194Z","level":"INFO","message":"Received command execution request for session sess-d1c04bdd: sleep 5","metadata":{}}
+{"timestamp":"2026-03-09T22:40:42.206Z","level":"ERROR","message":"Failed to start command execution","metadata":{"sessionId":"sess-d1c04bdd","eventId":"1773096042200hr7wlhu","error":{}}}
+{"timestamp":"2026-03-09T22:40:42.237Z","level":"INFO","message":"Received command execution request for session sess-5fa5e7eb: sleep 10","metadata":{}}
+{"timestamp":"2026-03-09T22:40:42.237Z","level":"ERROR","message":"Failed to start command execution","metadata":{"sessionId":"sess-5fa5e7eb","eventId":"1773096042237a55qdjn","error":{}}}
+{"timestamp":"2026-03-09T22:41:37.019Z","level":"INFO","message":"Received command execution request for session sess-36c0a18c: echo test","metadata":{}}
+{"timestamp":"2026-03-09T22:41:37.040Z","level":"INFO","message":"Command 17730960970290zau4wf in session sess-36c0a18c completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T22:41:37.066Z","level":"INFO","message":"Received command execution request for session sess-d5da07b3: sleep 5","metadata":{}}
+{"timestamp":"2026-03-09T22:41:38.624Z","level":"INFO","message":"Received command execution request for session sess-d9427fa9: sleep 10","metadata":{}}
+{"timestamp":"2026-03-09T22:42:40.054Z","level":"INFO","message":"Received command execution request for session sess-183f9fe9: echo test","metadata":{}}
+{"timestamp":"2026-03-09T22:42:40.068Z","level":"INFO","message":"Command 17730961600613t3fdto in session sess-183f9fe9 completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T22:42:40.093Z","level":"INFO","message":"Received command execution request for session sess-d2f393e8: sleep 5","metadata":{}}
+{"timestamp":"2026-03-09T22:42:41.652Z","level":"INFO","message":"Received command execution request for session sess-c152dd73: sleep 10","metadata":{}}
+{"timestamp":"2026-03-09T22:42:54.663Z","level":"INFO","message":"Received command execution request for session sess-8f5d26a3: echo test","metadata":{}}
+{"timestamp":"2026-03-09T22:42:54.681Z","level":"INFO","message":"Command 1773096174671580xubg in session sess-8f5d26a3 completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T22:42:54.709Z","level":"INFO","message":"Received command execution request for session sess-610b0853: sleep 5","metadata":{}}
+{"timestamp":"2026-03-09T22:42:56.243Z","level":"INFO","message":"Received command execution request for session sess-4dd41704: sleep 10","metadata":{}}
+{"timestamp":"2026-03-09T22:42:56.397Z","level":"INFO","message":"Screenshot uploaded: 1773096176389-proof.png for session sess-ef14463d","metadata":{}}
+{"timestamp":"2026-03-09T22:42:56.431Z","level":"INFO","message":"Screenshot uploaded: 1773096176424-proof.png for session sess-daccafee","metadata":{}}
+{"timestamp":"2026-03-09T22:42:56.522Z","level":"INFO","message":"Screenshot uploaded: 1773096176480-proof.png for session sess-f3167d4b","metadata":{}}
+{"timestamp":"2026-03-09T22:42:56.555Z","level":"INFO","message":"Screenshot metadata updated: 1773096176481in7ppqf","metadata":{}}
+{"timestamp":"2026-03-09T22:42:56.647Z","level":"INFO","message":"Finding created for session: sess-8b969a05","metadata":{}}
+{"timestamp":"2026-03-09T22:42:56.674Z","level":"INFO","message":"Finding deleted: 1 from session: sess-8b969a05","metadata":{}}
+{"timestamp":"2026-03-09T22:49:14.714Z","level":"INFO","message":"Received command execution request for session sess-75cbb4b2: echo test","metadata":{}}
+{"timestamp":"2026-03-09T22:49:14.730Z","level":"INFO","message":"Command 17730965547217odneiw in session sess-75cbb4b2 completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T22:49:14.758Z","level":"INFO","message":"Received command execution request for session sess-9066ce9f: sleep 5","metadata":{}}
+{"timestamp":"2026-03-09T22:49:16.291Z","level":"INFO","message":"Received command execution request for session sess-fabd8306: sleep 10","metadata":{}}
+{"timestamp":"2026-03-09T22:49:16.483Z","level":"INFO","message":"Screenshot uploaded: 1773096556435-proof.png for session sess-5eaa27d0","metadata":{}}
+{"timestamp":"2026-03-09T22:49:16.513Z","level":"INFO","message":"Screenshot uploaded: 1773096556507-proof.png for session sess-fb49f9f6","metadata":{}}
+{"timestamp":"2026-03-09T22:49:16.546Z","level":"INFO","message":"Screenshot uploaded: 1773096556533-proof.png for session sess-7a7b86a9","metadata":{}}
+{"timestamp":"2026-03-09T22:49:16.557Z","level":"INFO","message":"Screenshot metadata updated: 1773096556533hnzgoim","metadata":{}}
+{"timestamp":"2026-03-09T22:49:17.145Z","level":"INFO","message":"Finding created for session: sess-b9581050","metadata":{}}
+{"timestamp":"2026-03-09T22:49:17.171Z","level":"INFO","message":"Finding deleted: 8 from session: sess-b9581050","metadata":{}}
+{"timestamp":"2026-03-09T23:09:24.321Z","level":"INFO","message":"Received command execution request for session sess-a3f7da34: echo test","metadata":{}}
+{"timestamp":"2026-03-09T23:09:24.340Z","level":"INFO","message":"Command 1773097764329hupwsv6 in session sess-a3f7da34 completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T23:09:24.383Z","level":"INFO","message":"Received command execution request for session sess-850278cf: sleep 5","metadata":{}}
+{"timestamp":"2026-03-09T23:09:25.925Z","level":"INFO","message":"Received command execution request for session sess-46c0774b: sleep 10","metadata":{}}
+{"timestamp":"2026-03-09T23:09:25.979Z","level":"INFO","message":"Received command execution request for session sess-80e5785c: echo test","metadata":{}}
+{"timestamp":"2026-03-09T23:09:25.995Z","level":"INFO","message":"Command 177309776598615bxx4i in session sess-80e5785c completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T23:09:26.003Z","level":"WARN","message":"Timeline event update did not persist during command execution","metadata":{"sessionId":"sess-80e5785c","eventId":"177309776598615bxx4i","updates":{"status":"success","output":"Command executed successfully with no output."}}}
+{"timestamp":"2026-03-09T23:09:26.029Z","level":"INFO","message":"Received command execution request for session sess-328e81e1: echo test","metadata":{}}
+{"timestamp":"2026-03-09T23:09:26.042Z","level":"INFO","message":"Command 1773097766037gamq4yv in session sess-328e81e1 completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T23:09:26.050Z","level":"ERROR","message":"Failed to update timeline event during command execution","metadata":{"sessionId":"sess-328e81e1","eventId":"1773097766037gamq4yv","error":{}}}
+{"timestamp":"2026-03-09T23:09:26.369Z","level":"INFO","message":"Screenshot uploaded: 1773097766362-proof.png for session sess-7a41c46c","metadata":{}}
+{"timestamp":"2026-03-09T23:09:26.404Z","level":"INFO","message":"Screenshot uploaded: 1773097766397-proof.png for session sess-c7c985a6","metadata":{}}
+{"timestamp":"2026-03-09T23:09:26.438Z","level":"INFO","message":"Screenshot uploaded: 1773097766431-proof.png for session sess-8ee9b6d2","metadata":{}}
+{"timestamp":"2026-03-09T23:09:26.453Z","level":"INFO","message":"Screenshot metadata updated: 1773097766431fofecb7","metadata":{}}
+{"timestamp":"2026-03-09T23:09:26.658Z","level":"INFO","message":"Finding created for session: sess-e0bce7bc","metadata":{}}
+{"timestamp":"2026-03-09T23:09:26.686Z","level":"INFO","message":"Finding deleted: 8 from session: sess-e0bce7bc","metadata":{}}
+{"timestamp":"2026-03-09T23:57:52.334Z","level":"WARN","message":"Command execution rejected because it is disabled in the current environment","metadata":{"nodeEnv":"production","sessionId":"sess-892ab82c"}}
+{"timestamp":"2026-03-09T23:57:52.383Z","level":"INFO","message":"Received command execution request for session sess-57ca0daa: echo test","metadata":{}}
+{"timestamp":"2026-03-09T23:57:52.607Z","level":"INFO","message":"Command 17731006725982xj1klk in session sess-57ca0daa completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T23:57:52.641Z","level":"INFO","message":"Received command execution request for session sess-87077f7b: sleep 5","metadata":{}}
+{"timestamp":"2026-03-09T23:57:54.186Z","level":"INFO","message":"Received command execution request for session sess-ef263c2b: sleep 10","metadata":{}}
+{"timestamp":"2026-03-09T23:57:54.252Z","level":"INFO","message":"Received command execution request for session sess-d335bd79: echo test","metadata":{}}
+{"timestamp":"2026-03-09T23:57:54.263Z","level":"INFO","message":"Command 1773100674257fp11bsx in session sess-d335bd79 completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T23:57:54.271Z","level":"WARN","message":"Timeline event update did not persist during command execution","metadata":{"sessionId":"sess-d335bd79","eventId":"1773100674257fp11bsx","updates":{"status":"success","output":"Command executed successfully with no output."}}}
+{"timestamp":"2026-03-09T23:57:54.326Z","level":"INFO","message":"Received command execution request for session sess-5e3b1a27: echo test","metadata":{}}
+{"timestamp":"2026-03-09T23:57:54.344Z","level":"INFO","message":"Command 17731006743363czfgku in session sess-5e3b1a27 completed successfully","metadata":{}}
+{"timestamp":"2026-03-09T23:57:54.359Z","level":"ERROR","message":"Failed to update timeline event during command execution","metadata":{"sessionId":"sess-5e3b1a27","eventId":"17731006743363czfgku","error":{}}}
+{"timestamp":"2026-03-09T23:57:54.869Z","level":"INFO","message":"Screenshot uploaded: 1773100674860-proof.png for session sess-a802941c","metadata":{}}
+{"timestamp":"2026-03-09T23:57:54.903Z","level":"INFO","message":"Screenshot uploaded: 1773100674895-proof.png for session sess-418f19a5","metadata":{}}
+{"timestamp":"2026-03-09T23:57:55.006Z","level":"INFO","message":"Screenshot uploaded: 1773100674999-proof.png for session sess-adffe358","metadata":{}}
+{"timestamp":"2026-03-09T23:57:55.021Z","level":"INFO","message":"Screenshot metadata updated: 1773100675000g1y9i28","metadata":{}}
+{"timestamp":"2026-03-09T23:57:55.582Z","level":"INFO","message":"Finding created for session: sess-92329fc0","metadata":{}}
+{"timestamp":"2026-03-09T23:57:55.603Z","level":"INFO","message":"Finding deleted: 9 from session: sess-92329fc0","metadata":{}}

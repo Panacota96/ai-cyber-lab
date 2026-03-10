@@ -12,6 +12,7 @@ import {
   requireSafeFilename,
 } from '@/lib/security';
 import { apiError } from '@/lib/api-error';
+import { normalizePlainText } from '@/lib/text-sanitize';
 
 function normalizeMime(mime) {
   const clean = String(mime || '').trim().toLowerCase();
@@ -29,7 +30,7 @@ export async function POST(request) {
     const formData = await request.formData();
     const file = formData.get('file');
     const sessionId = formData.get('sessionId') || 'default';
-    const tag = String(formData.get('tag') || '').trim().slice(0, 64);
+    const tag = normalizePlainText(formData.get('tag'), 64);
 
     if (!file) {
       return apiError('No file uploaded', 400);
@@ -65,7 +66,7 @@ export async function POST(request) {
     const baseName = sanitizeUploadFilename(parsed.name || 'screenshot').replace(/\.[^.]+$/, '');
     const filename = `${Date.now()}-${baseName}.${sniffed.extension}`;
     requireSafeFilename(filename);
-    const name = String(formData.get('name') || safeOriginalName).trim().slice(0, 255) || safeOriginalName;
+    const name = normalizePlainText(formData.get('name') || safeOriginalName, 255) || safeOriginalName;
     const screenshotDir = getScreenshotDir(sessionId);
     const filePath = resolvePathWithin(screenshotDir, filename);
 
@@ -75,7 +76,7 @@ export async function POST(request) {
       type: 'screenshot',
       filename: filename,
       name: name,
-      tag: tag,
+      tag: tag || null,
       status: 'success'
     });
 

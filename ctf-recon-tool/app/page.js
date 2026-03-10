@@ -5,6 +5,14 @@ import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { CHEATSHEET } from '@/lib/cheatsheet';
 import { SUGGESTIONS, DIFFICULTY_COLORS, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH, SUGGESTED_TAGS } from '@/lib/constants';
+import { escapeMarkdownInline, normalizePlainText } from '@/lib/text-sanitize';
+import {
+  formatTimelineDateTime,
+  formatTimelineTime,
+  getTimelineElapsedSeconds,
+  parseTimelineMutationResponse,
+  sanitizeTimelineEvents,
+} from '@/lib/timeline-client';
 
 // Lazy-load DiscoveryGraph (React Flow requires client-only; no SSR)
 const DiscoveryGraph = dynamic(() => import('@/components/DiscoveryGraph'), { ssr: false });
@@ -166,6 +174,13 @@ function markdownToReportBlocks(markdown) {
 }
 
 const TIMELINE_AUTO_EXPAND_COUNT = 5;
+const FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low'];
+
+function normalizeFindingSeverity(rawSeverity = 'medium') {
+  const normalized = String(rawSeverity || '').trim().toLowerCase();
+  if (FINDING_SEVERITIES.includes(normalized)) return normalized;
+  return 'medium';
+}
 
 function newestTimelineIds(events, count = TIMELINE_AUTO_EXPAND_COUNT) {
   return [...events]
@@ -207,6 +222,18 @@ function summarizeTimelineEvent(event) {
   return event.content || '';
 }
 
+function safeMarkdownLabel(value, fallback = '') {
+  return escapeMarkdownInline(normalizePlainText(value, 255) || fallback);
+}
+
+function findingEvidenceLabel(event) {
+  if (!event) return 'Unknown evidence';
+  if (event.type === 'command') return `CMD: ${event.command || '(command)'}`;
+  if (event.type === 'note') return `NOTE: ${summarizeTimelineEvent(event) || '(note)'}`;
+  if (event.type === 'screenshot') return `SS: ${safeMarkdownLabel(event.name || event.filename, 'Screenshot')}`;
+  return `EVENT: ${event.id || 'unknown'}`;
+}
+
 function clipPocOutput(text, max = 900) {
   const value = String(text || '');
   if (value.length <= max) return value;
@@ -236,8 +263,9 @@ function buildPocSectionMarkdown(sessionId, pocSteps = []) {
       md += `**Execution:** _Not linked_\n\n`;
     }
     if (screenshot?.filename) {
-      md += `**Evidence:** ${screenshot.name || 'Screenshot'}\n\n`;
-      md += `![${screenshot.name || 'Screenshot'}](/api/media/${sessionId}/${screenshot.filename})\n\n`;
+      const screenshotName = safeMarkdownLabel(screenshot.name || screenshot.filename, 'Screenshot');
+      md += `**Evidence:** ${screenshotName}\n\n`;
+      md += `![${screenshotName}](/api/media/${sessionId}/${screenshot.filename})\n\n`;
     } else if (step.screenshotEventId) {
       md += `**Evidence:** _Linked screenshot not found (${step.screenshotEventId})_\n\n`;
     } else {
@@ -246,6 +274,58 @@ function buildPocSectionMarkdown(sessionId, pocSteps = []) {
     const observation = step.observation || note?.content || '';
     md += `**Observation:** ${observation || '_Not specified_'}\n\n`;
   });
+  return md.trim();
+}
+
+function buildFindingsSectionMarkdown(findings = []) {
+  const normalized = (Array.isArray(findings) ? findings : [])
+    .filter((finding) => finding?.title)
+    .map((finding) => ({
+      title: String(finding.title || '').trim(),
+      severity: normalizeFindingSeverity(finding.severity),
+      description: String(finding.description || '').trim(),
+      impact: String(finding.impact || '').trim(),
+      remediation: String(finding.remediation || '').trim(),
+      evidenceEvents: Array.isArray(finding.evidenceEvents) ? finding.evidenceEvents : [],
+      evidenceEventIds: Array.isArray(finding.evidenceEventIds) ? finding.evidenceEventIds : [],
+    }));
+
+  let md = `## Findings\n\n`;
+  if (normalized.length === 0) {
+    md += `> _Document each finding with severity, description, and evidence references._\n\n`;
+    md += `| # | Finding | Severity | Evidence |\n| --- | --- | --- | --- |\n`;
+    md += `| 1 | _Fill in_ | Critical / High / Medium / Low | _ref_ |\n`;
+    return md.trim();
+  }
+
+  md += `| # | Finding | Severity | Evidence |\n| --- | --- | --- | --- |\n`;
+  normalized.forEach((finding, idx) => {
+    const evidenceCount = (finding.evidenceEvents?.length || 0) + (finding.evidenceEventIds?.length || 0);
+    const severityLabel = finding.severity.charAt(0).toUpperCase() + finding.severity.slice(1);
+    md += `| ${idx + 1} | ${finding.title} | ${severityLabel} | ${evidenceCount > 0 ? `${evidenceCount} item(s)` : '—'} |\n`;
+  });
+  md += `\n`;
+
+  normalized.forEach((finding, idx) => {
+    const severityLabel = finding.severity.charAt(0).toUpperCase() + finding.severity.slice(1);
+    md += `### ${idx + 1}. ${finding.title}\n\n`;
+    md += `**Severity:** ${severityLabel}\n\n`;
+    md += `**Description:** ${finding.description || '_Not specified_'}\n\n`;
+    md += `**Impact:** ${finding.impact || '_Not specified_'}\n\n`;
+    md += `**Remediation:** ${finding.remediation || '_Not specified_'}\n\n`;
+    if (finding.evidenceEvents.length > 0) {
+      md += `**Evidence:**\n`;
+      finding.evidenceEvents.forEach((event) => {
+        md += `- ${findingEvidenceLabel(event)}\n`;
+      });
+      md += `\n`;
+    } else if (finding.evidenceEventIds.length > 0) {
+      md += `**Evidence IDs:** ${finding.evidenceEventIds.join(', ')}\n\n`;
+    } else {
+      md += `**Evidence:** _Not linked_\n\n`;
+    }
+  });
+
   return md.trim();
 }
 
@@ -268,21 +348,20 @@ export default function Home() {
 
   // Sidebar state
   const [expandedCats, setExpandedCats] = useState([]);
-  const [hiddenCats, setHiddenCats] = useState(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('ui.hiddenCats') || '[]')); } catch { return new Set(); }
-  });
+  const [hiddenCats, setHiddenCats] = useState(() => new Set());
   const [showCatManager, setShowCatManager] = useState(false);
   const [toolboxSearch, setToolboxSearch] = useState('');
   const [sidebarTab, setSidebarTab] = useState('tools'); // 'tools' | 'flags' | 'history'
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false);
-  const [viewportWidth, setViewportWidth] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1600));
+  const [viewportWidth, setViewportWidth] = useState(1600);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [favorites, setFavorites] = useState(() => (typeof window !== 'undefined' ? loadFavorites() : new Set()));
+  const [favorites, setFavorites] = useState(() => new Set());
   const [collapsedTools, setCollapsedTools] = useState(() => new Set(CHEATSHEET.map((_, i) => i)));
   const [cmdHistory, setCmdHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
+  const [mainView, setMainView] = useState('terminal'); // 'terminal' | 'graph'
 
   // Command timeout (seconds)
   const [cmdTimeout, setCmdTimeout] = useState(120);
@@ -302,18 +381,10 @@ export default function Home() {
   const [coachCompareTab, setCoachCompareTab] = useState(0);
 
   // Timeline filter state — persisted to localStorage
-  const [filterType, setFilterType] = useState(() => {
-    try { return localStorage.getItem('filter.type') || 'all'; } catch { return 'all'; }
-  });
-  const [filterStatus, setFilterStatus] = useState(() => {
-    try { return localStorage.getItem('filter.status') || 'all'; } catch { return 'all'; }
-  });
-  const [filterKeyword, setFilterKeyword] = useState(() => {
-    try { return localStorage.getItem('filter.keyword') || ''; } catch { return ''; }
-  });
-  const [filterTag, setFilterTag] = useState(() => {
-    try { return localStorage.getItem('filter.tag') || ''; } catch { return ''; }
-  });
+  const [filterType, setFilterType] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterKeyword, setFilterKeyword] = useState('');
+  const [filterTag, setFilterTag] = useState('');
 
   // Connection / sync status
   const [lastSyncTime, setLastSyncTime] = useState(null);
@@ -352,24 +423,24 @@ export default function Home() {
   const [reportFormat, setReportFormat] = useState('technical-walkthrough');
   const [pdfStyle, setPdfStyle] = useState('terminal-dark');
   const [pocSteps, setPocSteps] = useState([]);
+  const [findings, setFindings] = useState([]);
+  const [findingProposals, setFindingProposals] = useState([]);
+  const [isExtractingFindings, setIsExtractingFindings] = useState(false);
   const [pocBusyEventId, setPocBusyEventId] = useState(null);
   const [writeupVisibility, setWriteupVisibility] = useState('draft');
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [aiProvider, setAiProvider] = useState('claude');
   const [aiSkill, setAiSkill] = useState('enhance');
-  const [analystName, setAnalystName] = useState(() => {
-    try { return localStorage.getItem('report.analystName') || ''; } catch { return ''; }
-  });
+  const [analystName, setAnalystName] = useState('');
   const [analystNameError, setAnalystNameError] = useState(false);
   const [aiUsageSummary, setAiUsageSummary] = useState(null);
-  const [apiKeys, setApiKeys] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('aiApiKeys') || '{}'); }
-    catch { return {}; }
-  });
+  const [apiKeys, setApiKeys] = useState({});
 
   // Version history modal
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [writeupVersions, setWriteupVersions] = useState([]);
+  const [prefsHydrated, setPrefsHydrated] = useState(false);
+  const [todayLabel, setTodayLabel] = useState('');
 
   // D.9 — CVSS score for note input
   const [cvssScore, setCvssScore] = useState('');
@@ -449,7 +520,7 @@ export default function Home() {
     try {
       const res = await apiFetch(`/api/timeline?sessionId=${currentSession}`);
       const data = await res.json();
-      setTimeline(data);
+      setTimeline(sanitizeTimelineEvents(data));
       setLastSyncTime(Date.now());
       setConnectionStatus('connected');
     } catch (e) {
@@ -462,7 +533,7 @@ export default function Home() {
     try {
       const res = await apiFetch(`/api/timeline?sessionId=${currentSession}`);
       const data = await res.json();
-      const cmds = data.filter(e => e.type === 'command').reverse();
+      const cmds = sanitizeTimelineEvents(data).filter(e => e.type === 'command').reverse();
       setCmdHistory(cmds);
       setInputHistory(cmds.map(e => e.command).filter(Boolean));
     } catch (e) { /* silent */ }
@@ -496,9 +567,24 @@ export default function Home() {
     }
   }, [currentSession, apiFetch]);
 
+  const fetchFindings = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/api/findings?sessionId=${currentSession}`);
+      if (!res.ok) {
+        setFindings([]);
+        return;
+      }
+      const data = await res.json();
+      setFindings(Array.isArray(data) ? data : []);
+    } catch (_) {
+      setFindings([]);
+    }
+  }, [currentSession, apiFetch]);
+
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
   useEffect(() => { fetchAiUsage(); }, [fetchAiUsage]);
   useEffect(() => { fetchPocSteps(); }, [fetchPocSteps]);
+  useEffect(() => { fetchFindings(); }, [fetchFindings]);
 
   useEffect(() => {
     fetchTimeline();
@@ -510,7 +596,20 @@ export default function Home() {
     timelineSeenIdsRef.current = new Set();
     setExpandedTimelineEvents(new Set());
     setPocSteps([]);
+    setFindings([]);
+    setFindingProposals([]);
   }, [currentSession]);
+
+  useEffect(() => {
+    if (!Array.isArray(timeline)) {
+      setTimeline([]);
+      return;
+    }
+    const sanitized = sanitizeTimelineEvents(timeline);
+    if (sanitized.length !== timeline.length) {
+      setTimeline(sanitized);
+    }
+  }, [timeline]);
 
   const fetchHealth = useCallback(async () => {
     try {
@@ -554,6 +653,28 @@ export default function Home() {
 
   useEffect(() => {
     try {
+      setViewportWidth(window.innerWidth);
+      setHiddenCats(new Set(JSON.parse(localStorage.getItem('ui.hiddenCats') || '[]')));
+      setFavorites(loadFavorites());
+      setFilterType(localStorage.getItem('filter.type') || 'all');
+      setFilterStatus(localStorage.getItem('filter.status') || 'all');
+      setFilterKeyword(localStorage.getItem('filter.keyword') || '');
+      setFilterTag(localStorage.getItem('filter.tag') || '');
+      setAnalystName(localStorage.getItem('report.analystName') || '');
+      setApiKeys(JSON.parse(localStorage.getItem('aiApiKeys') || '{}'));
+    } catch (_) {
+      // localStorage unavailable
+    } finally {
+      setPrefsHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    setTodayLabel(new Date().toLocaleDateString());
+  }, []);
+
+  useEffect(() => {
+    try {
       const storedWidth = Number(localStorage.getItem('ui.sidebarWidth') || '');
       const storedCollapsed = localStorage.getItem('ui.sidebarCollapsed');
       const storedTimelineCollapsed = localStorage.getItem('ui.timelineCollapsed');
@@ -574,6 +695,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!prefsHydrated) return;
     try {
       localStorage.setItem('ui.sidebarWidth', String(Math.round(sidebarWidth)));
       localStorage.setItem('ui.sidebarCollapsed', sidebarCollapsed ? 'true' : 'false');
@@ -582,25 +704,27 @@ export default function Home() {
     } catch (_) {
       // localStorage unavailable
     }
-  }, [sidebarWidth, sidebarCollapsed, hiddenCats, analystName]);
+  }, [prefsHydrated, sidebarWidth, sidebarCollapsed, hiddenCats, analystName]);
 
   useEffect(() => {
+    if (!prefsHydrated) return;
     try {
       localStorage.setItem('ui.timelineCollapsed', timelineCollapsed ? 'true' : 'false');
     } catch (_) {
       // localStorage unavailable
     }
-  }, [timelineCollapsed]);
+  }, [prefsHydrated, timelineCollapsed]);
 
   // Persist filter state to localStorage
   useEffect(() => {
+    if (!prefsHydrated) return;
     try {
       localStorage.setItem('filter.type', filterType);
       localStorage.setItem('filter.status', filterStatus);
       localStorage.setItem('filter.keyword', filterKeyword);
       localStorage.setItem('filter.tag', filterTag);
     } catch (_) { /* localStorage unavailable */ }
-  }, [filterType, filterStatus, filterKeyword, filterTag]);
+  }, [prefsHydrated, filterType, filterStatus, filterKeyword, filterTag]);
 
   // A.10 — Keyboard shortcuts
   useEffect(() => {
@@ -634,7 +758,7 @@ export default function Home() {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (viewportWidth < 1200) {
@@ -651,17 +775,14 @@ export default function Home() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!inputVal.trim()) return;
+    if (inputType === 'command' && !commandExecutionEnabled) {
+      alert('Command execution is disabled in this environment. Set ENABLE_COMMAND_EXECUTION=true and restart the app container or local server.');
+      return;
+    }
     setIsLoading(true);
     const val = inputVal;
     const tags = inputTags.split(',').map(t => t.trim()).filter(Boolean);
     const cvss = cvssScore.trim();
-    setInputVal('');
-    setInputTags('');
-    setCvssScore('');
-    setHistoryIdx(-1);
-    if (inputType === 'command') {
-      setInputHistory(prev => [val, ...prev.slice(0, 49)]);
-    }
 
     try {
       if (inputType === 'command') {
@@ -672,16 +793,33 @@ export default function Home() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ command: resolvedCmd, sessionId: currentSession, tags, timeout: cmdTimeout * 1000 })
         });
-        const newEvent = await res.json();
-        setTimeline(prev => [...prev, newEvent]);
+        const result = await parseTimelineMutationResponse(res, 'Failed to start command process.');
+        if (!result.ok) {
+          alert(result.error);
+          return;
+        }
+        setTimeline(prev => [...prev, result.event]);
+        setInputVal('');
+        setInputTags('');
+        setCvssScore('');
+        setHistoryIdx(-1);
+        setInputHistory(prev => [val, ...prev.slice(0, 49)]);
       } else {
         const res = await apiFetch('/api/timeline', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ type: 'note', content: cvss ? `CVSS:${cvss} | ${val}` : val, sessionId: currentSession, tags })
         });
-        const newEvent = await res.json();
-        setTimeline(prev => [...prev, newEvent]);
+        const result = await parseTimelineMutationResponse(res, 'Failed to add note.');
+        if (!result.ok) {
+          alert(result.error);
+          return;
+        }
+        setTimeline(prev => [...prev, result.event]);
+        setInputVal('');
+        setInputTags('');
+        setCvssScore('');
+        setHistoryIdx(-1);
       }
     } catch (error) { console.error('Submission failed', error); }
     finally { setIsLoading(false); }
@@ -720,8 +858,12 @@ export default function Home() {
     try {
       setIsLoading(true);
       const res = await apiFetch('/api/upload', { method: 'POST', body: formData });
-      const newEvent = await res.json();
-      setTimeline(prev => [...prev, newEvent]);
+      const result = await parseTimelineMutationResponse(res, 'Upload failed.');
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      setTimeline(prev => [...prev, result.event]);
     } catch (error) { console.error('Upload failed', error); }
     finally { setIsLoading(false); if (fileInputRef.current) fileInputRef.current.value = ''; }
   };
@@ -904,6 +1046,168 @@ export default function Home() {
     }
   };
 
+  // ── Finding handlers ──────────────────────────────────────────────────────
+
+  const upsertFindingLocal = useCallback((finding) => {
+    if (!finding?.id) return;
+    setFindings((prev) => {
+      const next = [...prev.filter((item) => item.id !== finding.id), finding];
+      next.sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
+      return next;
+    });
+  }, []);
+
+  const updateFindingLocal = (findingId, field, value) => {
+    setFindings((prev) => prev.map((finding) => (
+      finding.id === findingId ? { ...finding, [field]: value } : finding
+    )));
+  };
+
+  const addManualFinding = async () => {
+    try {
+      const res = await apiFetch('/api/findings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          title: `Finding ${findings.length + 1}`,
+          severity: 'medium',
+          description: '',
+          impact: '',
+          remediation: '',
+          evidenceEventIds: [],
+          source: 'manual',
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to create finding');
+        return;
+      }
+      if (data?.finding) upsertFindingLocal(data.finding);
+    } catch (error) {
+      console.error('Failed to create finding', error);
+    }
+  };
+
+  const persistFindingUpdate = async (id, patch) => {
+    try {
+      const res = await apiFetch('/api/findings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, id, ...patch }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to update finding');
+        return;
+      }
+      if (data?.finding) upsertFindingLocal(data.finding);
+    } catch (error) {
+      console.error('Failed to update finding', error);
+    }
+  };
+
+  const deleteFindingEntry = async (id) => {
+    if (!confirm('Delete this finding?')) return;
+    try {
+      const res = await apiFetch(`/api/findings?sessionId=${currentSession}&id=${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to delete finding');
+        return;
+      }
+      setFindings((prev) => prev.filter((finding) => finding.id !== id));
+    } catch (error) {
+      console.error('Failed to delete finding', error);
+    }
+  };
+
+  const extractFindings = async () => {
+    setIsExtractingFindings(true);
+    try {
+      const res = await apiFetch('/api/findings/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          provider: aiProvider,
+          apiKey: apiKeys[aiProvider] || '',
+          maxEvents: 80,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Findings extraction failed');
+        return;
+      }
+      const proposals = Array.isArray(data.proposals) ? data.proposals : [];
+      const normalized = proposals.map((proposal) => ({
+        proposalId: makeBlockId('proposal'),
+        title: String(proposal.title || '').trim(),
+        severity: normalizeFindingSeverity(proposal.severity),
+        description: String(proposal.description || ''),
+        impact: String(proposal.impact || ''),
+        remediation: String(proposal.remediation || ''),
+        evidenceEventIds: Array.isArray(proposal.evidenceEventIds) ? proposal.evidenceEventIds.map((id) => String(id)) : [],
+      })).filter((proposal) => proposal.title);
+      setFindingProposals(normalized);
+      if (normalized.length === 0) {
+        alert('No actionable findings detected in the selected timeline window.');
+      }
+    } catch (error) {
+      console.error('Findings extraction failed', error);
+      alert(`Findings extraction error: ${error.message}`);
+    } finally {
+      setIsExtractingFindings(false);
+      fetchAiUsage();
+    }
+  };
+
+  const updateFindingProposalLocal = (proposalId, field, value) => {
+    setFindingProposals((prev) => prev.map((proposal) => (
+      proposal.proposalId === proposalId ? { ...proposal, [field]: value } : proposal
+    )));
+  };
+
+  const rejectFindingProposal = (proposalId) => {
+    setFindingProposals((prev) => prev.filter((proposal) => proposal.proposalId !== proposalId));
+  };
+
+  const acceptFindingProposal = async (proposalId) => {
+    const proposal = findingProposals.find((item) => item.proposalId === proposalId);
+    if (!proposal || !proposal.title.trim()) return;
+    try {
+      const res = await apiFetch('/api/findings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          title: proposal.title.trim(),
+          severity: normalizeFindingSeverity(proposal.severity),
+          description: proposal.description || '',
+          impact: proposal.impact || '',
+          remediation: proposal.remediation || '',
+          evidenceEventIds: proposal.evidenceEventIds || [],
+          source: 'ai-extract',
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to accept finding proposal');
+        return;
+      }
+      if (data?.finding) {
+        upsertFindingLocal(data.finding);
+      } else {
+        await fetchFindings();
+      }
+      setFindingProposals((prev) => prev.filter((item) => item.proposalId !== proposalId));
+    } catch (error) {
+      console.error('Failed to accept finding proposal', error);
+    }
+  };
+
   // ── Report handlers ───────────────────────────────────────────────────────
 
   const applyReportBlocks = useCallback((nextBlocks) => {
@@ -925,18 +1229,29 @@ export default function Home() {
 
   const getReportMarkdownWithPoc = useCallback((blocks = reportBlocks) => {
     const baseMarkdown = reportBlocksToMarkdown(blocks).trim();
-    const formatNeedsPoc = reportFormat === 'technical-walkthrough' || reportFormat === 'pentest';
-    if (!formatNeedsPoc || pocSteps.length === 0) {
+    const formatNeedsEvidence = reportFormat === 'technical-walkthrough' || reportFormat === 'pentest';
+    if (!formatNeedsEvidence) {
       return baseMarkdown;
     }
-    if (/^##\s+Proof of Concept\b/im.test(baseMarkdown)) {
-      return baseMarkdown;
+
+    let nextMarkdown = baseMarkdown;
+
+    if (pocSteps.length > 0 && !/^##\s+Proof of Concept\b/im.test(nextMarkdown)) {
+      const pocSection = buildPocSectionMarkdown(currentSession, pocSteps);
+      if (pocSection) {
+        nextMarkdown = nextMarkdown ? `${nextMarkdown}\n\n${pocSection}` : pocSection;
+      }
     }
-    const pocSection = buildPocSectionMarkdown(currentSession, pocSteps);
-    if (!pocSection) return baseMarkdown;
-    if (!baseMarkdown) return pocSection;
-    return `${baseMarkdown}\n\n${pocSection}`;
-  }, [reportBlocks, reportFormat, pocSteps, currentSession]);
+
+    if (findings.length > 0 && !/^##\s+Findings\b/im.test(nextMarkdown)) {
+      const findingsSection = buildFindingsSectionMarkdown(findings);
+      if (findingsSection) {
+        nextMarkdown = nextMarkdown ? `${nextMarkdown}\n\n${findingsSection}` : findingsSection;
+      }
+    }
+
+    return nextMarkdown;
+  }, [reportBlocks, reportFormat, pocSteps, findings, currentSession]);
 
   const addReportBlock = (blockType = 'section') => {
     let newBlock = newSectionBlock('New Section', '');
@@ -975,6 +1290,7 @@ export default function Home() {
     try {
       setIsLoading(true);
       await fetchPocSteps();
+      await fetchFindings();
       const existingRes = await apiFetch(`/api/writeup?sessionId=${currentSession}`);
       const existing = await existingRes.json().catch(() => null);
       const hasExisting = Boolean(
@@ -1296,6 +1612,37 @@ export default function Home() {
     }
   };
 
+  const downloadDocx = async (inlineImages = true, includeAppendix = true) => {
+    try {
+      const res = await apiFetch('/api/export/docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          format: reportFormat,
+          analystName: analystName.trim() || 'Unknown',
+          inlineImages,
+          includeAppendix,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        alert(`DOCX export failed: ${err.detail || err.error}`);
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const sessionName = sessions.find(s => s.id === currentSession)?.name?.replace(/\s+/g, '-') || currentSession;
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${sessionName}-${reportFormat}.docx`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      alert(`DOCX download error: ${err.message}`);
+    }
+  };
+
   const toggleTag = (tag) => {
     const current = inputTags.split(',').map(t => t.trim()).filter(Boolean);
     const idx = current.indexOf(tag);
@@ -1488,6 +1835,7 @@ export default function Home() {
     '--resizer-width': isOverlaySidebar || sidebarCollapsed ? '0px' : '10px',
   };
 
+  const commandExecutionEnabled = healthData?.features?.commandExecutionEnabled !== false;
   const currentSessionData = sessions.find(s => s.id === currentSession);
 
   const allTimelineTags = [...new Set(timeline.flatMap(e => {
@@ -1545,6 +1893,13 @@ export default function Home() {
       id: event.id,
       label: event.name || event.filename || 'Screenshot',
     }));
+
+  const timelineEventMap = new Map(timeline.map((event) => [event.id, event]));
+  const findingEvidenceOptions = timeline.map((event) => ({
+    id: event.id,
+    label: findingEvidenceLabel(event),
+    type: event.type,
+  }));
 
   const aiTotals = aiUsageSummary?.totals || null;
   const aiUsageLabel = aiTotals
@@ -1624,6 +1979,8 @@ export default function Home() {
               const tip = healthData ? [
                 `Status: ${healthData.status}`,
                 `DB: ${healthData.db?.status ?? '?'}`,
+                `Exec: ${healthData.features?.commandExecutionEnabled ? 'enabled' : 'disabled'}`,
+                `Admin API: ${healthData.features?.adminApiEnabled ? 'enabled' : 'disabled'}`,
                 `AI: ${Object.entries(healthData.ai || {}).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}`,
                 `Disk: ${healthData.disk?.dataDir ?? '?'}`,
                 `v${healthData.version ?? '?'}`,
@@ -1635,6 +1992,15 @@ export default function Home() {
                 </span>
               );
             })()}
+            <span
+              style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'default' }}
+              title={commandExecutionEnabled
+                ? 'Command execution is enabled for this runtime.'
+                : 'Command execution is disabled by runtime configuration.'}
+            >
+              <span className={`conn-dot conn-dot--${commandExecutionEnabled ? 'connected' : 'syncing'}`} />
+              <span>{commandExecutionEnabled ? 'Exec On' : 'Exec Off'}</span>
+            </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', cursor: 'default' }}
               title={`Timeline: ${connectionStatus}${lastSyncTime ? ` — last synced ${Math.round((Date.now() - lastSyncTime) / 1000)}s ago` : ''}`}>
               <span className={`conn-dot conn-dot--${connectionStatus === 'connected' ? 'connected' : connectionStatus === 'disconnected' ? 'disconnected' : 'syncing'}`} />
@@ -1730,7 +2096,7 @@ export default function Home() {
                 }}
               />
               <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                {new Date().toLocaleDateString()}
+                {todayLabel}
               </span>
               {analystNameError && (
                 <span style={{ fontSize: '0.78rem', color: 'var(--accent-danger, #f85149)' }}>required</span>
@@ -2016,6 +2382,236 @@ export default function Home() {
               ))}
             </div>
 
+            <div className="findings-editor">
+              <div className="findings-editor-header">
+                <span className="mono" style={{ fontSize: '0.8rem', color: '#f0883e' }}>Findings</span>
+                <div style={{ display: 'flex', gap: '0.45rem' }}>
+                  <button
+                    type="button"
+                    className="btn-secondary mono"
+                    style={{ fontSize: '0.75rem', padding: '3px 9px', color: '#f0883e', borderColor: 'rgba(240,136,62,0.5)' }}
+                    onClick={extractFindings}
+                    disabled={isExtractingFindings}
+                  >
+                    {isExtractingFindings ? 'Extracting…' : '[ Extract Findings ]'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary mono"
+                    style={{ fontSize: '0.75rem', padding: '3px 9px' }}
+                    onClick={addManualFinding}
+                  >
+                    + Finding
+                  </button>
+                </div>
+              </div>
+
+              {findingProposals.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <span className="mono" style={{ fontSize: '0.75rem', color: 'var(--accent-secondary)' }}>
+                    AI Proposals ({findingProposals.length})
+                  </span>
+                  {findingProposals.map((proposal) => (
+                    <div key={proposal.proposalId} className="finding-card finding-card--proposal">
+                      <div className="finding-card-header">
+                        <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--accent-secondary)' }}>PROPOSAL</span>
+                        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.35rem' }}>
+                          <button
+                            type="button"
+                            className="btn-secondary mono"
+                            style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--accent-primary)', borderColor: 'var(--accent-primary)' }}
+                            onClick={() => acceptFindingProposal(proposal.proposalId)}
+                          >
+                            Accept
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary mono"
+                            style={{ fontSize: '0.72rem', padding: '2px 7px', color: 'var(--accent-danger)', borderColor: 'var(--accent-danger)' }}
+                            onClick={() => rejectFindingProposal(proposal.proposalId)}
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="finding-card-grid">
+                        <input
+                          value={proposal.title}
+                          onChange={(e) => updateFindingProposalLocal(proposal.proposalId, 'title', e.target.value)}
+                          className="mono"
+                          placeholder="Finding title"
+                          style={{ fontSize: '0.8rem' }}
+                        />
+                        <select
+                          value={proposal.severity}
+                          onChange={(e) => updateFindingProposalLocal(proposal.proposalId, 'severity', normalizeFindingSeverity(e.target.value))}
+                          style={{ fontSize: '0.76rem', padding: '4px 8px' }}
+                        >
+                          {FINDING_SEVERITIES.map((severity) => (
+                            <option key={severity} value={severity}>{severity.toUpperCase()}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <select
+                        multiple
+                        value={proposal.evidenceEventIds || []}
+                        onChange={(e) => {
+                          const values = Array.from(e.target.selectedOptions).map((option) => option.value);
+                          updateFindingProposalLocal(proposal.proposalId, 'evidenceEventIds', values);
+                        }}
+                        className="mono"
+                        style={{ fontSize: '0.74rem', padding: '4px 8px', minHeight: '70px' }}
+                        title="Select linked evidence events"
+                      >
+                        {findingEvidenceOptions.map((option) => (
+                          <option key={option.id} value={option.id}>{option.label}</option>
+                        ))}
+                      </select>
+
+                      <div className="finding-chip-row">
+                        {(proposal.evidenceEventIds || []).map((eventId) => {
+                          const event = timelineEventMap.get(eventId);
+                          const missing = !event;
+                          return (
+                            <span key={eventId} className="mono finding-chip" title={eventId}>
+                              {missing ? `Missing: ${eventId}` : findingEvidenceLabel(event)}
+                            </span>
+                          );
+                        })}
+                      </div>
+
+                      <textarea
+                        value={proposal.description}
+                        onChange={(e) => updateFindingProposalLocal(proposal.proposalId, 'description', e.target.value)}
+                        className="mono"
+                        placeholder="Description"
+                        style={{ minHeight: '64px', resize: 'vertical', fontSize: '0.8rem', lineHeight: 1.45 }}
+                      />
+                      <textarea
+                        value={proposal.impact}
+                        onChange={(e) => updateFindingProposalLocal(proposal.proposalId, 'impact', e.target.value)}
+                        className="mono"
+                        placeholder="Impact"
+                        style={{ minHeight: '58px', resize: 'vertical', fontSize: '0.8rem', lineHeight: 1.45 }}
+                      />
+                      <textarea
+                        value={proposal.remediation}
+                        onChange={(e) => updateFindingProposalLocal(proposal.proposalId, 'remediation', e.target.value)}
+                        className="mono"
+                        placeholder="Remediation"
+                        style={{ minHeight: '58px', resize: 'vertical', fontSize: '0.8rem', lineHeight: 1.45 }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {findings.length === 0 && (
+                <div className="mono" style={{ fontSize: '0.8rem', color: 'var(--text-muted)', border: '1px dashed var(--border-color)', borderRadius: '6px', padding: '0.65rem' }}>
+                  No persisted findings yet. Extract proposals or add one manually.
+                </div>
+              )}
+
+              {findings.map((finding) => (
+                <div key={finding.id} className="finding-card">
+                  <div className="finding-card-header">
+                    <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                      #{finding.id} · {(finding.source || 'manual').toUpperCase()}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn-secondary mono"
+                      style={{ marginLeft: 'auto', fontSize: '0.72rem', padding: '2px 7px', color: 'var(--accent-danger)', borderColor: 'var(--accent-danger)' }}
+                      onClick={() => deleteFindingEntry(finding.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="finding-card-grid">
+                    <input
+                      value={finding.title || ''}
+                      onChange={(e) => updateFindingLocal(finding.id, 'title', e.target.value)}
+                      onBlur={(e) => persistFindingUpdate(finding.id, { title: e.target.value })}
+                      className="mono"
+                      placeholder="Finding title"
+                      style={{ fontSize: '0.8rem' }}
+                    />
+                    <select
+                      value={normalizeFindingSeverity(finding.severity)}
+                      onChange={(e) => {
+                        const severity = normalizeFindingSeverity(e.target.value);
+                        updateFindingLocal(finding.id, 'severity', severity);
+                        persistFindingUpdate(finding.id, { severity });
+                      }}
+                      style={{ fontSize: '0.76rem', padding: '4px 8px' }}
+                    >
+                      {FINDING_SEVERITIES.map((severity) => (
+                        <option key={severity} value={severity}>{severity.toUpperCase()}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <select
+                    multiple
+                    value={finding.evidenceEventIds || []}
+                    onChange={(e) => {
+                      const values = Array.from(e.target.selectedOptions).map((option) => option.value);
+                      updateFindingLocal(finding.id, 'evidenceEventIds', values);
+                      persistFindingUpdate(finding.id, { evidenceEventIds: values });
+                    }}
+                    className="mono"
+                    style={{ fontSize: '0.74rem', padding: '4px 8px', minHeight: '70px' }}
+                    title="Select linked evidence events"
+                  >
+                    {findingEvidenceOptions.map((option) => (
+                      <option key={option.id} value={option.id}>{option.label}</option>
+                    ))}
+                  </select>
+
+                  <div className="finding-chip-row">
+                    {(finding.evidenceEvents || []).map((event) => (
+                      <span key={event.id} className="mono finding-chip" title={event.id}>{findingEvidenceLabel(event)}</span>
+                    ))}
+                    {(finding.evidenceEventIds || [])
+                      .filter((eventId) => !(finding.evidenceEvents || []).some((event) => event.id === eventId))
+                      .map((eventId) => (
+                        <span key={eventId} className="mono finding-chip finding-chip--missing" title={eventId}>
+                          Missing: {eventId}
+                        </span>
+                      ))}
+                  </div>
+
+                  <textarea
+                    value={finding.description || ''}
+                    onChange={(e) => updateFindingLocal(finding.id, 'description', e.target.value)}
+                    onBlur={(e) => persistFindingUpdate(finding.id, { description: e.target.value })}
+                    className="mono"
+                    placeholder="Description"
+                    style={{ minHeight: '64px', resize: 'vertical', fontSize: '0.8rem', lineHeight: 1.45 }}
+                  />
+                  <textarea
+                    value={finding.impact || ''}
+                    onChange={(e) => updateFindingLocal(finding.id, 'impact', e.target.value)}
+                    onBlur={(e) => persistFindingUpdate(finding.id, { impact: e.target.value })}
+                    className="mono"
+                    placeholder="Impact"
+                    style={{ minHeight: '58px', resize: 'vertical', fontSize: '0.8rem', lineHeight: 1.45 }}
+                  />
+                  <textarea
+                    value={finding.remediation || ''}
+                    onChange={(e) => updateFindingLocal(finding.id, 'remediation', e.target.value)}
+                    onBlur={(e) => persistFindingUpdate(finding.id, { remediation: e.target.value })}
+                    className="mono"
+                    placeholder="Remediation"
+                    style={{ minHeight: '58px', resize: 'vertical', fontSize: '0.8rem', lineHeight: 1.45 }}
+                  />
+                </div>
+              ))}
+            </div>
+
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'space-between', marginTop: '0.75rem', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button className="btn-secondary" onClick={loadVersionHistory} style={{ fontSize: '0.8rem' }}>
@@ -2061,6 +2657,9 @@ export default function Home() {
                 <button className="btn-secondary" onClick={() => downloadJson(false)} style={{ fontSize: '0.8rem' }}>
                   [ Download JSON ]
                 </button>
+                <button className="btn-secondary" onClick={() => downloadDocx(true, true)} style={{ fontSize: '0.8rem' }}>
+                  [ Download DOCX ]
+                </button>
                 <button className="btn-secondary" onClick={downloadPdf} style={{ fontSize: '0.8rem' }}>
                   [ Download PDF ]
                 </button>
@@ -2087,7 +2686,7 @@ export default function Home() {
                   <div key={v.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', background: 'rgba(1,4,9,0.4)', border: '1px solid var(--border-color)', borderRadius: '6px' }}>
                     <div>
                       <span className="mono" style={{ fontSize: '0.8rem', color: 'var(--accent-secondary)' }}>v{v.version_number}</span>
-                      <span className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: '1rem' }}>{new Date(v.created_at).toLocaleString()}</span>
+                      <span className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: '1rem' }}>{formatTimelineDateTime(v.created_at)}</span>
                       <span className="mono" style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: '0.5rem' }}>({Math.round(v.char_count / 100) / 10}k chars)</span>
                     </div>
                     <button className="btn-secondary" style={{ fontSize: '0.75rem', padding: '2px 8px' }} onClick={() => restoreVersion(v.id)}>Restore</button>
@@ -2309,7 +2908,7 @@ export default function Home() {
 
           <>
               <div className="tab-switcher mono" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
-                {[['tools', 'TOOLS'], ['flags', 'FLAGS'], ['history', 'HIST'], ['graph', 'GRAPH']].map(([tab, label]) => (
+                {[['tools', 'TOOLS'], ['flags', 'FLAGS'], ['history', 'HIST']].map(([tab, label]) => (
                   <span key={tab} style={{ cursor: 'pointer', whiteSpace: 'nowrap', color: sidebarTab === tab ? 'var(--accent-primary)' : 'var(--text-muted)', fontSize: '0.82rem', letterSpacing: '0.5px' }}
                     onClick={() => setSidebarTab(tab)}>
                     [{label}]
@@ -2447,23 +3046,6 @@ export default function Home() {
                 </div>
               )}
 
-              {sidebarTab === 'graph' && (
-                <div className="animate-fade" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
-                  <div style={{ flex: 1, minHeight: '400px', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
-                    <DiscoveryGraph
-                      sessionId={currentSession}
-                      timeline={timeline}
-                      apiFetch={apiFetch}
-                      onAddToReport={(dataUrl) => {
-                        if (!dataUrl) return;
-                        applyReportBlocks([...reportBlocks, newImageBlock('Discovery Map', dataUrl, 'Discovery Map', 'Auto-generated attack graph', '')]);
-                        setShowReportModal(true);
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-
               {sidebarTab === 'history' && (
                 <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', overflowY: 'auto' }}>
                   <input
@@ -2497,6 +3079,17 @@ export default function Home() {
 
         {/* ── Timeline ──────────────────────────────────────────────────────── */}
         <section className="timeline-container glass-panel">
+          {/* ── Main view switcher ── */}
+          <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.55rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.4rem' }}>
+            {[['terminal', '⌨ TERMINAL'], ['graph', '🗺 GRAPH']].map(([view, label]) => (
+              <button key={view} className="mono" onClick={() => setMainView(view)}
+                style={{ fontSize: '0.82rem', padding: '3px 10px', borderRadius: '4px', border: `1px solid ${mainView === view ? 'var(--accent-primary)' : 'var(--border-color)'}`, color: mainView === view ? 'var(--accent-primary)' : 'var(--text-muted)', background: mainView === view ? 'rgba(57,211,83,0.08)' : 'transparent', cursor: 'pointer', letterSpacing: '0.5px' }}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {mainView === 'terminal' && (<>
           {/* Filter bar — single row */}
           <div className="filter-toolbar">
             <div className="filter-row">
@@ -2560,10 +3153,6 @@ export default function Home() {
                 style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="DB stats">
                 ⚙
               </button>
-              <button onClick={() => setSidebarTab('graph')} className="mono btn-secondary"
-                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="Open discovery graph">
-                🗺
-              </button>
               {compareEventIds.size === 2 && (
                 <>
                   <button
@@ -2616,13 +3205,15 @@ export default function Home() {
                 const isTimelineEventExpanded = !timelineCollapsed || expandedTimelineEvents.has(event.id);
                 const compactSummary = summarizeTimelineEvent(event);
                 const isEventInPoc = pocLinkedEventIds.has(event.id);
+                const eventTime = formatTimelineTime(event.timestamp);
+                const elapsedSeconds = getTimelineElapsedSeconds(event.timestamp);
                 const tags = (() => { try { return JSON.parse(event.tags || '[]'); } catch { return []; } })();
 
                 return (
                   <div key={event.id || idx} className="timeline-event">
                     <div className="event-header">
                       <span className="mono" style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                        {new Date(event.timestamp).toLocaleTimeString()}
+                        {eventTime}
                       </span>
                       <span className={`badge badge-${event.type === 'note' ? 'note' : (event.type === 'screenshot' ? 'screenshot' : event.status)}`}>
                         {(event.type || 'EVENT').toUpperCase()}
@@ -2715,7 +3306,7 @@ export default function Home() {
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--accent-warning)', fontSize: '0.85rem' }}>
                                 <span className="status-dot status-dot--running" />
                                 <span className="mono">
-                                  {`${Math.floor((Date.now() - new Date(event.timestamp).getTime()) / 1000)}s elapsed`}
+                                  {elapsedSeconds === null ? 'Running' : `${elapsedSeconds}s elapsed`}
                                 </span>
                                 <button
                                   onClick={() => handleCancelCommand(event.id, event.session_id || currentSession)}
@@ -2839,6 +3430,7 @@ export default function Home() {
                 <div className="input-timeout">
                   <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Timeout:</span>
                   <select value={cmdTimeout} onChange={(e) => setCmdTimeout(Number(e.target.value))}
+                    disabled={!commandExecutionEnabled}
                     style={{ fontSize: '0.84rem', padding: '4px 8px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px', width: '96px' }}>
                     <option value={30}>30s</option>
                     <option value={60}>1 min</option>
@@ -2867,6 +3459,11 @@ export default function Home() {
                   style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textDecoration: 'none', opacity: 0.7, whiteSpace: 'nowrap' }}>
                   ↗ CVSS Calculator
                 </a>
+              </div>
+            )}
+            {inputType === 'command' && !commandExecutionEnabled && (
+              <div className="mono" style={{ marginBottom: '0.35rem', fontSize: '0.78rem', color: 'var(--accent-warning)' }}>
+                Command execution is disabled for this runtime. Set `ENABLE_COMMAND_EXECUTION=true` and restart the app to enable it.
               </div>
             )}
             {/* Stage tag selector */}
@@ -2924,14 +3521,39 @@ export default function Home() {
                 value={inputVal}
                 onChange={(e) => { setInputVal(e.target.value); setHistoryIdx(-1); }}
                 onKeyDown={handleKeyDown}
-                placeholder={inputType === 'command' ? '$ command... use {TARGET} for session IP  (↑↓ history)' : 'Type a note...'}
-                disabled={isLoading}
+                placeholder={inputType === 'command'
+                  ? (commandExecutionEnabled ? '$ command... use {TARGET} for session IP  (↑↓ history)' : 'Command execution is disabled in this runtime')
+                  : 'Type a note...'}
+                disabled={isLoading || (inputType === 'command' && !commandExecutionEnabled)}
               />
-              <button type="submit" className="btn-primary" disabled={isLoading || !inputVal.trim()}>
-                {isLoading ? '...' : (inputType === 'command' ? 'Execute' : 'Add Note')}
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={isLoading || !inputVal.trim() || (inputType === 'command' && !commandExecutionEnabled)}
+                title={inputType === 'command' && !commandExecutionEnabled
+                  ? 'Command execution is disabled in this environment'
+                  : undefined}
+              >
+                {isLoading ? '...' : (inputType === 'command' ? (commandExecutionEnabled ? 'Execute' : 'Exec Off') : 'Add Note')}
               </button>
             </div>
           </form>
+          </>)}
+
+          {mainView === 'graph' && (
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <DiscoveryGraph
+                sessionId={currentSession}
+                timeline={timeline}
+                apiFetch={apiFetch}
+                onAddToReport={(dataUrl) => {
+                  if (!dataUrl) return;
+                  applyReportBlocks([...reportBlocks, newImageBlock('Discovery Map', dataUrl, 'Discovery Map', 'Auto-generated attack graph', '')]);
+                  setShowReportModal(true);
+                }}
+              />
+            </div>
+          )}
         </section>
       </div>
 
@@ -2954,6 +3576,15 @@ export default function Home() {
         .poc-step-card { border: 1px solid rgba(63,185,80,0.3); border-radius: 8px; background: rgba(12,25,16,0.45); padding: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; }
         .poc-step-header { display: flex; align-items: center; gap: 0.45rem; }
         .poc-step-links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.4rem; }
+        .findings-editor { border: 1px solid var(--border-color); border-radius: 8px; background: rgba(1,4,9,0.46); padding: 0.7rem; max-height: 34vh; overflow-y: auto; display: flex; flex-direction: column; gap: 0.55rem; }
+        .findings-editor-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap; }
+        .finding-card { border: 1px solid rgba(240,136,62,0.35); border-radius: 8px; background: rgba(35,18,5,0.35); padding: 0.6rem; display: flex; flex-direction: column; gap: 0.38rem; }
+        .finding-card--proposal { border-color: rgba(88,166,255,0.35); background: rgba(9,22,38,0.35); }
+        .finding-card-header { display: flex; align-items: center; gap: 0.45rem; }
+        .finding-card-grid { display: grid; grid-template-columns: minmax(0, 1fr) 170px; gap: 0.4rem; }
+        .finding-chip-row { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+        .finding-chip { font-size: 0.7rem; padding: 2px 7px; border-radius: 10px; border: 1px solid rgba(88,166,255,0.35); color: var(--accent-secondary); background: rgba(88,166,255,0.12); }
+        .finding-chip--missing { border-color: rgba(248,81,73,0.35); color: rgba(248,81,73,0.85); background: rgba(248,81,73,0.12); }
 
         .layout { position: relative; display: grid; grid-template-columns: var(--sidebar-width) var(--resizer-width) minmax(400px, 1fr); flex-grow: 1; min-height: 0; gap: 0.75rem; margin-top: 0.75rem; }
 .layout.layout-overlay { grid-template-columns: minmax(0, 1fr); }
@@ -3042,6 +3673,7 @@ export default function Home() {
           .event-output { font-size: 0.82rem; max-height: 245px; padding: 0.84rem; }
           .event-note { font-size: 0.95rem; padding: 0.44rem 0.78rem; }
           .poc-step-links { grid-template-columns: 1fr; }
+          .finding-card-grid { grid-template-columns: 1fr; }
           .input-area { padding: 0.76rem; gap: 0.35rem; }
           .input-toolbar { margin-bottom: 0.2rem; gap: 0.36rem; }
           .input-timeout { gap: 4px; }
@@ -3067,6 +3699,7 @@ export default function Home() {
           .filter-row-secondary { gap: 0.4rem; }
           .report-modal { width: 96%; height: 92vh; padding: 0.9rem; }
           .poc-step-links { grid-template-columns: 1fr; }
+          .finding-card-grid { grid-template-columns: 1fr; }
           .timeline-scroll-shell { grid-template-columns: minmax(0, 1fr); gap: 0.45rem; margin-bottom: 0.65rem; }
           .timeline-jump-controls { flex-direction: row; justify-content: flex-end; align-items: center; padding-bottom: 0; }
           .timeline-jump-arrow { width: 30px; height: 30px; min-width: 30px; min-height: 30px; }

@@ -5,6 +5,7 @@ import {
   getTimeline,
   getWriteup,
   listPocSteps,
+  listFindings,
 } from '@/lib/db';
 import {
   labReport,
@@ -16,6 +17,7 @@ import {
 } from '@/lib/report-formats';
 import { detectImageFormat, imageFormatToMime } from '@/lib/image-sniff';
 import { isValidSessionId, requireSafeFilename, resolvePathWithin } from '@/lib/security';
+import { normalizeAnalystName } from '@/lib/text-sanitize';
 
 const FORMATS = {
   'lab-report': labReport,
@@ -164,6 +166,7 @@ export function buildExportBundle({
   analystName = 'Unknown',
   inlineImages = false,
 }) {
+  const safeAnalystName = normalizeAnalystName(analystName);
   const session = getSession(sessionId);
   if (!session) {
     return null;
@@ -171,8 +174,9 @@ export function buildExportBundle({
 
   const timeline = getTimeline(sessionId);
   const pocSteps = listPocSteps(sessionId);
+  const findings = listFindings(sessionId);
   const formatGenerator = FORMATS[format] || technicalWalkthrough;
-  const reportMarkdownRaw = formatGenerator(session, timeline, analystName, { pocSteps });
+  const reportMarkdownRaw = formatGenerator(session, timeline, safeAnalystName, { pocSteps, findings });
   const reportMarkdown = inlineImages ? inlineMarkdownImages(reportMarkdownRaw) : reportMarkdownRaw;
 
   const timelineHydrated = hydrateTimelineInlineImages(timeline, sessionId, inlineImages);
@@ -182,10 +186,11 @@ export function buildExportBundle({
   return {
     session,
     format,
-    analystName,
+    analystName: safeAnalystName,
     reportMarkdown,
     timeline: timelineHydrated,
     pocSteps: pocHydrated,
+    findings,
     writeup,
   };
 }

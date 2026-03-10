@@ -7,13 +7,14 @@ import {
   sanitizeDownloadToken,
 } from '@/lib/export-utils';
 import { isValidSessionId } from '@/lib/security';
+import { normalizeAnalystName } from '@/lib/text-sanitize';
 
 export async function POST(request) {
   try {
     const payload = await request.json();
     const sessionId = String(payload?.sessionId || '').trim();
     const format = String(payload?.format || 'technical-walkthrough');
-    const analystName = String(payload?.analystName || 'Unknown').trim() || 'Unknown';
+    const analystName = normalizeAnalystName(payload?.analystName);
     const inlineImages = normalizeBoolean(payload?.inlineImages, true);
 
     if (!sessionId || !isValidSessionId(sessionId)) {

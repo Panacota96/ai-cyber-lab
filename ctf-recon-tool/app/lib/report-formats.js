@@ -1,3 +1,5 @@
+import { escapeMarkdownInline, normalizeAnalystName, normalizePlainText } from './text-sanitize';
+
 // Four report format generators for Helm's Watch
 
 /**
@@ -21,6 +23,19 @@ function clipText(text, max = 900) {
   return `${value.slice(0, max)}... [truncated]`;
 }
 
+function safeAnalyst(value) {
+  return escapeMarkdownInline(normalizeAnalystName(value));
+}
+
+function safeScreenshotName(value, fallback = 'Screenshot') {
+  return escapeMarkdownInline(normalizePlainText(value, 255) || fallback);
+}
+
+function safeScreenshotTag(value) {
+  const normalized = normalizePlainText(value, 64);
+  return normalized ? escapeMarkdownInline(normalized) : '';
+}
+
 function normalizePocStep(step) {
   if (!step || typeof step !== 'object') return null;
   return {
@@ -35,6 +50,91 @@ function normalizePocStep(step) {
     noteEvent: step.noteEvent || step.note_event || null,
     screenshotEvent: step.screenshotEvent || step.screenshot_event || null,
   };
+}
+
+function normalizeFinding(finding) {
+  if (!finding || typeof finding !== 'object') return null;
+  return {
+    id: finding.id ?? null,
+    title: finding.title || '',
+    severity: String(finding.severity || 'medium').toLowerCase(),
+    description: finding.description || '',
+    impact: finding.impact || '',
+    remediation: finding.remediation || '',
+    evidenceEventIds: Array.isArray(finding.evidenceEventIds)
+      ? finding.evidenceEventIds
+      : Array.isArray(finding.evidence_event_ids)
+        ? finding.evidence_event_ids
+        : [],
+    evidenceEvents: Array.isArray(finding.evidenceEvents)
+      ? finding.evidenceEvents
+      : Array.isArray(finding.evidence_events)
+        ? finding.evidence_events
+        : [],
+  };
+}
+
+function findingSeverityLabel(severity) {
+  const value = String(severity || 'medium').toLowerCase();
+  if (value === 'critical') return 'Critical';
+  if (value === 'high') return 'High';
+  if (value === 'low') return 'Low';
+  return 'Medium';
+}
+
+function summarizeEvidenceRef(event) {
+  if (!event) return '';
+  if (event.type === 'command') return `Command: \`${event.command || '(command unavailable)'}\``;
+  if (event.type === 'note') return `Note: ${clipText(event.content || '', 220)}`;
+  if (event.type === 'screenshot') return `Screenshot: ${safeScreenshotName(event.name || event.filename, 'Screenshot')}`;
+  return `Event: ${event.id || 'unknown'}`;
+}
+
+function renderFindingsSection(findings = []) {
+  const normalized = (Array.isArray(findings) ? findings : [])
+    .map(normalizeFinding)
+    .filter((finding) => finding && finding.title)
+    .sort((a, b) => {
+      const rank = { critical: 0, high: 1, medium: 2, low: 3 };
+      return (rank[a.severity] ?? 99) - (rank[b.severity] ?? 99);
+    });
+
+  let md = `## Findings\n\n`;
+  if (normalized.length === 0) {
+    md += `> _Document each finding with severity, description, and evidence references._\n\n`;
+    md += `| # | Finding | Severity | Evidence |\n| --- | --- | --- | --- |\n`;
+    md += `| 1 | _Fill in_ | Critical / High / Medium / Low | _ref_ |\n\n`;
+    return md;
+  }
+
+  md += `| # | Finding | Severity | Evidence |\n| --- | --- | --- | --- |\n`;
+  normalized.forEach((finding, index) => {
+    const evidenceCount = finding.evidenceEvents.length || finding.evidenceEventIds.length;
+    md += `| ${index + 1} | ${finding.title} | ${findingSeverityLabel(finding.severity)} | ${evidenceCount > 0 ? `${evidenceCount} item(s)` : '—'} |\n`;
+  });
+  md += `\n`;
+
+  normalized.forEach((finding, index) => {
+    md += `### ${index + 1}. ${finding.title}\n\n`;
+    md += `**Severity:** ${findingSeverityLabel(finding.severity)}\n\n`;
+    md += `**Description:** ${finding.description || '_Not specified_'}\n\n`;
+    md += `**Impact:** ${finding.impact || '_Not specified_'}\n\n`;
+    md += `**Remediation:** ${finding.remediation || '_Not specified_'}\n\n`;
+
+    if (finding.evidenceEvents.length > 0) {
+      md += `**Evidence:**\n`;
+      finding.evidenceEvents.forEach((event, evidenceIdx) => {
+        md += `- [${evidenceIdx + 1}] ${summarizeEvidenceRef(event)}\n`;
+      });
+      md += `\n`;
+    } else if (finding.evidenceEventIds.length > 0) {
+      md += `**Evidence IDs:** ${finding.evidenceEventIds.join(', ')}\n\n`;
+    } else {
+      md += `**Evidence:** _Not linked_\n\n`;
+    }
+  });
+
+  return md;
 }
 
 function renderPocSection(session, pocSteps) {
@@ -70,8 +170,9 @@ function renderPocSection(session, pocSteps) {
     }
 
     if (screenshot) {
-      md += `**Evidence:** ${screenshot.name || 'Screenshot'}\n\n`;
-      md += `![${screenshot.name || 'Screenshot'}](/api/media/${session.id}/${screenshot.filename})\n\n`;
+      const screenshotName = safeScreenshotName(screenshot.name || screenshot.filename, 'Screenshot');
+      md += `**Evidence:** ${screenshotName}\n\n`;
+      md += `![${screenshotName}](/api/media/${session.id}/${screenshot.filename})\n\n`;
     } else if (step.screenshotEventId) {
       md += `**Evidence:** _Linked screenshot not found (${step.screenshotEventId})_\n\n`;
     } else {
@@ -87,9 +188,10 @@ function renderPocSection(session, pocSteps) {
 
 export function labReport(session, events, analystName = 'Unknown') {
   const timestamp = new Date().toLocaleString();
+  const safeAnalystName = safeAnalyst(analystName);
   let md = `# Laboratory Report: ${session.name}\n\n`;
   md += `**Date of Execution:** ${timestamp}\n`;
-  md += `**Analyst:** ${analystName}\n`;
+  md += `**Analyst:** ${safeAnalystName}\n`;
   if (session.target) md += `**Target:** ${session.target}\n`;
   if (session.difficulty) md += `**Difficulty:** ${session.difficulty.toUpperCase()}\n`;
   if (session.objective) md += `**Objective:** ${session.objective}\n`;
@@ -130,9 +232,11 @@ export function labReport(session, events, analystName = 'Unknown') {
   body += `## 4. Technical Evidence\n`;
   if (screenshots.length > 0) {
     screenshots.forEach((ss, i) => {
-      body += `### 4.${i + 1}. ${ss.name || 'Screenshot'}\n`;
-      body += `![${ss.name}](/api/media/${session.id}/${ss.filename})\n`;
-      if (ss.tag) body += `*   **Tag:** #${ss.tag}\n`;
+      const screenshotName = safeScreenshotName(ss.name || ss.filename, 'Screenshot');
+      const screenshotTag = safeScreenshotTag(ss.tag);
+      body += `### 4.${i + 1}. ${screenshotName}\n`;
+      body += `![${screenshotName}](/api/media/${session.id}/${ss.filename})\n`;
+      if (screenshotTag) body += `*   **Tag:** #${screenshotTag}\n`;
       body += `\n`;
     });
   } else {
@@ -147,8 +251,9 @@ export function labReport(session, events, analystName = 'Unknown') {
 
 export function executiveSummary(session, events, analystName = 'Unknown') {
   const timestamp = new Date().toLocaleString();
+  const safeAnalystName = safeAnalyst(analystName);
   let md = `# Executive Summary: ${session.name}\n\n`;
-  md += `**Date:** ${timestamp} | **Analyst:** ${analystName}`;
+  md += `**Date:** ${timestamp} | **Analyst:** ${safeAnalystName}`;
   if (session.target) md += ` | **Target:** ${session.target}`;
   if (session.difficulty) md += ` | **Difficulty:** ${session.difficulty.toUpperCase()}`;
   md += `\n\n`;
@@ -190,7 +295,9 @@ export function executiveSummary(session, events, analystName = 'Unknown') {
   if (screenshots.length > 0) {
     md += `## Evidence Captured\n`;
     screenshots.forEach(ss => {
-      md += `- **${ss.name}**${ss.tag ? ` (#${ss.tag})` : ''}\n`;
+      const screenshotName = safeScreenshotName(ss.name || ss.filename, 'Screenshot');
+      const screenshotTag = safeScreenshotTag(ss.tag);
+      md += `- **${screenshotName}**${screenshotTag ? ` (#${screenshotTag})` : ''}\n`;
     });
     md += `\n`;
   }
@@ -202,8 +309,10 @@ export function executiveSummary(session, events, analystName = 'Unknown') {
 export function technicalWalkthrough(session, events, analystName = 'Unknown', options = {}) {
   const timestamp = new Date().toLocaleString();
   const pocSteps = Array.isArray(options?.pocSteps) ? options.pocSteps : [];
+  const findings = Array.isArray(options?.findings) ? options.findings : [];
+  const safeAnalystName = safeAnalyst(analystName);
   let md = `# Technical Walkthrough: ${session.name}\n\n`;
-  md += `**Date:** ${timestamp} | **Analyst:** ${analystName}`;
+  md += `**Date:** ${timestamp} | **Analyst:** ${safeAnalystName}`;
   if (session.target) md += ` | **Target:** ${session.target}`;
   md += `\n\n`;
 
@@ -230,12 +339,15 @@ export function technicalWalkthrough(session, events, analystName = 'Unknown', o
     } else if (event.type === 'note') {
       md += `> **Note** *(${time}):* ${event.content}\n\n`;
     } else if (event.type === 'screenshot') {
-      md += `**Evidence** *(${time}):* ${event.name}${event.tag ? ` — #${event.tag}` : ''}\n`;
-      md += `![${event.name}](/api/media/${session.id}/${event.filename})\n\n`;
+      const screenshotName = safeScreenshotName(event.name || event.filename, 'Screenshot');
+      const screenshotTag = safeScreenshotTag(event.tag);
+      md += `**Evidence** *(${time}):* ${screenshotName}${screenshotTag ? ` — #${screenshotTag}` : ''}\n`;
+      md += `![${screenshotName}](/api/media/${session.id}/${event.filename})\n\n`;
     }
   }
 
   md += `${renderPocSection(session, pocSteps)}`;
+  md += `${renderFindingsSection(findings)}`;
 
   md += `---\n*Technical Walkthrough generated by Helm's Watch*`;
   return md;
@@ -243,10 +355,11 @@ export function technicalWalkthrough(session, events, analystName = 'Unknown', o
 
 export function ctfSolution(session, events, analystName = 'Unknown') {
   const timestamp = new Date().toLocaleString();
+  const safeAnalystName = safeAnalyst(analystName);
   let md = `# CTF Solution: ${session.name}\n\n`;
   if (session.target) md += `**Target:** \`${session.target}\`  \n`;
   if (session.difficulty) md += `**Difficulty:** ${session.difficulty}  \n`;
-  md += `**Date:** ${timestamp}  \n**Analyst:** ${analystName}\n\n`;
+  md += `**Date:** ${timestamp}  \n**Analyst:** ${safeAnalystName}\n\n`;
 
   if (session.objective) {
     md += `## Challenge Description\n${session.objective}\n\n`;
@@ -275,8 +388,10 @@ export function ctfSolution(session, events, analystName = 'Unknown') {
   if (screenshots.length > 0) {
     md += `## Screenshots\n\n`;
     screenshots.forEach(ss => {
-      md += `![${ss.name}](/api/media/${session.id}/${ss.filename})\n`;
-      if (ss.tag) md += `*${ss.tag}*\n`;
+      const screenshotName = safeScreenshotName(ss.name || ss.filename, 'Screenshot');
+      const screenshotTag = safeScreenshotTag(ss.tag);
+      md += `![${screenshotName}](/api/media/${session.id}/${ss.filename})\n`;
+      if (screenshotTag) md += `*${screenshotTag}*\n`;
       md += `\n`;
     });
   }
@@ -290,11 +405,12 @@ export function bugBountyReport(session, events, analystName = 'Unknown') {
   const commands = events.filter(e => e.type === 'command' && e.status === 'success');
   const notes = events.filter(e => e.type === 'note');
   const screenshots = events.filter(e => e.type === 'screenshot');
+  const safeAnalystName = safeAnalyst(analystName);
 
   let md = `# Bug Bounty Report\n\n`;
   md += `| Field | Value |\n| --- | --- |\n`;
   md += `| **Target** | ${session.target || '_unknown_'} |\n`;
-  md += `| **Analyst** | ${analystName} |\n`;
+  md += `| **Analyst** | ${safeAnalystName} |\n`;
   md += `| **Severity** | _High / Medium / Low / Info — fill in_ |\n`;
   md += `| **CVSS Score** | _e.g. 7.5 (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N)_ |\n`;
   md += `| **CWE** | _e.g. CWE-79, CWE-89 — fill in_ |\n`;
@@ -329,9 +445,11 @@ export function bugBountyReport(session, events, analystName = 'Unknown') {
   if (screenshots.length > 0) {
     md += `## Evidence\n\n`;
     screenshots.forEach((ss, i) => {
-      md += `### Evidence ${i + 1}: ${ss.name || 'Screenshot'}\n`;
-      md += `![${ss.name}](/api/media/${session.id}/${ss.filename})\n`;
-      if (ss.tag) md += `*${ss.tag}*\n`;
+      const screenshotName = safeScreenshotName(ss.name || ss.filename, 'Screenshot');
+      const screenshotTag = safeScreenshotTag(ss.tag);
+      md += `### Evidence ${i + 1}: ${screenshotName}\n`;
+      md += `![${screenshotName}](/api/media/${session.id}/${ss.filename})\n`;
+      if (screenshotTag) md += `*${screenshotTag}*\n`;
       md += `\n`;
     });
   }
@@ -345,18 +463,20 @@ export function bugBountyReport(session, events, analystName = 'Unknown') {
 export function pentestReport(session, events, analystName = 'Unknown', options = {}) {
   const timestamp = new Date().toLocaleString();
   const pocSteps = Array.isArray(options?.pocSteps) ? options.pocSteps : [];
+  const findings = Array.isArray(options?.findings) ? options.findings : [];
   const allCmds = events.filter(e => e.type === 'command');
   const successCmds = allCmds.filter(c => c.status === 'success');
   const failedCmds = allCmds.filter(c => c.status === 'failed');
   const notes = events.filter(e => e.type === 'note');
   const screenshots = events.filter(e => e.type === 'screenshot');
+  const safeAnalystName = safeAnalyst(analystName);
 
   let md = `# Penetration Test Report\n\n`;
   md += `**Engagement:** ${session.name}  \n`;
   if (session.target) md += `**Target:** ${session.target}  \n`;
   if (session.difficulty) md += `**Classification:** ${session.difficulty.toUpperCase()}  \n`;
   md += `**Report Date:** ${timestamp}  \n`;
-  md += `**Prepared by:** ${analystName}  \n\n`;
+  md += `**Prepared by:** ${safeAnalystName}  \n\n`;
 
   md += `---\n\n## Executive Summary\n\n`;
   if (session.objective) {
@@ -396,11 +516,7 @@ export function pentestReport(session, events, analystName = 'Unknown', options 
   }
 
   md += `${renderPocSection(session, pocSteps)}`;
-
-  md += `## Findings\n\n`;
-  md += `> _Document each finding with severity, description, and evidence references._\n\n`;
-  md += `| # | Finding | Severity | Evidence |\n| --- | --- | --- | --- |\n`;
-  md += `| 1 | _Fill in_ | Critical / High / Medium / Low | _ref_ |\n\n`;
+  md += `${renderFindingsSection(findings)}`;
 
   if (notes.length > 0) {
     md += `## Analyst Notes\n\n`;
@@ -411,9 +527,11 @@ export function pentestReport(session, events, analystName = 'Unknown', options 
   if (screenshots.length > 0) {
     md += `## Evidence\n\n`;
     screenshots.forEach((ss, i) => {
-      md += `### ${i + 1}. ${ss.name || 'Screenshot'}\n`;
-      md += `![${ss.name}](/api/media/${session.id}/${ss.filename})\n`;
-      if (ss.tag) md += `*${ss.tag}*\n`;
+      const screenshotName = safeScreenshotName(ss.name || ss.filename, 'Screenshot');
+      const screenshotTag = safeScreenshotTag(ss.tag);
+      md += `### ${i + 1}. ${screenshotName}\n`;
+      md += `![${screenshotName}](/api/media/${session.id}/${ss.filename})\n`;
+      if (screenshotTag) md += `*${screenshotTag}*\n`;
       md += `\n`;
     });
   }

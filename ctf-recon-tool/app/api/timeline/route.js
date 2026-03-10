@@ -4,6 +4,7 @@ import { getTimeline, addTimelineEvent, updateTimelineEvent, deleteTimelineEvent
 import { logger } from '@/lib/logger';
 import { isApiTokenValid, isValidSessionId } from '@/lib/security';
 import { apiError } from '@/lib/api-error';
+import { normalizePlainText } from '@/lib/text-sanitize';
 
 const TimelinePostSchema = z.object({
   sessionId: z.string().optional().default('default'),
@@ -40,9 +41,18 @@ export async function POST(request) {
     if (!isValidSessionId(sessionId)) {
       return apiError('Invalid sessionId', 400);
     }
+    const payload = { ...data };
+    if (payload.type === 'screenshot') {
+      if (payload.name !== undefined) {
+        payload.name = normalizePlainText(payload.name, 255) || undefined;
+      }
+      if (payload.tag !== undefined) {
+        payload.tag = normalizePlainText(payload.tag, 64) || null;
+      }
+    }
 
     const event = addTimelineEvent(sessionId, {
-      ...data,
+      ...payload,
       status: data.type === 'command' ? 'queued' : 'success'
     });
     if (!event) {
@@ -80,8 +90,14 @@ export async function PATCH(request) {
     if (!id) return apiError('id required', 400);
 
     const updates = {};
-    if (name !== undefined) updates.name = name;
-    if (tag !== undefined) updates.tag = tag;
+    if (name !== undefined) {
+      const normalizedName = normalizePlainText(name, 255);
+      if (!normalizedName) {
+        return apiError('Screenshot name cannot be empty', 400);
+      }
+      updates.name = normalizedName;
+    }
+    if (tag !== undefined) updates.tag = normalizePlainText(tag, 64) || null;
     if (Object.keys(updates).length === 0) {
       return apiError('No changes requested', 400);
     }

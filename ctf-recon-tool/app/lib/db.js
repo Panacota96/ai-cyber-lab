@@ -2,10 +2,13 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { requireValidSessionId, resolvePathWithin } from './security';
+import { shutdownTrackedProcesses } from './command-runtime';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+const RUNTIME_DATA_DIR = process.env.HELMS_DATA_DIR || process.env.APP_DATA_DIR || path.join(process.cwd(), 'data');
+const DATA_DIR = path.resolve(RUNTIME_DATA_DIR);
 const SESSIONS_DIR = path.join(DATA_DIR, 'sessions');
 const DB_PATH = path.join(DATA_DIR, 'ctf_assistant.db');
+const IS_TEST_RUNTIME = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
 
 // Ensure directories exist
 if (!fs.existsSync(SESSIONS_DIR)) {
@@ -16,6 +19,7 @@ const db = new Database(DB_PATH);
 const dbSignalState = globalThis.__helmsDbSignalState || (globalThis.__helmsDbSignalState = {
   hooksRegistered: false,
   closeCurrentDb: null,
+  shuttingDown: false,
 });
 let dbClosed = false;
 
@@ -34,18 +38,25 @@ export function closeDbConnection(reason = 'manual') {
 
 dbSignalState.closeCurrentDb = closeDbConnection;
 
-if (!dbSignalState.hooksRegistered && typeof process !== 'undefined' && typeof process.once === 'function') {
-  const handleSignal = (signal) => {
+if (!IS_TEST_RUNTIME && !dbSignalState.hooksRegistered && typeof process !== 'undefined' && typeof process.once === 'function') {
+  const handleSignal = async (signal) => {
+    if (dbSignalState.shuttingDown) return;
+    dbSignalState.shuttingDown = true;
     console.log(`[DB] Received ${signal}. Shutting down database connection...`);
     try {
+      await shutdownTrackedProcesses(signal, 1500);
       dbSignalState.closeCurrentDb?.(signal);
-    } finally {
       process.exit(0);
+    } catch (error) {
+      console.error(`[DB] Shutdown failed during ${signal}:`, error);
+      process.exit(1);
+    } finally {
+      dbSignalState.shuttingDown = false;
     }
   };
 
-  process.once('SIGTERM', () => handleSignal('SIGTERM'));
-  process.once('SIGINT', () => handleSignal('SIGINT'));
+  process.once('SIGTERM', () => { void handleSignal('SIGTERM'); });
+  process.once('SIGINT', () => { void handleSignal('SIGINT'); });
   dbSignalState.hooksRegistered = true;
 }
 
@@ -100,6 +111,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_ai_usage_session_created
     ON ai_usage(session_id, created_at DESC);
 
+  CREATE INDEX IF NOT EXISTS idx_timeline_events_session_timestamp
+    ON timeline_events(session_id, timestamp);
+
+  CREATE INDEX IF NOT EXISTS idx_timeline_events_session_type
+    ON timeline_events(session_id, type);
+
   CREATE TABLE IF NOT EXISTS writeups (
     id TEXT PRIMARY KEY,
     session_id TEXT UNIQUE,
@@ -147,6 +164,30 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_poc_steps_session_order
     ON poc_steps(session_id, step_order);
+
+  CREATE INDEX IF NOT EXISTS idx_writeup_versions_session_version
+    ON writeup_versions(session_id, version_number DESC);
+
+  CREATE TABLE IF NOT EXISTS findings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    severity TEXT NOT NULL CHECK (severity IN ('critical', 'high', 'medium', 'low')),
+    description TEXT,
+    impact TEXT,
+    remediation TEXT,
+    evidence_event_ids TEXT,
+    source TEXT DEFAULT 'manual',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_findings_session_created
+    ON findings(session_id, created_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_findings_session_severity
+    ON findings(session_id, severity);
 
   CREATE TABLE IF NOT EXISTS graph_state (
     session_id TEXT PRIMARY KEY,
@@ -214,12 +255,22 @@ export function deleteSession(sessionId) {
     requireValidSessionId(sessionId);
     const deleteEvents = db.prepare('DELETE FROM timeline_events WHERE session_id = ?');
     const deleteWriteup = db.prepare('DELETE FROM writeups WHERE session_id = ?');
+    const deleteWriteupVersions = db.prepare('DELETE FROM writeup_versions WHERE session_id = ?');
     const deletePocSteps = db.prepare('DELETE FROM poc_steps WHERE session_id = ?');
+    const deleteFindings = db.prepare('DELETE FROM findings WHERE session_id = ?');
+    const deleteAiUsage = db.prepare('DELETE FROM ai_usage WHERE session_id = ?');
+    const deleteCoachFeedback = db.prepare('DELETE FROM coach_feedback WHERE session_id = ?');
+    const deleteGraphState = db.prepare('DELETE FROM graph_state WHERE session_id = ?');
     const deletesess = db.prepare('DELETE FROM sessions WHERE id = ?');
     db.transaction(() => {
       deleteEvents.run(sessionId);
       deleteWriteup.run(sessionId);
+      deleteWriteupVersions.run(sessionId);
       deletePocSteps.run(sessionId);
+      deleteFindings.run(sessionId);
+      deleteAiUsage.run(sessionId);
+      deleteCoachFeedback.run(sessionId);
+      deleteGraphState.run(sessionId);
       deletesess.run(sessionId);
     })();
     const screenshotPath = resolvePathWithin(SESSIONS_DIR, sessionId);
@@ -646,6 +697,215 @@ export function deletePocStep(sessionId, id) {
   }
 }
 
+const FINDING_SEVERITIES = new Set(['critical', 'high', 'medium', 'low']);
+
+function normalizeFindingSeverity(raw) {
+  const severity = String(raw || '').trim().toLowerCase();
+  if (!FINDING_SEVERITIES.has(severity)) return null;
+  return severity;
+}
+
+function normalizeEvidenceEventIds(rawValue) {
+  let source = rawValue;
+  if (typeof source === 'string') {
+    try {
+      source = JSON.parse(source);
+    } catch (error) {
+      console.warn('[DB] Failed to parse evidence_event_ids JSON:', {
+        preview: source.slice(0, 120),
+        error: error?.message || String(error),
+      });
+      source = [];
+    }
+  }
+  if (!Array.isArray(source)) return [];
+  const dedup = new Set();
+  for (const id of source) {
+    const normalized = String(id || '').trim();
+    if (normalized) dedup.add(normalized);
+  }
+  return [...dedup];
+}
+
+function filterEvidenceEventIdsInSession(sessionId, eventIds) {
+  const ids = normalizeEvidenceEventIds(eventIds);
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = db.prepare(`
+    SELECT id
+    FROM timeline_events
+    WHERE session_id = ?
+      AND id IN (${placeholders})
+  `).all(sessionId, ...ids);
+  const allowed = new Set(rows.map((row) => row.id));
+  return ids.filter((id) => allowed.has(id));
+}
+
+function hydrateFindingRows(sessionId, rows) {
+  const eventIds = new Set();
+  const normalizedRows = rows.map((row) => {
+    const evidenceEventIds = normalizeEvidenceEventIds(row.evidence_event_ids);
+    for (const eventId of evidenceEventIds) {
+      eventIds.add(eventId);
+    }
+    return { ...row, _evidenceEventIds: evidenceEventIds };
+  });
+
+  const eventMap = new Map();
+  if (eventIds.size > 0) {
+    const ids = [...eventIds];
+    const placeholders = ids.map(() => '?').join(', ');
+    const eventRows = db.prepare(`
+      SELECT *
+      FROM timeline_events
+      WHERE session_id = ?
+        AND id IN (${placeholders})
+    `).all(sessionId, ...ids);
+    for (const eventRow of eventRows) {
+      eventMap.set(eventRow.id, eventRow);
+    }
+  }
+
+  return normalizedRows.map((row) => ({
+    id: Number(row.id),
+    sessionId: row.session_id,
+    title: row.title || '',
+    severity: row.severity || 'medium',
+    description: row.description || '',
+    impact: row.impact || '',
+    remediation: row.remediation || '',
+    source: row.source || 'manual',
+    evidenceEventIds: row._evidenceEventIds || [],
+    evidenceEvents: (row._evidenceEventIds || [])
+      .map((id) => eventMap.get(id))
+      .filter(Boolean),
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  }));
+}
+
+function getHydratedFinding(sessionId, findingId) {
+  const row = db.prepare(`
+    SELECT *
+    FROM findings
+    WHERE session_id = ? AND id = ?
+  `).get(sessionId, findingId);
+  if (!row) return null;
+  return hydrateFindingRows(sessionId, [row])[0] || null;
+}
+
+export function listFindings(sessionId) {
+  try {
+    requireValidSessionId(sessionId);
+    const rows = db.prepare(`
+      SELECT *
+      FROM findings
+      WHERE session_id = ?
+      ORDER BY created_at DESC, id DESC
+    `).all(sessionId);
+    return hydrateFindingRows(sessionId, rows);
+  } catch (error) {
+    console.error(`Error listing findings for session ${sessionId}:`, error);
+    return [];
+  }
+}
+
+export function createFinding(sessionId, input = {}) {
+  try {
+    requireValidSessionId(sessionId);
+    const title = String(input?.title || '').trim();
+    if (!title) return null;
+    const severity = normalizeFindingSeverity(input?.severity) || 'medium';
+    const description = String(input?.description || '').trim();
+    const impact = String(input?.impact || '').trim();
+    const remediation = String(input?.remediation || '').trim();
+    const source = String(input?.source || 'manual').trim().toLowerCase() || 'manual';
+    const evidenceEventIds = filterEvidenceEventIdsInSession(sessionId, input?.evidenceEventIds);
+
+    const result = db.prepare(`
+      INSERT INTO findings (
+        session_id,
+        title,
+        severity,
+        description,
+        impact,
+        remediation,
+        evidence_event_ids,
+        source,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(
+      sessionId,
+      title,
+      severity,
+      description || null,
+      impact || null,
+      remediation || null,
+      JSON.stringify(evidenceEventIds),
+      source
+    );
+
+    return getHydratedFinding(sessionId, result.lastInsertRowid);
+  } catch (error) {
+    console.error(`Error creating finding for session ${sessionId}:`, error);
+    return null;
+  }
+}
+
+export function updateFinding(sessionId, id, updates = {}) {
+  try {
+    requireValidSessionId(sessionId);
+    const mapped = {};
+
+    if (updates.title !== undefined) mapped.title = updates.title === null ? null : String(updates.title).trim();
+    if (updates.severity !== undefined) {
+      const normalizedSeverity = normalizeFindingSeverity(updates.severity);
+      if (!normalizedSeverity) return null;
+      mapped.severity = normalizedSeverity;
+    }
+    if (updates.description !== undefined) mapped.description = updates.description === null ? null : String(updates.description).trim();
+    if (updates.impact !== undefined) mapped.impact = updates.impact === null ? null : String(updates.impact).trim();
+    if (updates.remediation !== undefined) mapped.remediation = updates.remediation === null ? null : String(updates.remediation).trim();
+    if (updates.source !== undefined) mapped.source = updates.source === null ? null : String(updates.source).trim().toLowerCase();
+    if (updates.evidenceEventIds !== undefined) {
+      const filteredEvidenceIds = filterEvidenceEventIdsInSession(sessionId, updates.evidenceEventIds);
+      mapped.evidence_event_ids = JSON.stringify(filteredEvidenceIds);
+    }
+
+    const keys = Object.keys(mapped);
+    if (keys.length === 0) return getHydratedFinding(sessionId, id);
+    if (mapped.title !== undefined && !mapped.title) return null;
+
+    const setClause = keys.map((key) => `${key} = ?`).join(', ');
+    const values = keys.map((key) => mapped[key]);
+    const result = db.prepare(`
+      UPDATE findings
+      SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+      WHERE session_id = ? AND id = ?
+    `).run(...values, sessionId, id);
+    if (result.changes === 0) return null;
+    return getHydratedFinding(sessionId, id);
+  } catch (error) {
+    console.error(`Error updating finding ${id} for session ${sessionId}:`, error);
+    return null;
+  }
+}
+
+export function deleteFinding(sessionId, id) {
+  try {
+    requireValidSessionId(sessionId);
+    const result = db.prepare(`
+      DELETE FROM findings
+      WHERE session_id = ? AND id = ?
+    `).run(sessionId, id);
+    return result.changes > 0;
+  } catch (error) {
+    console.error(`Error deleting finding ${id} for session ${sessionId}:`, error);
+    return false;
+  }
+}
+
 export function getScreenshotDir(sessionId) {
   requireValidSessionId(sessionId);
   const screenshotPath = resolvePathWithin(SESSIONS_DIR, sessionId, 'screenshots');
@@ -848,6 +1108,7 @@ export function getDbStats() {
     sessions: db.prepare('SELECT COUNT(*) as n FROM sessions').get().n,
     events: db.prepare('SELECT COUNT(*) as n FROM timeline_events').get().n,
     pocSteps: db.prepare('SELECT COUNT(*) as n FROM poc_steps').get().n,
+    findings: db.prepare('SELECT COUNT(*) as n FROM findings').get().n,
     logs: db.prepare('SELECT COUNT(*) as n FROM app_logs').get().n,
     aiUsage: db.prepare('SELECT COUNT(*) as n FROM ai_usage').get().n,
     writeupVersions: db.prepare('SELECT COUNT(*) as n FROM writeup_versions').get().n,

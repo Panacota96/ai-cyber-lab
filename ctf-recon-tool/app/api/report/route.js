@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getSession, getTimeline as getTimelineEvents, listPocSteps } from '@/lib/db';
+import { getSession, getTimeline as getTimelineEvents, listPocSteps, listFindings } from '@/lib/db';
 import { labReport, executiveSummary, technicalWalkthrough, ctfSolution, bugBountyReport, pentestReport } from '@/lib/report-formats';
 import { isValidSessionId } from '@/lib/security';
 import { apiError } from '@/lib/api-error';
+import { normalizeAnalystName } from '@/lib/text-sanitize';
 
 const FORMATS = {
   'lab-report': labReport,
@@ -17,7 +18,7 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const sessionId = searchParams.get('sessionId');
   const format = searchParams.get('format') || 'technical-walkthrough';
-  const analystName = searchParams.get('analystName') || 'Unknown';
+  const analystName = normalizeAnalystName(searchParams.get('analystName'));
 
   if (!sessionId || !isValidSessionId(sessionId)) {
     return apiError('Session ID required', 400);
@@ -30,11 +31,15 @@ export async function GET(request) {
     }
 
     const events = getTimelineEvents(sessionId);
-    const pocSteps = (format === 'technical-walkthrough' || format === 'pentest')
+    const formatNeedsEvidence = format === 'technical-walkthrough' || format === 'pentest';
+    const pocSteps = formatNeedsEvidence
       ? listPocSteps(sessionId)
       : [];
+    const findings = formatNeedsEvidence
+      ? listFindings(sessionId)
+      : [];
     const generator = FORMATS[format] || labReport;
-    const report = generator(session, events, analystName, { pocSteps });
+    const report = generator(session, events, analystName, { pocSteps, findings });
 
     return NextResponse.json({ report });
   } catch (error) {

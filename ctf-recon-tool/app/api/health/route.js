@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import pkg from '../../../package.json';
 import { config } from '@/lib/config';
+import { isAdminApiEnabled, isCommandExecutionEnabled } from '@/lib/security';
 
 export async function GET() {
   const result = {
@@ -18,6 +19,11 @@ export async function GET() {
     },
     disk: {
       dataDir: fs.existsSync(path.join(process.cwd(), 'data')) ? 'ok' : 'missing',
+    },
+    features: {
+      commandExecutionEnabled: isCommandExecutionEnabled(),
+      adminApiEnabled: isAdminApiEnabled(),
+      apiTokenRequired: Boolean(process.env.APP_API_TOKEN || process.env.APP_API_TOKEN_2),
     },
   };
 

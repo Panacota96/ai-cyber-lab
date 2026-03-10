@@ -1,15 +1,9 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { getGraphState, saveGraphState } from '@/lib/db';
 import { isApiTokenValid, isValidSessionId } from '@/lib/security';
 import { apiError } from '@/lib/api-error';
 import { toMermaid } from '@/lib/graph-derive';
-
-const GraphSaveSchema = z.object({
-  sessionId: z.string().min(1),
-  nodes: z.array(z.any()),
-  edges: z.array(z.any()),
-});
+import { graphSaveSchema } from '@/lib/graph-schemas';
 
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -29,7 +23,7 @@ export async function GET(request) {
 
 export async function POST(request) {
   if (!isApiTokenValid(request)) return apiError('Unauthorized', 401);
-  const parsed = GraphSaveSchema.safeParse(await request.json());
+  const parsed = graphSaveSchema.safeParse(await request.json());
   if (!parsed.success) return apiError('Validation failed', 400, { details: parsed.error.errors });
 
   const { sessionId, nodes, edges } = parsed.data;

@@ -13,6 +13,7 @@ services:
         required: false       # app runs without .env; compose won't error if absent
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      ENABLE_COMMAND_EXECUTION: ${ENABLE_COMMAND_EXECUTION:-true}
     volumes:
       - helms-paladin-data:/app/data
     healthcheck:
