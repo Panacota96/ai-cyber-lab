@@ -1,0 +1,42 @@
+name: Reviewdog ESLint
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: reviewdog-eslint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  eslint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ctf-recon-tool
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ctf-recon-tool/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Reviewdog ESLint
+        uses: reviewdog/action-eslint@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-check
+          workdir: ctf-recon-tool
+          eslint_flags: .
+          filter_mode: added
+          fail_level: error

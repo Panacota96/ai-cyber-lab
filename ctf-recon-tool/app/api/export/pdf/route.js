@@ -4,7 +4,7 @@ import { getSession, getTimeline } from '@/lib/db';
 import path from 'path';
 import fs from 'fs';
 import { isValidSessionId, requireSafeFilename, resolvePathWithin } from '@/lib/security';
-import { normalizeAnalystName } from '@/lib/text-sanitize';
+import { normalizeAnalystName, normalizePlainText } from '@/lib/text-sanitize';
 
 // Map report format name to a display title
 const FORMAT_TITLES = {
@@ -163,6 +163,17 @@ const PDF_STYLES = {
     hasToc: true,
   },
 };
+
+function buildScreenshotMetaLines(screenshot) {
+  const lines = [];
+  const tag = normalizePlainText(screenshot?.tag, 64);
+  const caption = normalizePlainText(screenshot?.caption, 255);
+  const context = normalizePlainText(screenshot?.context, 2000);
+  if (tag) lines.push(`#${tag}`);
+  if (caption) lines.push(caption);
+  if (context) lines.push(context);
+  return lines;
+}
 
 // Parse inline markdown (**bold**, `code`) into pdfmake text nodes
 function parseInline(text) {
@@ -567,7 +578,12 @@ export async function GET(request) {
             margin: [0, 4, 0, 2],
           });
         }
-        content.push({ text: String(ss.name || 'Screenshot') + (ss.tag ? ` — #${String(ss.tag)}` : ''), style: 'caption', margin: [0, 0, 0, 8] });
+        const metaLines = buildScreenshotMetaLines(ss);
+        content.push({ text: String(ss.name || 'Screenshot'), style: 'caption', margin: [0, 0, 0, 4] });
+        for (const line of metaLines) {
+          content.push({ text: line, style: 'caption', margin: [0, 0, 0, 4] });
+        }
+        content.push({ text: '', margin: [0, 0, 0, 4] });
       } catch (_) {
         content.push({ text: `[Image unavailable: ${String(ss.name || 'screenshot')}]`, style: 'meta', margin: [0, 0, 0, 8] });
       }

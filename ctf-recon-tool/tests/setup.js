@@ -31,6 +31,12 @@ afterEach(async () => {
   } catch (_) {
     // ignore cleanup issues when rate limiter is not loaded
   }
+  try {
+    const { clearExecutionQueueForTests } = await import('@/lib/execute-queue');
+    clearExecutionQueueForTests();
+  } catch (_) {
+    // ignore cleanup issues when execute queue is not loaded
+  }
 });
 
 if (!globalThis.__helmsVitestTeardownRegistered) {

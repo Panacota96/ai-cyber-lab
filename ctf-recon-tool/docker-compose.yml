@@ -14,6 +14,8 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       ENABLE_COMMAND_EXECUTION: ${ENABLE_COMMAND_EXECUTION:-true}
+    mem_limit: ${APP_MEM_LIMIT:-2g}
+    cpus: ${APP_CPUS:-2.0}
     volumes:
       - helms-paladin-data:/app/data
     healthcheck:

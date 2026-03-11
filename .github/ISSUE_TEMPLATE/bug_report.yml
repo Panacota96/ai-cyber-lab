@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a defect or regression in Helm's Watch.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the bug clearly and concretely.
+      placeholder: What broke, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest reliable reproduction.
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: App version or commit SHA if known.
+      placeholder: v0.3.0 / abc1234
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Logs, screenshots, or notes
+      description: Paste any useful context, errors, or screenshots.

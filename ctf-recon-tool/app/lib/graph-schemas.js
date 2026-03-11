@@ -5,10 +5,13 @@ export const graphNodeDataSchema = z.object({
   nodeType: z.string().optional(),
   phase: z.string().optional(),
   color: z.string().optional(),
+  origin: z.enum(['auto', 'manual']).optional(),
   sourceEventId: z.string().optional(),
+  sourceFindingId: z.union([z.string(), z.number()]).optional(),
   timestamp: z.string().optional(),
   port: z.string().optional(),
   service: z.string().optional(),
+  severity: z.string().optional(),
 }).passthrough();
 
 export const graphNodeSchema = z.object({
@@ -32,6 +35,7 @@ export const graphEdgeSchema = z.object({
   label: z.string().optional(),
   animated: z.boolean().optional(),
   style: graphEdgeStyleSchema.optional(),
+  markerEnd: z.unknown().optional(),
 }).passthrough();
 
 export const graphSaveSchema = z.object({

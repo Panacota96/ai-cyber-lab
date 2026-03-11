@@ -1,35 +1,52 @@
 import { NextResponse } from 'next/server';
-import { getGraphState, saveGraphState } from '@/lib/db';
-import { isApiTokenValid, isValidSessionId } from '@/lib/security';
+import { getGraphState, listFindings, saveGraphState } from '@/lib/db';
 import { apiError } from '@/lib/api-error';
-import { toMermaid } from '@/lib/graph-derive';
+import { applyFindingsToGraphState, normalizeGraphState, toMermaid } from '@/lib/graph-derive';
 import { graphSaveSchema } from '@/lib/graph-schemas';
+import {
+  getRouteMeta,
+  readJsonBody,
+  withAuth,
+  withErrorHandler,
+  withValidSessionId,
+} from '@/lib/api-route';
 
-export async function GET(request) {
-  const { searchParams } = new URL(request.url);
-  const sessionId = searchParams.get('sessionId') || 'default';
-  if (!isValidSessionId(sessionId)) return apiError('Invalid sessionId', 400);
+export const GET = withErrorHandler(
+  withValidSessionId(async (request) => {
+    const { sessionId, searchParams } = getRouteMeta(request);
+    const persistedState = getGraphState(sessionId);
+    const findings = listFindings(sessionId);
+    const state = applyFindingsToGraphState(persistedState, findings);
+    if (
+      JSON.stringify(state.nodes) !== JSON.stringify(persistedState.nodes)
+      || JSON.stringify(state.edges) !== JSON.stringify(persistedState.edges)
+    ) {
+      saveGraphState(sessionId, state.nodes, state.edges);
+    }
 
-  const state = getGraphState(sessionId);
+    // ?mermaid=1 → return Mermaid flowchart string instead of JSON
+    if (searchParams?.get('mermaid') === '1') {
+      const mermaidStr = toMermaid(state.nodes, state.edges);
+      return new NextResponse(mermaidStr, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    }
 
-  // ?mermaid=1 → return Mermaid flowchart string instead of JSON
-  if (searchParams.get('mermaid') === '1') {
-    const mermaidStr = toMermaid(state.nodes, state.edges);
-    return new NextResponse(mermaidStr, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
-  }
+    return NextResponse.json(state);
+  }, { source: 'query' }),
+  { route: '/api/graph GET' }
+);
 
-  return NextResponse.json(state);
-}
+export const POST = withErrorHandler(
+  withAuth(
+    withValidSessionId(async (request) => {
+      const parsed = graphSaveSchema.safeParse(await readJsonBody(request, {}));
+      if (!parsed.success) return apiError('Validation failed', 400, { details: parsed.error.errors });
 
-export async function POST(request) {
-  if (!isApiTokenValid(request)) return apiError('Unauthorized', 401);
-  const parsed = graphSaveSchema.safeParse(await request.json());
-  if (!parsed.success) return apiError('Validation failed', 400, { details: parsed.error.errors });
-
-  const { sessionId, nodes, edges } = parsed.data;
-  if (!isValidSessionId(sessionId)) return apiError('Invalid sessionId', 400);
-
-  const ok = saveGraphState(sessionId, nodes, edges);
-  if (!ok) return apiError('Failed to save graph state', 500);
-  return NextResponse.json({ success: true });
-}
+      const { sessionId, nodes, edges } = parsed.data;
+      const normalized = normalizeGraphState(nodes, edges);
+      const ok = saveGraphState(sessionId, normalized.nodes, normalized.edges);
+      if (!ok) return apiError('Failed to save graph state', 500);
+      return NextResponse.json({ success: true });
+    }, { source: 'body' })
+  ),
+  { route: '/api/graph POST' }
+);

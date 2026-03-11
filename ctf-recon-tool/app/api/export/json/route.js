@@ -40,6 +40,12 @@ export async function POST(request) {
         appVersion: getAppVersion(),
         format: bundle.format,
         analystName: bundle.analystName,
+        sessionName: bundle.reportMeta?.sessionName || bundle.session.name,
+        target: bundle.reportMeta?.target || bundle.session.target || null,
+        difficulty: bundle.reportMeta?.difficulty || bundle.session.difficulty || null,
+        objective: bundle.reportMeta?.objective || bundle.session.objective || null,
+        generatedAt: bundle.reportMeta?.generatedAtIso || null,
+        formatLabel: bundle.reportMeta?.formatLabel || bundle.format,
       },
       session: bundle.session,
       report: {

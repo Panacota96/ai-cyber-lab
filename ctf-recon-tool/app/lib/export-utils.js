@@ -14,6 +14,7 @@ import {
   ctfSolution,
   bugBountyReport,
   pentestReport,
+  buildReportMeta,
 } from '@/lib/report-formats';
 import { detectImageFormat, imageFormatToMime } from '@/lib/image-sniff';
 import { isValidSessionId, requireSafeFilename, resolvePathWithin } from '@/lib/security';
@@ -175,8 +176,10 @@ export function buildExportBundle({
   const timeline = getTimeline(sessionId);
   const pocSteps = listPocSteps(sessionId);
   const findings = listFindings(sessionId);
+  const generatedAt = new Date();
   const formatGenerator = FORMATS[format] || technicalWalkthrough;
-  const reportMarkdownRaw = formatGenerator(session, timeline, safeAnalystName, { pocSteps, findings });
+  const reportMeta = buildReportMeta(session, format, safeAnalystName, generatedAt);
+  const reportMarkdownRaw = formatGenerator(session, timeline, safeAnalystName, { pocSteps, findings, generatedAt });
   const reportMarkdown = inlineImages ? inlineMarkdownImages(reportMarkdownRaw) : reportMarkdownRaw;
 
   const timelineHydrated = hydrateTimelineInlineImages(timeline, sessionId, inlineImages);
@@ -187,6 +190,7 @@ export function buildExportBundle({
     session,
     format,
     analystName: safeAnalystName,
+    reportMeta,
     reportMarkdown,
     timeline: timelineHydrated,
     pocSteps: pocHydrated,
@@ -361,12 +365,14 @@ export function buildStandaloneHtmlDocument({
   format,
   analystName,
   markdown,
+  reportMeta,
 }) {
   const contentHtml = markdownToHtmlContent(markdown);
-  const generatedAt = new Date().toISOString();
+  const generatedAt = reportMeta?.generatedAtIso || new Date().toISOString();
   const pageTitle = title || `${session?.name || 'session'}-${format || 'report'}`;
   const target = session?.target ? `<span class="meta-chip">Target: ${escapeHtml(session.target)}</span>` : '';
   const difficulty = session?.difficulty ? `<span class="meta-chip">Difficulty: ${escapeHtml(String(session.difficulty).toUpperCase())}</span>` : '';
+  const objective = session?.objective ? `<span class="meta-chip">Objective: ${escapeHtml(session.objective)}</span>` : '';
 
   return `<!doctype html>
 <html lang="en">
@@ -410,6 +416,7 @@ export function buildStandaloneHtmlDocument({
       background: rgba(8, 13, 21, 0.88);
       border-radius: 12px;
       padding: 1.1rem 1.2rem;
+      overflow-wrap: anywhere;
     }
     h1,h2,h3 { margin-top: 1rem; margin-bottom: 0.45rem; line-height: 1.3; }
     h1 { font-size: 1.42rem; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
@@ -448,9 +455,65 @@ export function buildStandaloneHtmlDocument({
     figure { margin: 0.6rem 0 0.95rem; }
     img {
       max-width: 100%;
+      height: auto;
       border: 1px solid var(--border);
       border-radius: 8px;
       background: #02060c;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.6rem 0 0.9rem;
+      border: 1px solid var(--border);
+      font-size: 0.9rem;
+      display: block;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.38rem 0.52rem;
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+    th {
+      background: rgba(13, 26, 39, 0.86);
+      color: #c5ecff;
+      font-weight: 600;
+    }
+    @media (max-width: 1024px) {
+      body { padding: 1.1rem; }
+      .wrap { max-width: 960px; }
+      .head { padding: 0.9rem 1rem; }
+      article { padding: 1rem; }
+    }
+    @media (max-width: 768px) {
+      body { padding: 0.85rem; line-height: 1.58; }
+      .wrap { max-width: 100%; }
+      .head { border-radius: 10px; padding: 0.82rem 0.86rem; }
+      .title { font-size: 1.05rem; margin-bottom: 0.3rem; }
+      .meta { display: grid; grid-template-columns: 1fr; gap: 0.34rem; }
+      .meta-chip { width: 100%; font-size: 0.82rem; padding: 0.24rem 0.5rem; }
+      article { border-radius: 10px; padding: 0.86rem 0.82rem; }
+      h1 { font-size: 1.2rem; }
+      h2 { font-size: 1.02rem; }
+      h3 { font-size: 0.94rem; }
+      p, li, blockquote { font-size: 0.93rem; }
+      ul, ol { margin-left: 1rem; }
+      pre { padding: 0.62rem 0.64rem; border-radius: 7px; }
+      code { font-size: 0.8rem; }
+      footer { text-align: left; font-size: 0.74rem; }
+    }
+    @media (max-width: 520px) {
+      body { padding: 0.62rem; }
+      .title { font-size: 0.98rem; }
+      .meta-chip { font-size: 0.79rem; }
+      article { padding: 0.7rem 0.65rem; }
+      h1 { font-size: 1.08rem; }
+      p, li, blockquote { font-size: 0.9rem; }
+      table { font-size: 0.82rem; }
+      th, td { padding: 0.3rem 0.42rem; }
     }
     footer {
       margin-top: 0.9rem;
@@ -468,6 +531,8 @@ export function buildStandaloneHtmlDocument({
       blockquote { border-left-color: #0a5f8a; background: #f6fbff; color: #222; }
       pre { background: #f7f8fa; border-color: #ddd; color: #111; }
       p code, li code, blockquote code { background: #f0f1f2; border-color: #ddd; color: #0d3f5a; }
+      table { display: table; overflow: visible; border-color: #ddd; }
+      th, td { border-color: #ddd; white-space: normal; }
       footer { color: #666; }
     }
   </style>
@@ -482,6 +547,7 @@ export function buildStandaloneHtmlDocument({
         <span class="meta-chip">Analyst: ${escapeHtml(analystName || 'Unknown')}</span>
         ${target}
         ${difficulty}
+        ${objective}
       </div>
     </section>
     <article>

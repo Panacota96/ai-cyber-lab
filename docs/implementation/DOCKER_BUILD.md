@@ -1,27 +1,46 @@
 # Docker Build and Orchestration
 
-Helm's Paladin is designed to run in a containerized Linux environment, ensuring that all necessary reconnaissance tools are available without manual installation on the host machine.
+Helm's Watch runs in a Linux container that bundles runtime recon tooling and the production Next.js app server.
 
-## Dockerfile Breakdown
-The `Dockerfile` uses a multi-stage approach for optimization:
+## Multi-stage Dockerfile (`B.1`)
 
-1.  **Base Image**: `node:20-bookworm`. This provides the latest Node.js runtime on a modern Debian base.
-2.  **Tool Installation**: 
-    -   `apt-get update` installs essential Linux utilities (`nmap`, `gobuster`, `ffuf`, `sqlite3`, etc.).
-3.  **Dependency Management**: 
-    -   `npm install` handles project-specific dependencies (Next.js, PDF library, AI SDKs).
-4.  **Application Build**: 
-    -   Copies the source code and prepares the Next.js runtime.
+The app image now uses a three-stage build:
+
+1. **`deps` stage (`node:20-bookworm`)**
+   - Installs Node dependencies with `npm ci`.
+2. **`builder` stage (`node:20-bookworm`)**
+   - Builds Next.js with standalone output (`next.config.mjs -> output: 'standalone'`).
+3. **`runner` stage (`node:20-bookworm-slim`)**
+   - Installs runtime operator tools only (nmap, ffuf, dirb, sqlite3, etc.).
+   - Vendors SearchSploit from the official Exploit-DB mirror.
+   - Copies `.next/standalone`, `.next/static`, and `public/` from the builder.
+
+This keeps runtime behavior unchanged while reducing final image size and build attack surface versus single-stage builds.
+
+## Runtime behavior
+
+- Exposes port `3000`.
+- Uses `NODE_ENV=production`.
+- Starts with `node server.js` from standalone output.
+- Includes image-level healthcheck:
+
+```bash
+wget -qO- http://localhost:3000/api/health
+```
 
 ## Docker Compose
-The `docker-compose.yml` file simplifies deployment:
 
-- **Volume Mounting**: Mounts `./data` to `/app/data` to ensure persistence across container restarts.
-- **Port Mapping**: Exposes internal port `3000` to the host machine.
-- **Environment**: Sets `NODE_ENV` to `development` by default for live-reloading.
+`ctf-recon-tool/docker-compose.yml` provides:
+
+- Persistent volume `helms-paladin-data` mounted at `/app/data`.
+- Port mapping `${PORT:-3000}:3000`.
+- Optional resource limits:
+  - `APP_MEM_LIMIT` (default `2g`)
+  - `APP_CPUS` (default `2.0`)
 
 ## Usage
+
 ```bash
+cd ctf-recon-tool
 docker compose up -d --build
 ```
-This command builds the image and starts the service in detached mode.

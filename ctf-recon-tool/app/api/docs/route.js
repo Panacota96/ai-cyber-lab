@@ -44,6 +44,11 @@ const SPEC = {
           filename: { type: 'string' },
           name: { type: 'string' },
           tag: { type: 'string' },
+          tags: { type: 'string', description: 'JSON-encoded tag array as stored in SQLite' },
+          caption: { type: 'string', nullable: true },
+          context: { type: 'string', nullable: true },
+          progress_pct: { type: 'integer', nullable: true, minimum: 0, maximum: 100 },
+          command_hash: { type: 'string', nullable: true },
           timestamp: { type: 'string', format: 'date-time' },
         },
       },
@@ -77,10 +82,33 @@ const SPEC = {
           impact: { type: 'string' },
           remediation: { type: 'string' },
           source: { type: 'string' },
+          tags: { type: 'array', items: { type: 'string' } },
           evidenceEventIds: { type: 'array', items: { type: 'string' } },
           evidenceEvents: { type: 'array', items: { $ref: '#/components/schemas/TimelineEvent' } },
           createdAt: { type: 'string', format: 'date-time', nullable: true },
           updatedAt: { type: 'string', format: 'date-time', nullable: true },
+        },
+      },
+      FlagSubmission: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer' },
+          sessionId: { type: 'string' },
+          value: { type: 'string' },
+          status: { type: 'string', enum: ['captured', 'submitted', 'accepted', 'rejected'] },
+          notes: { type: 'string' },
+          submittedAt: { type: 'string', format: 'date-time', nullable: true },
+          createdAt: { type: 'string', format: 'date-time', nullable: true },
+          updatedAt: { type: 'string', format: 'date-time', nullable: true },
+        },
+      },
+      WordlistEntry: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          type: { type: 'string', enum: ['directory', 'file'] },
+          relativePath: { type: 'string' },
+          size: { type: 'integer', nullable: true },
         },
       },
     },
@@ -136,7 +164,29 @@ const SPEC = {
         security: [{ ApiToken: [] }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['type', 'sessionId'], properties: { type: { type: 'string', enum: ['note', 'screenshot'] }, sessionId: { type: 'string' }, content: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } } } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['type', 'sessionId'],
+                properties: {
+                  type: { type: 'string', enum: ['note', 'screenshot'] },
+                  sessionId: { type: 'string' },
+                  content: { type: 'string' },
+                  tags: {
+                    oneOf: [
+                      { type: 'array', items: { type: 'string' } },
+                      { type: 'string' },
+                    ],
+                  },
+                  name: { type: 'string' },
+                  tag: { type: 'string' },
+                  caption: { type: 'string' },
+                  context: { type: 'string' },
+                },
+              },
+            },
+          },
         },
         responses: {
           '200': { description: 'Created event' },
@@ -158,12 +208,27 @@ const SPEC = {
         },
       },
       patch: {
-        summary: 'Update timeline event metadata (name, tag)',
+        summary: 'Update timeline event metadata (name, tag, caption, context)',
         operationId: 'updateTimelineEvent',
         security: [{ ApiToken: [] }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['id', 'sessionId'], properties: { id: { type: 'string' }, sessionId: { type: 'string' }, name: { type: 'string' }, tag: { type: 'string' } } } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['id', 'sessionId'],
+                properties: {
+                  id: { type: 'string' },
+                  sessionId: { type: 'string' },
+                  name: { type: 'string' },
+                  tag: { type: 'string' },
+                  caption: { type: 'string' },
+                  context: { type: 'string' },
+                },
+              },
+            },
+          },
         },
         responses: {
           '200': { description: 'Updated event' },
@@ -295,6 +360,7 @@ const SPEC = {
                   impact: { type: 'string' },
                   remediation: { type: 'string' },
                   source: { type: 'string', default: 'manual' },
+                  tags: { type: 'array', items: { type: 'string' } },
                   evidenceEventIds: { type: 'array', items: { type: 'string' } },
                 },
               },
@@ -326,6 +392,7 @@ const SPEC = {
                   impact: { type: 'string' },
                   remediation: { type: 'string' },
                   source: { type: 'string' },
+                  tags: { type: 'array', items: { type: 'string' } },
                   evidenceEventIds: { type: 'array', items: { type: 'string' } },
                 },
               },
@@ -382,17 +449,72 @@ const SPEC = {
         },
       },
     },
+    '/findings/auto-tag': {
+      post: {
+        summary: 'Deterministically auto-tag findings in a session',
+        operationId: 'autoTagFindings',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  findingId: { type: 'integer', nullable: true },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Updated findings with persisted tags',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    findings: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/Finding' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Session or finding not found' },
+        },
+      },
+    },
     '/execute': {
       post: {
-        summary: 'Execute a shell command (fire-and-forget)',
+        summary: 'Execute a shell command (returns running or queued event)',
         operationId: 'executeCommand',
         security: [{ ApiToken: [] }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['command'], properties: { command: { type: 'string', maxLength: 4000 }, sessionId: { type: 'string' }, timeout: { type: 'integer', description: 'Timeout in milliseconds (1000–1800000)' } } } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['command'],
+                properties: {
+                  command: { type: 'string', maxLength: 4000 },
+                  sessionId: { type: 'string' },
+                  timeout: { type: 'integer', description: 'Timeout in milliseconds (1000–1800000)' },
+                  tags: { type: 'array', items: { type: 'string' } },
+                },
+              },
+            },
+          },
         },
         responses: {
-          '200': { description: 'Running timeline event (poll /timeline for result)' },
+          '200': { description: 'Timeline event with status running or queued (poll /timeline for final result)' },
           '400': { description: 'Invalid request' },
           '401': { description: 'Unauthorized' },
           '403': { description: 'Blocked command or execution disabled' },
@@ -402,7 +524,7 @@ const SPEC = {
     },
     '/execute/cancel': {
       post: {
-        summary: 'Cancel a running command',
+        summary: 'Cancel a running or queued command',
         operationId: 'cancelCommand',
         security: [{ ApiToken: [] }],
         requestBody: {
@@ -412,6 +534,74 @@ const SPEC = {
         responses: {
           '200': { description: 'Cancelled event' },
           '404': { description: 'Process not found' },
+        },
+      },
+    },
+    '/execute/history': {
+      get: {
+        summary: 'Get grouped command history for a session',
+        operationId: 'getCommandHistory',
+        parameters: [
+          { name: 'sessionId', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 } },
+        ],
+        responses: {
+          '200': {
+            description: 'Grouped command history',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      command: { type: 'string' },
+                      commandHash: { type: 'string' },
+                      runCount: { type: 'integer' },
+                      successCount: { type: 'integer' },
+                      failureCount: { type: 'integer' },
+                      successRate: { type: 'integer' },
+                      lastStatus: { type: 'string', nullable: true },
+                      lastTimestamp: { type: 'string', format: 'date-time', nullable: true },
+                      latestEventId: { type: 'string' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/execute/retry/{eventId}': {
+      post: {
+        summary: 'Retry a previous command event',
+        operationId: 'retryCommand',
+        security: [{ ApiToken: [] }],
+        parameters: [
+          { name: 'eventId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  command: { type: 'string', maxLength: 4000 },
+                  timeout: { type: 'integer', description: 'Optional timeout override in milliseconds' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'New running command event' },
+          '400': { description: 'Invalid request or non-command source event' },
+          '401': { description: 'Unauthorized' },
+          '403': { description: 'Blocked command or execution disabled' },
+          '404': { description: 'Source command event not found' },
+          '429': { description: 'Rate limit exceeded' },
         },
       },
     },
@@ -517,12 +707,56 @@ const SPEC = {
         security: [{ ApiToken: [] }],
         requestBody: {
           required: true,
-          content: { 'multipart/form-data': { schema: { type: 'object', required: ['file', 'sessionId'], properties: { file: { type: 'string', format: 'binary' }, sessionId: { type: 'string' }, name: { type: 'string' }, tag: { type: 'string' } } } } },
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                required: ['file', 'sessionId'],
+                properties: {
+                  file: { type: 'string', format: 'binary' },
+                  sessionId: { type: 'string' },
+                  name: { type: 'string' },
+                  tag: { type: 'string' },
+                  caption: { type: 'string' },
+                  context: { type: 'string' },
+                },
+              },
+            },
+          },
         },
         responses: {
           '200': { description: 'Screenshot timeline event' },
           '413': { description: 'File too large (>10MB)' },
           '415': { description: 'Unsupported image format' },
+        },
+      },
+    },
+    '/wordlists': {
+      get: {
+        summary: 'Browse the configured wordlist directory tree',
+        operationId: 'listWordlists',
+        parameters: [
+          { name: 'path', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'Directory listing rooted at CTF_WORDLIST_DIR',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    root: { type: 'string' },
+                    currentPath: { type: 'string' },
+                    parentPath: { type: 'string', nullable: true },
+                    entries: { type: 'array', items: { $ref: '#/components/schemas/WordlistEntry' } },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: 'Traversal rejected or path is not a directory' },
+          '404': { description: 'Path not found' },
         },
       },
     },
@@ -658,6 +892,107 @@ const SPEC = {
         responses: { '200': { description: 'Usage summary' } },
       },
     },
+    '/flags': {
+      get: {
+        summary: 'List locally tracked flag submissions for a session',
+        operationId: 'listFlags',
+        parameters: [{ name: 'sessionId', in: 'query', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'Flag submission list',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'array',
+                  items: { $ref: '#/components/schemas/FlagSubmission' },
+                },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        summary: 'Create a local flag tracking record',
+        operationId: 'createFlag',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId', 'value'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  value: { type: 'string' },
+                  status: { type: 'string', enum: ['captured', 'submitted', 'accepted', 'rejected'], default: 'captured' },
+                  notes: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Created flag record',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    flag: { $ref: '#/components/schemas/FlagSubmission' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { description: 'Unauthorized' },
+        },
+      },
+      patch: {
+        summary: 'Update a local flag tracking record',
+        operationId: 'updateFlag',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId', 'id'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  id: { type: 'integer' },
+                  value: { type: 'string' },
+                  status: { type: 'string', enum: ['captured', 'submitted', 'accepted', 'rejected'] },
+                  notes: { type: 'string' },
+                  submittedAt: { type: 'string', nullable: true },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Updated flag record' },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Flag not found' },
+        },
+      },
+      delete: {
+        summary: 'Delete a local flag tracking record',
+        operationId: 'deleteFlag',
+        security: [{ ApiToken: [] }],
+        parameters: [
+          { name: 'sessionId', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'id', in: 'query', required: true, schema: { type: 'integer' } },
+        ],
+        responses: {
+          '200': { description: 'Deleted flag record' },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Flag not found' },
+        },
+      },
+    },
     '/docs': {
       get: {
         summary: 'OpenAPI spec (JSON) or Swagger UI (add ?ui=1)',
@@ -675,7 +1010,7 @@ const SWAGGER_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Helm's Paladin — API Docs</title>
+  <title>Helm's Watch — API Docs</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
 </head>

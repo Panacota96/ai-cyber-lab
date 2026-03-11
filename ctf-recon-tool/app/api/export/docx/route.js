@@ -38,6 +38,7 @@ export async function POST(request) {
       session: bundle.session,
       format: bundle.format,
       analystName: bundle.analystName,
+      reportMeta: bundle.reportMeta,
       markdown: bundle.reportMarkdown,
       timeline: bundle.timeline,
       pocSteps: bundle.pocSteps,

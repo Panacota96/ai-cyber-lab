@@ -1,5 +1,12 @@
 # AI Cyber Lab
 
+[![CI](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/ci.yml)
+[![Tests](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/test.yml)
+[![Security](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/security.yml)
+[![Docker Publish](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/docker-publish.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Panacota96/ai-cyber-lab/main/ctf-recon-tool/docs/badges/coverage.json)](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/coverage.yml)
+
 AI Cyber Lab is the repository that houses Helm's Watch, a desktop-first cyber lab workspace for CTF, lab, and pentest documentation.
 
 Current application release: **v0.3.0**

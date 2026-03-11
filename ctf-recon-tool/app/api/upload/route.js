@@ -5,7 +5,6 @@ import { getScreenshotDir, addTimelineEvent } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { sniffImage } from '@/lib/image-sniff';
 import {
-  isApiTokenValid,
   isValidSessionId,
   resolvePathWithin,
   sanitizeUploadFilename,
@@ -13,6 +12,7 @@ import {
 } from '@/lib/security';
 import { apiError } from '@/lib/api-error';
 import { normalizePlainText } from '@/lib/text-sanitize';
+import { withAuth, withErrorHandler } from '@/lib/api-route';
 
 function normalizeMime(mime) {
   const clean = String(mime || '').trim().toLowerCase();
@@ -21,16 +21,14 @@ function normalizeMime(mime) {
   return clean;
 }
 
-export async function POST(request) {
-  try {
-    if (!isApiTokenValid(request)) {
-      return apiError('Unauthorized', 401);
-    }
-
+export const POST = withErrorHandler(
+  withAuth(async (request) => {
     const formData = await request.formData();
     const file = formData.get('file');
     const sessionId = formData.get('sessionId') || 'default';
     const tag = normalizePlainText(formData.get('tag'), 64);
+    const caption = normalizePlainText(formData.get('caption'), 255);
+    const context = normalizePlainText(formData.get('context'), 2000);
 
     if (!file) {
       return apiError('No file uploaded', 400);
@@ -77,13 +75,13 @@ export async function POST(request) {
       filename: filename,
       name: name,
       tag: tag || null,
+      caption: caption || null,
+      context: context || null,
       status: 'success'
     });
 
     logger.info(`Screenshot uploaded: ${filename} for session ${sessionId}`);
     return NextResponse.json(event);
-  } catch (error) {
-    logger.error('Error in /api/upload POST handler', error);
-    return apiError('Upload failed', 500);
-  }
-}
+  }),
+  { route: '/api/upload POST' }
+);

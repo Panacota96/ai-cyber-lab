@@ -8,8 +8,14 @@ import {
   deleteFinding,
 } from '@/lib/db';
 import { apiError } from '@/lib/api-error';
-import { isApiTokenValid, isValidSessionId } from '@/lib/security';
 import { logger } from '@/lib/logger';
+import {
+  getRouteMeta,
+  readJsonBody,
+  withAuth,
+  withErrorHandler,
+  withValidSessionId,
+} from '@/lib/api-route';
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low'];
 
@@ -20,6 +26,7 @@ const FindingPostSchema = z.object({
   description: z.string().optional().default(''),
   impact: z.string().optional().default(''),
   remediation: z.string().optional().default(''),
+  tags: z.union([z.array(z.string()), z.string()]).optional(),
   evidenceEventIds: z.array(z.string()).optional().default([]),
   source: z.string().optional().default('manual'),
 });
@@ -32,6 +39,7 @@ const FindingPatchSchema = z.object({
   description: z.string().optional().nullable(),
   impact: z.string().optional().nullable(),
   remediation: z.string().optional().nullable(),
+  tags: z.union([z.array(z.string()), z.string()]).optional().nullable(),
   evidenceEventIds: z.array(z.string()).optional(),
   source: z.string().optional().nullable(),
 });
@@ -49,119 +57,101 @@ function ensureSessionExists(sessionId) {
   return null;
 }
 
-export async function GET(request) {
-  const { searchParams } = new URL(request.url);
-  const sessionId = searchParams.get('sessionId') || 'default';
-  if (!isValidSessionId(sessionId)) {
-    return apiError('Invalid sessionId', 400);
-  }
+export const GET = withErrorHandler(
+  withValidSessionId(async (request) => {
+    const { sessionId } = getRouteMeta(request);
 
-  const missingSession = ensureSessionExists(sessionId);
-  if (missingSession) return missingSession;
-
-  return NextResponse.json(listFindings(sessionId));
-}
-
-export async function POST(request) {
-  try {
-    if (!isApiTokenValid(request)) {
-      return apiError('Unauthorized', 401);
-    }
-
-    const parsed = FindingPostSchema.safeParse(await request.json());
-    if (!parsed.success) {
-      return apiError('Validation failed', 400, { details: parsed.error.errors });
-    }
-
-    const payload = parsed.data;
-    if (!isValidSessionId(payload.sessionId)) {
-      return apiError('Invalid sessionId', 400);
-    }
-
-    const missingSession = ensureSessionExists(payload.sessionId);
+    const missingSession = ensureSessionExists(sessionId);
     if (missingSession) return missingSession;
 
-    const finding = createFinding(payload.sessionId, payload);
-    if (!finding) {
-      return apiError('Failed to create finding', 500);
-    }
+    return NextResponse.json(listFindings(sessionId));
+  }, { source: 'query' }),
+  { route: '/api/findings GET' }
+);
 
-    logger.info(`Finding created for session: ${payload.sessionId}`);
-    return NextResponse.json({ finding });
-  } catch (error) {
-    logger.error('Error in /api/findings POST handler', error);
-    return apiError('Failed to create finding', 500);
-  }
-}
+export const POST = withErrorHandler(
+  withAuth(
+    withValidSessionId(async (request) => {
+      const parsed = FindingPostSchema.safeParse(await readJsonBody(request, {}));
+      if (!parsed.success) {
+        return apiError('Validation failed', 400, { details: parsed.error.errors });
+      }
 
-export async function PATCH(request) {
-  try {
-    if (!isApiTokenValid(request)) {
-      return apiError('Unauthorized', 401);
-    }
+      const payload = parsed.data;
+      const { sessionId } = getRouteMeta(request);
+      const missingSession = ensureSessionExists(sessionId);
+      if (missingSession) return missingSession;
 
-    const parsed = FindingPatchSchema.safeParse(await request.json());
-    if (!parsed.success) {
-      return apiError('Validation failed', 400, { details: parsed.error.errors });
-    }
+      const finding = createFinding(sessionId, { ...payload, sessionId });
+      if (!finding) {
+        return apiError('Failed to create finding', 500);
+      }
 
-    const payload = parsed.data;
-    if (!isValidSessionId(payload.sessionId)) {
-      return apiError('Invalid sessionId', 400);
-    }
+      logger.info(`Finding created for session: ${sessionId}`);
+      return NextResponse.json({ finding });
+    }, { source: 'body' })
+  ),
+  { route: '/api/findings POST' }
+);
 
-    const missingSession = ensureSessionExists(payload.sessionId);
-    if (missingSession) return missingSession;
+export const PATCH = withErrorHandler(
+  withAuth(
+    withValidSessionId(async (request) => {
+      const parsed = FindingPatchSchema.safeParse(await readJsonBody(request, {}));
+      if (!parsed.success) {
+        return apiError('Validation failed', 400, { details: parsed.error.errors });
+      }
 
-    const updates = {
-      title: payload.title,
-      severity: payload.severity,
-      description: payload.description,
-      impact: payload.impact,
-      remediation: payload.remediation,
-      evidenceEventIds: payload.evidenceEventIds,
-      source: payload.source,
-    };
-    if (Object.values(updates).every((value) => value === undefined)) {
-      return apiError('No changes requested', 400);
-    }
+      const payload = parsed.data;
+      const { sessionId } = getRouteMeta(request);
+      const missingSession = ensureSessionExists(sessionId);
+      if (missingSession) return missingSession;
 
-    const finding = updateFinding(payload.sessionId, payload.id, updates);
-    if (!finding) {
-      return apiError('Finding not found or update failed', 404);
-    }
+      const updates = {
+        title: payload.title,
+        severity: payload.severity,
+        description: payload.description,
+        impact: payload.impact,
+        remediation: payload.remediation,
+        tags: payload.tags,
+        evidenceEventIds: payload.evidenceEventIds,
+        source: payload.source,
+      };
+      if (Object.values(updates).every((value) => value === undefined)) {
+        return apiError('No changes requested', 400);
+      }
 
-    return NextResponse.json({ finding });
-  } catch (error) {
-    logger.error('Error in /api/findings PATCH handler', error);
-    return apiError('Failed to update finding', 500);
-  }
-}
+      const finding = updateFinding(sessionId, payload.id, updates);
+      if (!finding) {
+        return apiError('Finding not found or update failed', 404);
+      }
 
-export async function DELETE(request) {
-  if (!isApiTokenValid(request)) {
-    return apiError('Unauthorized', 401);
-  }
+      return NextResponse.json({ finding });
+    }, { source: 'body' })
+  ),
+  { route: '/api/findings PATCH' }
+);
 
-  const { searchParams } = new URL(request.url);
-  const sessionId = searchParams.get('sessionId') || 'default';
-  const id = parseFindingId(searchParams.get('id'));
+export const DELETE = withErrorHandler(
+  withAuth(
+    withValidSessionId(async (request) => {
+      const { sessionId, searchParams } = getRouteMeta(request);
+      const id = parseFindingId(searchParams?.get('id'));
+      if (!id) {
+        return apiError('id is required', 400);
+      }
 
-  if (!isValidSessionId(sessionId)) {
-    return apiError('Invalid sessionId', 400);
-  }
-  if (!id) {
-    return apiError('id is required', 400);
-  }
+      const missingSession = ensureSessionExists(sessionId);
+      if (missingSession) return missingSession;
 
-  const missingSession = ensureSessionExists(sessionId);
-  if (missingSession) return missingSession;
+      const deleted = deleteFinding(sessionId, id);
+      if (!deleted) {
+        return apiError('Finding not found', 404);
+      }
 
-  const deleted = deleteFinding(sessionId, id);
-  if (!deleted) {
-    return apiError('Finding not found', 404);
-  }
-
-  logger.info(`Finding deleted: ${id} from session: ${sessionId}`);
-  return NextResponse.json({ success: true });
-}
+      logger.info(`Finding deleted: ${id} from session: ${sessionId}`);
+      return NextResponse.json({ success: true });
+    }, { source: 'query' })
+  ),
+  { route: '/api/findings DELETE' }
+);

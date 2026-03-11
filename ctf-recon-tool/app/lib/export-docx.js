@@ -301,14 +301,15 @@ function markdownToDocxBlocks(markdown = '') {
   return blocks;
 }
 
-function metadataTable({ session, format, analystName }) {
+function metadataTable({ session, format, analystName, generatedAt }) {
   const rows = [
     ['Session', safeText(session?.name || '')],
     ['Target', safeText(session?.target || 'Not specified')],
     ['Difficulty', safeText(session?.difficulty || 'N/A').toUpperCase()],
+    ['Objective', safeText(session?.objective || 'Not specified')],
     ['Format', safeText(format || 'technical-walkthrough')],
     ['Analyst', safeText(analystName || 'Unknown')],
-    ['Generated', new Date().toISOString()],
+    ['Generated', safeText(generatedAt || new Date().toISOString())],
   ];
 
   const buildCell = (text, isLabel = false) => new TableCell({
@@ -442,6 +443,7 @@ export async function buildDocxReportBuffer({
   session,
   format,
   analystName,
+  reportMeta,
   markdown,
   timeline = [],
   pocSteps = [],
@@ -457,7 +459,7 @@ export async function buildDocxReportBuffer({
     spacing: { before: 120, after: 160 },
   }));
 
-  children.push(metadataTable({ session, format, analystName }));
+  children.push(metadataTable({ session, format, analystName, generatedAt: reportMeta?.generatedAtIso }));
   children.push(new Paragraph({ spacing: { before: 120, after: 120 } }));
   children.push(...markdownToDocxBlocks(markdown));
 

@@ -1,6 +1,6 @@
 ---
-title: Helm's Paladin — Improvement Backlog
-updated: 2026-03-10
+title: Helm's Watch — Improvement Backlog
+updated: 2026-03-11
 source: automated codebase scan (claude-sonnet-4-6)
 format: knowledge-sync compatible
 ---
@@ -9,6 +9,93 @@ format: knowledge-sync compatible
 
 > Full detail per item. Append new entries via `$knowledge-sync` at session close.
 > Format: `[YYYY-MM-DD] [category/ID] description — source: <session>`
+
+---
+
+## Roadmap Wave Sync
+
+### Next Wave Set — Release-First Track
+**Status:** Active (2026-03-11)
+
+- **Wave 11 — Operator Intelligence Layer:** `EX.2`, `EX.3`, `CTF.5`, `CTF.10`, `CTF.11`.
+- **Wave 12 — Shell and Artifact Operations:** `EX.12`, `CTF.14` with optional sub-wave `CTF.1`/`CTF.2`.
+- Strategy rationale: release/distribution reliability first, runtime hardening second, operator intelligence third, highest-risk shell/artifact expansion last.
+
+### Wave 10 — Runtime Quality and API Consistency
+**Status:** Implemented (2026-03-11)
+
+- `EX.6` Added bounded command concurrency queueing via `MAX_CONCURRENT_COMMANDS` with `queued -> running` lifecycle and queued-command cancellation support.
+- `CQ.3` Added shared API route middleware helpers (`withAuth`, `withValidSessionId`, `withErrorHandler`) and rolled them out across core routes (`execute`, `timeline`, `findings`, `poc`, `flags`, `sessions`, `writeup`, `graph`, upload/auth flows).
+- `G.1 (Phase 2)` Expanded Vitest coverage for security helpers, API middleware, execute queue behavior, and execute-route concurrency/auth regressions.
+
+### Wave 9 — Release Delivery Backbone
+**Status:** Implemented (2026-03-11)
+
+- `GH.3` Added `.github/workflows/docker-publish.yml` for stable semver tag image publishing to `ghcr.io/<owner>/helms-watch`.
+- `GH.9` Added `.github/workflows/release.yml` that enforces tag/changelog parity and creates GitHub Releases from changelog sections.
+- `GH.13` Added MkDocs Material docs site config (`mkdocs.yml`) and `.github/workflows/docs-pages.yml` for GitHub Pages deploy from root `docs/`.
+- `B.1` Refactored `ctf-recon-tool/Dockerfile` to a true multi-stage build with Next standalone output and slim runtime stage.
+- `GH.8` Docker badge deferral is closed; README badges now include Docker publish workflow status.
+
+### Wave 8 — Deferred Small Item
+**Status:** Implemented (2026-03-10)
+
+- `R.13` HTML export now applies responsive CSS media queries (`1024px`, `768px`, `520px`) for tablet/mobile readability, including safer wrapping for metadata chips, code blocks, images, and tables.
+
+### Wave 7 — Repository and Ops Hygiene
+**Status:** Implemented (2026-03-10)
+
+- `GH.4` Added `.github/dependabot.yml` for weekly npm and Docker updates scoped to `/ctf-recon-tool`.
+- `GH.12` Added `reviewdog-eslint.yml` so ESLint findings annotate PRs inline on `main`.
+- `GH.6` Added issue templates plus a pull request template at the repo root.
+- `GH.7` Added `CODEOWNERS` with `@Panacota96` as the default owner.
+- `GH.8` Added real README badges for CI, tests, security, MIT license, and repo-hosted coverage; Docker publish badge is now active after `GH.3`.
+- `OPS.1` Added an image-level `HEALTHCHECK` to the Dockerfile using `/api/health`.
+- `OPS.2` Added default Docker Compose resource limits via `APP_MEM_LIMIT` and `APP_CPUS`, and documented them in the app README.
+
+### Wave 6 — UX Polish
+**Status:** Implemented (2026-03-10)
+
+- `UX.1` Main panel view (`TERMINAL`/`GRAPH`) now persists via `ui.mainView`.
+- `UX.2` Added `G` keyboard toggle for terminal/graph view with input/modal guards.
+- `UX.8` Added keyboard shortcut reference modal (`?`) with close-on-escape/backdrop behavior.
+- `UX.4` Header now always shows session breadcrumb metadata including explicit `Target: not set` when empty.
+- `UX.6` Empty timeline state upgraded to a structured onboarding panel with quick-start actions.
+- `UX.12` Timeline cards now render expanded/collapsed visual state using class-based left-border indicators.
+
+### Wave 5 — Discovery Graph Continuation
+**Status:** Implemented (2026-03-10)
+
+- `GR.19` Successful commands now refresh persisted graph state on the backend, and the graph view refetches that state instead of re-deriving locally from timeline rows.
+- `GR.1`, `GR.2`, `GR.3`, `GR.10`, `GR.11` expanded graph derivation with hostname/subdomain, username, hash, Windows path, database, directory, and API-endpoint node extraction from command evidence and findings.
+- `GR.4`, `GR.6`, `GR.13`, `GR.14`, `GR.9` added graph search/highlight, phase filtering, stats, node-degree sizing, and directed/animated edges.
+- `GR.5`, `GR.16`, `GR.17`, `GR.7` added direct PNG export, hardened SVG export checks, richer phase-clustered Mermaid export, and reset of auto-derived graph content without deleting manual nodes.
+
+### Wave 4 — Reporting and Operator Value
+**Status:** Implemented (2026-03-10)
+
+- `R.3` Every report and export now includes a severity summary table when persisted findings exist.
+- `R.7` Report generation now emits a reusable cover/header metadata block across modal, Markdown, HTML, PDF, DOCX, and JSON exports.
+- `R.12` Findings now store editable `tags`, and `POST /api/findings/auto-tag` applies deterministic rule-based tags.
+- `CTF.13` Toolbox and cheatsheet now include SearchSploit, Exploit-DB, Metasploit templates, Windows privesc, AD, post-exploitation, and reverse-shell helpers.
+- `CTF.12` Note mode now supports insertable OWASP Top 10, PTES, Linux privesc, and Windows privesc templates.
+- `CTF.4` Added a read-only wordlist browser rooted at `CTF_WORDLIST_DIR`.
+- `CTF.3` Added a per-session timer with pause/resume/reset and local persistence.
+- `CTF.9` Added local flag tracking CRUD with captured/submitted/accepted/rejected statuses.
+- Blocking regressions addressed: report modal opens directly without analyst-name gating, valid notes post cleanly, and SearchSploit is bundled into the Docker runtime.
+
+### Wave 3 — Execution Workflow and Session Stability
+**Status:** Implemented (2026-03-10)
+
+- `UX.7` Timeline auto-follow now stays unlocked while the user is reading older history and only resumes near bottom or on explicit jump.
+- `EX.7` Command execution now injects `CTF_TARGET`, `CTF_SESSION_ID`, and `CTF_WORDLIST_DIR`.
+- `EX.5` Large command output now paginates client-side instead of rendering the entire body at once.
+- `EX.9` Added `POST /api/execute/retry/[eventId]` and wired quick rerun from grouped history.
+- `EX.8` Running command cards now persist and render `progress_pct`.
+- `EX.11` Sidebar history now uses grouped `command_hash` stats with run count and success rate.
+- `UX.9` Report blocks now autosave to local draft storage and restore the newest draft on reopen.
+- `UX.10` Screenshot bulk selection now keeps a visible counter badge and persistent highlight state within the session.
+- `R.14` Screenshot evidence now stores and exports `caption` and `context`.
 
 ---
 
@@ -79,6 +166,7 @@ format: knowledge-sync compatible
 **Why:** Current image ~2GB; leaner image = faster startup.
 **Files:** `Dockerfile`
 **Difficulty:** Easy | **Impact:** Medium
+**Status:** Implemented (2026-03-11). Docker now uses `deps` + `builder` + `runner` stages with Next standalone output and runtime tooling in a slim final image.
 
 ### B.2 — Environment Configuration Documentation
 **What:** Document all env vars; create `.env.example`.
@@ -184,6 +272,22 @@ format: knowledge-sync compatible
 **What:** Queue commands to run at specific times (e.g., overnight scans).
 **Files:** New scheduler, `app/api/schedule/route.js`
 **Difficulty:** Hard | **Impact:** Low-Med
+
+### GR.19 — Auto-Refresh Graph After Successful Commands
+**What:** Re-run graph derivation/persistence automatically whenever a command finishes successfully so the GRAPH view stays current without manual refresh.
+**Files:** `app/lib/graph-derive.js`, `app/api/execute/route.js` or `app/lib/execute-service.js`, `app/api/graph/route.js`, `app/page.js`
+**Difficulty:** Medium | **Impact:** High
+**Status:** Implemented (2026-03-10). Successful command finalization now persists graph deltas server-side, `graph_state` is the source of truth, and the graph UI refetches persisted state instead of deriving a second client-only graph.
+
+### EX.12 — Interactive Shell Session Hub
+**What:** Bridge live shells into Helm's Watch so operators can manage reverse shells, webshells, and Metasploit/Meterpreter sessions from the workspace with multiple concurrent tabs and transcript logging.
+**Files:** New shell/session broker service, `app/api/shell/`, terminal UI in `app/page.js`/`HomeClient.js`, Docker/compose runtime docs
+**Difficulty:** Hard | **Impact:** High
+
+### CTF.14 — Session Artifact / Loot Manager
+**What:** Save documents and files collected from shell sessions (config dumps, loot, proofs) as session-scoped artifacts that can be previewed, downloaded, linked to notes, and referenced in reports.
+**Files:** `app/lib/db.js`, new artifact routes under `app/api/`, session/report UI
+**Difficulty:** Medium | **Impact:** High
 
 ---
 
@@ -361,7 +465,7 @@ format: knowledge-sync compatible
 **What:** Jest/Vitest covering DB layer, API endpoints, report generation.
 **Files:** `tests/`, `package.json`
 **Difficulty:** Hard | **Impact:** High
-**Status:** In progress (2026-03-09). Phase 1 delivered with Vitest foundation, isolated test DB runtime, and critical-path coverage for findings DB/helpers, findings/report/export APIs, and report format/export bundle behavior.
+**Status:** Implemented (2026-03-11). Phase 1 foundation is complete and Phase 2 added coverage for `security.js`, `graph-derive.js`, execute route concurrency/auth paths, and new queue/middleware helpers.
 
 ### G.2 — TypeScript Gradual Conversion
 **What:** `tsconfig.json`; convert `db.js`, `security.js`, API routes first.
@@ -453,3 +557,9 @@ format: knowledge-sync compatible
 | 2026-03-09 | Wave 1 hardening completed — `SEC.1`, `SEC.3`, `SEC.4`, `SEC.5`, `SEC.6`, `EX.4`, `EX.10`, and `GR.15` implemented with structured process runtime, tracked child-process shutdown, CSP/security headers, strict graph validation, ANSI stripping, and plain-text sanitization for analyst/screenshot fields |
 | 2026-03-10 | Wave 2 delivery/data-safety completed — `GH.1`, `GH.2`, `GH.5`, `GH.10`, `GH.11`, `CQ.1`, `CQ.2`, `CQ.4`, `CD.1`, `CD.2`, `CD.3` implemented with repo-root GitHub workflows, `skip-changelog` PR bypass label, bounded rate limiting, additive DB indexes, execute finalization hardening, and evidence JSON parse warnings |
 | 2026-03-10 | Timeline invalid-date regression fixed — failed execute/note/upload responses no longer append fake events; client now safely parses SQLite timestamps and falls back to neutral time labels |
+| 2026-03-10 | Wave 3 execution workflow completed — `UX.7`, `EX.7`, `EX.5`, `EX.9`, `EX.8`, `EX.11`, `UX.9`, `UX.10`, `R.14` delivered with grouped command history, retry API, progress bars, output pagination, report autosave, screenshot bulk selection polish, and screenshot caption/context metadata |
+| 2026-03-10 | Wave 6 UX polish completed — `UX.8`, `UX.4`, `UX.1`, `UX.2`, `UX.6`, `UX.12` delivered with persisted terminal/graph view, `G` + `?` shortcuts, shortcut reference modal, always-visible session breadcrumb target, richer empty-session onboarding, and class-based expanded/collapsed timeline visual indicators |
+| 2026-03-10 | Wave 7 repository and ops hygiene completed — Dependabot, reviewdog ESLint PR annotations, issue/PR templates, CODEOWNERS, MIT license, README badges, coverage badge workflow, Docker HEALTHCHECK, and Compose resource limits |
+| 2026-03-10 | Wave 8 deferred Small item completed — `R.13` responsive HTML export CSS media-query support for smaller screens |
+| 2026-03-11 | Wave 9 release delivery backbone completed — `GH.3`, `GH.9`, `GH.13`, `B.1` implemented with stable semver GHCR publishing, changelog-enforced GitHub releases, MkDocs Pages deployment, and multi-stage standalone Docker runtime |
+| 2026-03-11 | Wave 10 runtime/API consistency completed — `EX.6`, `CQ.3`, `G.1 (Phase 2)` delivered with bounded command queueing (`MAX_CONCURRENT_COMMANDS`), shared API middleware rollout, and expanded execute/security test coverage |

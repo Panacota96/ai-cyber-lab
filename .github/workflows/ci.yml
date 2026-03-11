@@ -5,6 +5,8 @@ on:
     branches: [main]
   push:
     branches: [main]
+    paths-ignore:
+      - ctf-recon-tool/docs/badges/coverage.json
   workflow_dispatch:
 
 concurrency:

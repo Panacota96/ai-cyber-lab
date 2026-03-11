@@ -1,4 +1,4 @@
-import { PATCH as timelinePatch } from '@/api/timeline/route';
+import { PATCH as timelinePatch, POST as timelinePost } from '@/api/timeline/route';
 import { POST as uploadPost } from '@/api/upload/route';
 import {
   TEST_API_TOKEN,
@@ -19,12 +19,14 @@ const PNG_BYTES = Uint8Array.from([
   0x44, 0xae, 0x42, 0x60, 0x82,
 ]);
 
-function makeUploadRequest({ sessionId, name, tag }) {
+function makeUploadRequest({ sessionId, name, tag, caption, context }) {
   const formData = new FormData();
   formData.set('sessionId', sessionId);
   formData.set('file', new File([PNG_BYTES], 'proof.png', { type: 'image/png' }));
   if (name !== undefined) formData.set('name', name);
   if (tag !== undefined) formData.set('tag', tag);
+  if (caption !== undefined) formData.set('caption', caption);
+  if (context !== undefined) formData.set('context', context);
   return new Request('http://localhost/api/upload', {
     method: 'POST',
     headers: new Headers({ 'x-api-token': TEST_API_TOKEN }),
@@ -41,7 +43,7 @@ describe('upload and timeline metadata sanitization', () => {
     }
   });
 
-  it('normalizes screenshot name and tag on upload', async () => {
+  it('normalizes screenshot name, tag, caption, and context on upload', async () => {
     const session = createTestSession();
     sessions.push(session.id);
 
@@ -49,12 +51,16 @@ describe('upload and timeline metadata sanitization', () => {
       sessionId: session.id,
       name: '  Evidence \n Shot\t',
       tag: '  red \n team\t',
+      caption: '  Initial \n proof\t',
+      context: '  Captured \n after login\t',
     }));
 
     expect(res.status).toBe(200);
     const body = await readJson(res);
     expect(body.name).toBe('Evidence Shot');
     expect(body.tag).toBe('red team');
+    expect(body.caption).toBe('Initial proof');
+    expect(body.context).toBe('Captured after login');
   });
 
   it('rejects screenshot rename when normalized name is empty', async () => {
@@ -85,7 +91,7 @@ describe('upload and timeline metadata sanitization', () => {
     expect(patchRes.status).toBe(400);
   });
 
-  it('normalizes screenshot tag on edit', async () => {
+  it('normalizes screenshot tag, caption, and context on edit', async () => {
     const session = createTestSession();
     sessions.push(session.id);
 
@@ -107,6 +113,8 @@ describe('upload and timeline metadata sanitization', () => {
         id: uploaded.id,
         name: '  <script>alert(1)</script>\n',
         tag: '  red \n team\t',
+        caption: '  PrivEsc \n proof\t',
+        context: '  Confirmed \n after shell\t',
       }),
     });
 
@@ -115,5 +123,33 @@ describe('upload and timeline metadata sanitization', () => {
     const updated = await readJson(patchRes);
     expect(updated.name).toBe('<script>alert(1)</script>');
     expect(updated.tag).toBe('red team');
+    expect(updated.caption).toBe('PrivEsc proof');
+    expect(updated.context).toBe('Confirmed after shell');
+  });
+
+  it('creates a note event with array tags using the stable timeline contract', async () => {
+    const session = createTestSession();
+    sessions.push(session.id);
+
+    const req = new Request('http://localhost/api/timeline', {
+      method: 'POST',
+      headers: new Headers({
+        'Content-Type': 'application/json',
+        'x-api-token': TEST_API_TOKEN,
+      }),
+      body: JSON.stringify({
+        sessionId: session.id,
+        type: 'note',
+        content: 'Found admin panel entry point',
+        tags: ['web', 'enumeration'],
+      }),
+    });
+
+    const res = await timelinePost(req);
+    expect(res.status).toBe(200);
+    const body = await readJson(res);
+    expect(body.type).toBe('note');
+    expect(body.content).toBe('Found admin panel entry point');
+    expect(body.tags).toEqual(['web', 'enumeration']);
   });
 });

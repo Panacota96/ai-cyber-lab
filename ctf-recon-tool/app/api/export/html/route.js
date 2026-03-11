@@ -41,6 +41,7 @@ export async function POST(request) {
       format: bundle.format,
       analystName: bundle.analystName,
       markdown: bundle.reportMarkdown,
+      reportMeta: bundle.reportMeta,
     });
 
     return new NextResponse(html, {

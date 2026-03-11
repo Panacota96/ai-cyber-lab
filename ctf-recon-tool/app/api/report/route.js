@@ -19,6 +19,7 @@ export async function GET(request) {
   const sessionId = searchParams.get('sessionId');
   const format = searchParams.get('format') || 'technical-walkthrough';
   const analystName = normalizeAnalystName(searchParams.get('analystName'));
+  const generatedAt = new Date();
 
   if (!sessionId || !isValidSessionId(sessionId)) {
     return apiError('Session ID required', 400);
@@ -31,15 +32,13 @@ export async function GET(request) {
     }
 
     const events = getTimelineEvents(sessionId);
-    const formatNeedsEvidence = format === 'technical-walkthrough' || format === 'pentest';
-    const pocSteps = formatNeedsEvidence
+    const formatNeedsPoc = format === 'technical-walkthrough' || format === 'pentest';
+    const pocSteps = formatNeedsPoc
       ? listPocSteps(sessionId)
       : [];
-    const findings = formatNeedsEvidence
-      ? listFindings(sessionId)
-      : [];
+    const findings = listFindings(sessionId);
     const generator = FORMATS[format] || labReport;
-    const report = generator(session, events, analystName, { pocSteps, findings });
+    const report = generator(session, events, analystName, { pocSteps, findings, generatedAt });
 
     return NextResponse.json({ report });
   } catch (error) {

@@ -1,20 +1,18 @@
 import { NextResponse } from 'next/server';
 import { listSessions, createSession, deleteSession } from '@/lib/db';
-import { isApiTokenValid, isValidSessionId } from '@/lib/security';
+import { isValidSessionId } from '@/lib/security';
 import { logger } from '@/lib/logger';
 import { apiError } from '@/lib/api-error';
+import { getRouteMeta, readJsonBody, withAuth, withErrorHandler, withValidSessionId } from '@/lib/api-route';
 
 export async function GET() {
   const sessions = listSessions();
   return NextResponse.json(sessions);
 }
 
-export async function POST(request) {
-  try {
-    if (!isApiTokenValid(request)) {
-      return apiError('Unauthorized', 401);
-    }
-    const body = await request.json();
+export const POST = withErrorHandler(
+  withAuth(async (request) => {
+    const body = await readJsonBody(request, {});
     const { name, target, difficulty, objective } = body;
     const id = body.id || crypto.randomUUID();
     if (!isValidSessionId(id)) {
@@ -29,26 +27,22 @@ export async function POST(request) {
     }
     logger.info('AUDIT:SESSION_CREATED', { sessionId: id, name });
     return NextResponse.json(session);
-  } catch (error) {
-    return apiError('Failed to create session', 500);
-  }
-}
+  }),
+  { route: '/api/sessions POST' }
+);
 
-export async function DELETE(request) {
-  try {
-    if (!isApiTokenValid(request)) {
-      return apiError('Unauthorized', 401);
-    }
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-    if (!id || id === 'default' || !isValidSessionId(id)) {
-      return apiError('Cannot delete this session', 400);
-    }
-    const ok = deleteSession(id);
-    if (!ok) return apiError('Failed to delete session', 500);
-    logger.info('AUDIT:SESSION_DELETED', { sessionId: id });
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    return apiError('Failed to delete session', 500);
-  }
-}
+export const DELETE = withErrorHandler(
+  withAuth(
+    withValidSessionId(async (request) => {
+      const { sessionId } = getRouteMeta(request);
+      if (!sessionId || sessionId === 'default') {
+        return apiError('Cannot delete this session', 400);
+      }
+      const ok = deleteSession(sessionId);
+      if (!ok) return apiError('Failed to delete session', 500);
+      logger.info('AUDIT:SESSION_DELETED', { sessionId });
+      return NextResponse.json({ success: true });
+    }, { source: 'query', key: 'id', fallback: 'default' })
+  ),
+  { route: '/api/sessions DELETE' }
+);

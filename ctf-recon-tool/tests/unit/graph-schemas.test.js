@@ -13,6 +13,7 @@ describe('graphSaveSchema', () => {
           nodeType: 'host',
           phase: 'Information Gathering',
           color: '#39d353',
+          origin: 'auto',
           sourceEventId: 'evt-1',
         },
         selected: false,
@@ -24,6 +25,7 @@ describe('graphSaveSchema', () => {
         label: 'found',
         animated: false,
         style: { stroke: '#30363d' },
+        markerEnd: { type: 'arrowclosed', color: '#30363d' },
         selected: false,
       }],
     });

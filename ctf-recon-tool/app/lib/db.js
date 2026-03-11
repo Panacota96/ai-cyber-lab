@@ -3,6 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import { requireValidSessionId, resolvePathWithin } from './security';
 import { shutdownTrackedProcesses } from './command-runtime';
+import { buildCommandHash } from './command-metadata';
+import { normalizePlainText } from './text-sanitize';
 
 const RUNTIME_DATA_DIR = process.env.HELMS_DATA_DIR || process.env.APP_DATA_DIR || path.join(process.cwd(), 'data');
 const DATA_DIR = path.resolve(RUNTIME_DATA_DIR);
@@ -81,6 +83,10 @@ db.exec(`
     name TEXT,
     tag TEXT,
     tags TEXT,
+    caption TEXT,
+    context TEXT,
+    progress_pct INTEGER,
+    command_hash TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
   );
@@ -176,6 +182,7 @@ db.exec(`
     description TEXT,
     impact TEXT,
     remediation TEXT,
+    tags TEXT,
     evidence_event_ids TEXT,
     source TEXT DEFAULT 'manual',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -197,6 +204,21 @@ db.exec(`
     FOREIGN KEY (session_id) REFERENCES sessions(id)
   );
 
+  CREATE TABLE IF NOT EXISTS flag_submissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    value TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'captured',
+    notes TEXT,
+    submitted_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_flag_submissions_session_created
+    ON flag_submissions(session_id, created_at DESC);
+
   -- Ensure default session exists
   INSERT OR IGNORE INTO sessions (id, name) VALUES ('default', 'Default Session');
 `);
@@ -208,11 +230,25 @@ const migrations = [
   `ALTER TABLE sessions ADD COLUMN difficulty TEXT DEFAULT 'medium'`,
   `ALTER TABLE sessions ADD COLUMN objective TEXT`,
   `ALTER TABLE timeline_events ADD COLUMN tags TEXT`,
+  `ALTER TABLE timeline_events ADD COLUMN caption TEXT`,
+  `ALTER TABLE timeline_events ADD COLUMN context TEXT`,
+  `ALTER TABLE timeline_events ADD COLUMN progress_pct INTEGER`,
+  `ALTER TABLE timeline_events ADD COLUMN command_hash TEXT`,
   `ALTER TABLE writeups ADD COLUMN content_json TEXT`,
   `ALTER TABLE writeup_versions ADD COLUMN content_json TEXT`,
+  `ALTER TABLE findings ADD COLUMN tags TEXT`,
 ];
 for (const sql of migrations) {
   try { db.exec(sql); } catch (_) { /* column already exists */ }
+}
+
+const postMigrationIndexes = [
+  `CREATE INDEX IF NOT EXISTS idx_timeline_events_session_command_hash
+    ON timeline_events(session_id, command_hash)`,
+];
+
+for (const sql of postMigrationIndexes) {
+  try { db.exec(sql); } catch (_) { /* column may not exist until migration succeeds */ }
 }
 
 export function listSessions() {
@@ -258,6 +294,7 @@ export function deleteSession(sessionId) {
     const deleteWriteupVersions = db.prepare('DELETE FROM writeup_versions WHERE session_id = ?');
     const deletePocSteps = db.prepare('DELETE FROM poc_steps WHERE session_id = ?');
     const deleteFindings = db.prepare('DELETE FROM findings WHERE session_id = ?');
+    const deleteFlags = db.prepare('DELETE FROM flag_submissions WHERE session_id = ?');
     const deleteAiUsage = db.prepare('DELETE FROM ai_usage WHERE session_id = ?');
     const deleteCoachFeedback = db.prepare('DELETE FROM coach_feedback WHERE session_id = ?');
     const deleteGraphState = db.prepare('DELETE FROM graph_state WHERE session_id = ?');
@@ -268,6 +305,7 @@ export function deleteSession(sessionId) {
       deleteWriteupVersions.run(sessionId);
       deletePocSteps.run(sessionId);
       deleteFindings.run(sessionId);
+      deleteFlags.run(sessionId);
       deleteAiUsage.run(sessionId);
       deleteCoachFeedback.run(sessionId);
       deleteGraphState.run(sessionId);
@@ -300,10 +338,16 @@ export function addTimelineEvent(sessionId = 'default', event) {
     const id = Date.now().toString() + Math.random().toString(36).substring(2, 9);
     const timestamp = new Date().toISOString();
     const tagsJson = event.tags ? JSON.stringify(event.tags) : null;
+    const commandHash = event.type === 'command'
+      ? (event.command_hash || buildCommandHash(event.command || ''))
+      : null;
 
     const stmt = db.prepare(`
-      INSERT INTO timeline_events (id, session_id, type, command, content, status, output, filename, name, tag, tags, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO timeline_events (
+        id, session_id, type, command, content, status, output, filename, name, tag, tags,
+        caption, context, progress_pct, command_hash, timestamp
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -318,10 +362,23 @@ export function addTimelineEvent(sessionId = 'default', event) {
       event.name || null,
       event.tag || null,
       tagsJson,
+      event.caption || null,
+      event.context || null,
+      Number.isFinite(Number(event.progress_pct)) ? Number(event.progress_pct) : null,
+      commandHash,
       timestamp
     );
 
-    return { ...event, id, timestamp, tags: event.tags || [] };
+    return {
+      ...event,
+      id,
+      timestamp,
+      tags: event.tags || [],
+      caption: event.caption || null,
+      context: event.context || null,
+      progress_pct: Number.isFinite(Number(event.progress_pct)) ? Number(event.progress_pct) : null,
+      command_hash: commandHash,
+    };
   } catch (error) {
     console.error(`Error saving timeline event for session ${sessionId}:`, error);
     return null;
@@ -342,7 +399,121 @@ export function getCommandHistory(sessionId, limit = 50) {
   }
 }
 
-const TIMELINE_UPDATABLE_COLS = new Set(['status', 'output', 'command', 'tags', 'name', 'filename', 'tag', 'content']);
+function ensureCommandHashesForSession(sessionId) {
+  const rows = db.prepare(`
+    SELECT id, command
+    FROM timeline_events
+    WHERE session_id = ?
+      AND type = 'command'
+      AND (command_hash IS NULL OR command_hash = '')
+  `).all(sessionId);
+
+  if (rows.length === 0) return 0;
+
+  const update = db.prepare(`
+    UPDATE timeline_events
+    SET command_hash = ?
+    WHERE id = ? AND session_id = ?
+  `);
+
+  db.transaction(() => {
+    for (const row of rows) {
+      update.run(buildCommandHash(row.command || ''), row.id, sessionId);
+    }
+  })();
+
+  return rows.length;
+}
+
+export function getTimelineEvent(sessionId = 'default', id) {
+  try {
+    requireValidSessionId(sessionId);
+    return db.prepare('SELECT * FROM timeline_events WHERE id = ? AND session_id = ?').get(id, sessionId) || null;
+  } catch (error) {
+    console.error(`Error reading timeline event ${id} for session ${sessionId}:`, error);
+    return null;
+  }
+}
+
+export function getTimelineEventById(id) {
+  try {
+    return db.prepare('SELECT * FROM timeline_events WHERE id = ?').get(id) || null;
+  } catch (error) {
+    console.error(`Error reading timeline event by id ${id}:`, error);
+    return null;
+  }
+}
+
+export function getGroupedCommandHistory(sessionId, limit = 50) {
+  try {
+    requireValidSessionId(sessionId);
+    ensureCommandHashesForSession(sessionId);
+
+    const rows = db.prepare(`
+      SELECT id, session_id, command, status, timestamp, command_hash
+      FROM timeline_events
+      WHERE session_id = ? AND type = 'command'
+      ORDER BY timestamp DESC, id DESC
+    `).all(sessionId);
+
+    const groups = [];
+    const grouped = new Map();
+
+    for (const row of rows) {
+      const hash = row.command_hash || buildCommandHash(row.command || '');
+      let item = grouped.get(hash);
+      if (!item) {
+        item = {
+          command: row.command || '',
+          commandHash: hash,
+          runCount: 0,
+          successCount: 0,
+          failureCount: 0,
+          successRate: 0,
+          lastStatus: row.status || null,
+          lastTimestamp: row.timestamp || null,
+          latestEventId: row.id,
+        };
+        grouped.set(hash, item);
+        groups.push(item);
+      }
+
+      item.runCount += 1;
+      if (row.status === 'success') {
+        item.successCount += 1;
+      } else if (['failed', 'timeout', 'cancelled'].includes(String(row.status || '').toLowerCase())) {
+        item.failureCount += 1;
+      }
+    }
+
+    return groups
+      .map((item) => {
+        const completedRuns = item.successCount + item.failureCount;
+        return {
+          ...item,
+          successRate: completedRuns > 0 ? Math.round((item.successCount / completedRuns) * 100) : 0,
+        };
+      })
+      .slice(0, Math.max(1, Number(limit) || 50));
+  } catch (error) {
+    console.error(`Error fetching grouped command history for session ${sessionId}:`, error);
+    return [];
+  }
+}
+
+const TIMELINE_UPDATABLE_COLS = new Set([
+  'status',
+  'output',
+  'command',
+  'tags',
+  'name',
+  'filename',
+  'tag',
+  'content',
+  'caption',
+  'context',
+  'progress_pct',
+]);
 
 export function updateTimelineEvent(sessionId = 'default', id, updates) {
     try {
@@ -698,6 +869,30 @@ export function deletePocStep(sessionId, id) {
 }
 
 const FINDING_SEVERITIES = new Set(['critical', 'high', 'medium', 'low']);
+const FINDING_TAG_VOCABULARY = new Set([
+  'web',
+  'network',
+  'auth',
+  'injection',
+  'xss',
+  'sqli',
+  'idor',
+  'rce',
+  'file-upload',
+  'lfi-rfi',
+  'ssrf',
+  'csrf',
+  'config',
+  'crypto',
+  'secrets',
+  'windows',
+  'linux',
+  'active-directory',
+  'privilege-escalation',
+  'lateral-movement',
+  'post-exploitation',
+]);
+const FLAG_STATUSES = new Set(['captured', 'submitted', 'accepted', 'rejected']);
 
 function normalizeFindingSeverity(raw) {
   const severity = String(raw || '').trim().toLowerCase();
@@ -723,6 +918,34 @@ function normalizeEvidenceEventIds(rawValue) {
   for (const id of source) {
     const normalized = String(id || '').trim();
     if (normalized) dedup.add(normalized);
+  }
+  return [...dedup];
+}
+
+function normalizeFindingTags(rawValue) {
+  let source = rawValue;
+  if (typeof source === 'string') {
+    try {
+      const parsed = JSON.parse(source);
+      if (Array.isArray(parsed)) {
+        source = parsed;
+      } else {
+        source = source.split(',');
+      }
+    } catch {
+      source = source.split(',');
+    }
+  }
+  if (!Array.isArray(source)) return [];
+
+  const dedup = new Set();
+  for (const rawTag of source) {
+    const normalized = normalizePlainText(rawTag, 64)
+      .toLowerCase()
+      .replace(/\s+/g, '-');
+    if (normalized && FINDING_TAG_VOCABULARY.has(normalized)) {
+      dedup.add(normalized);
+    }
   }
   return [...dedup];
 }
@@ -774,6 +997,7 @@ function hydrateFindingRows(sessionId, rows) {
     description: row.description || '',
     impact: row.impact || '',
     remediation: row.remediation || '',
+    tags: normalizeFindingTags(row.tags),
     source: row.source || 'manual',
     evidenceEventIds: row._evidenceEventIds || [],
     evidenceEvents: (row._evidenceEventIds || [])
@@ -819,6 +1043,7 @@ export function createFinding(sessionId, input = {}) {
     const description = String(input?.description || '').trim();
     const impact = String(input?.impact || '').trim();
     const remediation = String(input?.remediation || '').trim();
+    const tags = normalizeFindingTags(input?.tags);
     const source = String(input?.source || 'manual').trim().toLowerCase() || 'manual';
     const evidenceEventIds = filterEvidenceEventIdsInSession(sessionId, input?.evidenceEventIds);
 
@@ -830,11 +1055,12 @@ export function createFinding(sessionId, input = {}) {
         description,
         impact,
         remediation,
+        tags,
         evidence_event_ids,
         source,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).run(
       sessionId,
       title,
@@ -842,6 +1068,7 @@ export function createFinding(sessionId, input = {}) {
       description || null,
       impact || null,
       remediation || null,
+      tags.length > 0 ? JSON.stringify(tags) : null,
       JSON.stringify(evidenceEventIds),
       source
     );
@@ -867,6 +1094,7 @@ export function updateFinding(sessionId, id, updates = {}) {
     if (updates.description !== undefined) mapped.description = updates.description === null ? null : String(updates.description).trim();
     if (updates.impact !== undefined) mapped.impact = updates.impact === null ? null : String(updates.impact).trim();
     if (updates.remediation !== undefined) mapped.remediation = updates.remediation === null ? null : String(updates.remediation).trim();
+    if (updates.tags !== undefined) mapped.tags = JSON.stringify(normalizeFindingTags(updates.tags));
     if (updates.source !== undefined) mapped.source = updates.source === null ? null : String(updates.source).trim().toLowerCase();
     if (updates.evidenceEventIds !== undefined) {
       const filteredEvidenceIds = filterEvidenceEventIdsInSession(sessionId, updates.evidenceEventIds);
@@ -902,6 +1130,127 @@ export function deleteFinding(sessionId, id) {
     return result.changes > 0;
   } catch (error) {
     console.error(`Error deleting finding ${id} for session ${sessionId}:`, error);
+    return false;
+  }
+}
+
+function normalizeFlagStatus(rawValue) {
+  const normalized = normalizePlainText(rawValue, 32).toLowerCase();
+  if (!FLAG_STATUSES.has(normalized)) return null;
+  return normalized;
+}
+
+function hydrateFlagRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    id: Number(row.id),
+    sessionId: row.session_id,
+    value: row.value || '',
+    status: row.status || 'captured',
+    notes: row.notes || '',
+    submittedAt: row.submitted_at || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  }));
+}
+
+export function listFlagSubmissions(sessionId) {
+  try {
+    requireValidSessionId(sessionId);
+    const rows = db.prepare(`
+      SELECT *
+      FROM flag_submissions
+      WHERE session_id = ?
+      ORDER BY created_at DESC, id DESC
+    `).all(sessionId);
+    return hydrateFlagRows(rows);
+  } catch (error) {
+    console.error(`Error listing flags for session ${sessionId}:`, error);
+    return [];
+  }
+}
+
+function getFlagSubmission(sessionId, id) {
+  const row = db.prepare(`
+    SELECT *
+    FROM flag_submissions
+    WHERE session_id = ? AND id = ?
+  `).get(sessionId, id);
+  return row ? hydrateFlagRows([row])[0] : null;
+}
+
+export function createFlagSubmission(sessionId, input = {}) {
+  try {
+    requireValidSessionId(sessionId);
+    const value = normalizePlainText(input?.value, 255);
+    if (!value) return null;
+    const status = normalizeFlagStatus(input?.status) || 'captured';
+    const notes = normalizePlainText(input?.notes, 2000) || null;
+    const submittedAt = status === 'submitted' || status === 'accepted' || status === 'rejected'
+      ? (input?.submittedAt || new Date().toISOString())
+      : null;
+    const result = db.prepare(`
+      INSERT INTO flag_submissions (
+        session_id, value, status, notes, submitted_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(sessionId, value, status, notes, submittedAt);
+    return getFlagSubmission(sessionId, result.lastInsertRowid);
+  } catch (error) {
+    console.error(`Error creating flag for session ${sessionId}:`, error);
+    return null;
+  }
+}
+
+export function updateFlagSubmission(sessionId, id, updates = {}) {
+  try {
+    requireValidSessionId(sessionId);
+    const mapped = {};
+    if (updates.value !== undefined) {
+      const value = normalizePlainText(updates.value, 255);
+      if (!value) return null;
+      mapped.value = value;
+    }
+    if (updates.status !== undefined) {
+      const status = normalizeFlagStatus(updates.status);
+      if (!status) return null;
+      mapped.status = status;
+      mapped.submitted_at = status === 'submitted' || status === 'accepted' || status === 'rejected'
+        ? (updates.submittedAt || new Date().toISOString())
+        : null;
+    } else if (updates.submittedAt !== undefined) {
+      mapped.submitted_at = updates.submittedAt || null;
+    }
+    if (updates.notes !== undefined) {
+      mapped.notes = normalizePlainText(updates.notes, 2000) || null;
+    }
+
+    const keys = Object.keys(mapped);
+    if (keys.length === 0) return getFlagSubmission(sessionId, id);
+
+    const setClause = keys.map((key) => `${key} = ?`).join(', ');
+    const values = keys.map((key) => mapped[key]);
+    const result = db.prepare(`
+      UPDATE flag_submissions
+      SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+      WHERE session_id = ? AND id = ?
+    `).run(...values, sessionId, id);
+    if (result.changes === 0) return null;
+    return getFlagSubmission(sessionId, id);
+  } catch (error) {
+    console.error(`Error updating flag ${id} for session ${sessionId}:`, error);
+    return null;
+  }
+}
+
+export function deleteFlagSubmission(sessionId, id) {
+  try {
+    requireValidSessionId(sessionId);
+    const result = db.prepare(`
+      DELETE FROM flag_submissions
+      WHERE session_id = ? AND id = ?
+    `).run(sessionId, id);
+    return result.changes > 0;
+  } catch (error) {
+    console.error(`Error deleting flag ${id} for session ${sessionId}:`, error);
     return false;
   }
 }
@@ -1109,6 +1458,7 @@ export function getDbStats() {
     events: db.prepare('SELECT COUNT(*) as n FROM timeline_events').get().n,
     pocSteps: db.prepare('SELECT COUNT(*) as n FROM poc_steps').get().n,
     findings: db.prepare('SELECT COUNT(*) as n FROM findings').get().n,
+    flags: db.prepare('SELECT COUNT(*) as n FROM flag_submissions').get().n,
     logs: db.prepare('SELECT COUNT(*) as n FROM app_logs').get().n,
     aiUsage: db.prepare('SELECT COUNT(*) as n FROM ai_usage').get().n,
     writeupVersions: db.prepare('SELECT COUNT(*) as n FROM writeup_versions').get().n,

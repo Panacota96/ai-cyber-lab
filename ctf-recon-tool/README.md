@@ -1,5 +1,12 @@
 # Helm's Watch
 
+[![CI](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/ci.yml)
+[![Tests](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/test.yml)
+[![Security](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/security.yml)
+[![Docker Publish](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/docker-publish.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](../LICENSE)
+[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Panacota96/ai-cyber-lab/main/ctf-recon-tool/docs/badges/coverage.json)](https://github.com/Panacota96/ai-cyber-lab/actions/workflows/coverage.yml)
+
 > Desktop-first cyber lab workspace for commands, evidence, AI-assisted analysis, and export-ready writeups.
 >
 > **Current Version:** `v0.3.0`  
@@ -23,6 +30,7 @@ The current product name is **Helm's Watch**. Some runtime identifiers still use
 - Filters, collapse controls, history-focus mode, and stable scroll behavior.
 - Screenshot uploads with metadata normalization and inline evidence rendering.
 - Discovery graph view backed by persisted graph state.
+- Local flag tracking, read-only wordlist browsing, and per-session timer controls in the workspace sidebar/header.
 
 ### Reporting and evidence
 - Six report formats:
@@ -38,9 +46,11 @@ The current product name is **Helm's Watch**. Some runtime identifiers still use
 
 - Writeup version history with rollback support.
 - Structured findings storage with severity, remediation, and linked evidence.
+- Deterministic finding auto-tagging plus editable finding tags.
 - PoC step recorder with ordering and export integration.
 - Export targets: Markdown, PDF, HTML, JSON, and DOCX.
 - PDF themes: `terminal-dark`, `professional`, `minimal`, and `htb-professional`.
+- Report outputs now include reusable session cover metadata and severity summary tables.
 
 ### AI workflows
 - **AI Coach**: pentest-oriented guidance from the current session state.
@@ -54,6 +64,7 @@ The current product name is **Helm's Watch**. Some runtime identifiers still use
 - Docker-first runtime with health checks and graceful shutdown support.
 - Security controls for command execution, admin APIs, API token enforcement, and CSP headers.
 - Repo-level GitHub Actions for CI, tests, security scanning, CodeQL, and changelog enforcement.
+- Bundled operator tooling includes SearchSploit in Docker, with Exploit-DB and Metasploit references exposed in the toolbox/cheatsheet.
 
 ## Stack
 | Layer | Technology |
@@ -82,6 +93,15 @@ Notes:
 - `docker-compose.yml` runs the app in production mode.
 - Persistent data is stored in the `helms-paladin-data` volume.
 - The service image/container names still use `helms-paladin` for compatibility.
+- Docker now vendors the Exploit-DB mirror so `searchsploit` is available inside the app container.
+- Stable semver tags publish multi-arch GHCR images at `ghcr.io/<owner>/helms-watch`.
+
+Docker runtime tuning:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `APP_MEM_LIMIT` | `2g` | Compose memory cap for the app container |
+| `APP_CPUS` | `2.0` | Compose CPU limit for the app container |
 
 ### Local development
 ```bash
@@ -110,7 +130,9 @@ Copy `.env.example` to `.env` when you want explicit local configuration.
 | `GOOGLE_AI_API_KEY` | unset | Gemini provider |
 | `APP_API_TOKEN` | unset | Requires `x-api-token` on mutating routes when set |
 | `ENABLE_COMMAND_EXECUTION` | `true` in dev, `false` in prod | Enables browser-triggered shell execution |
+| `MAX_CONCURRENT_COMMANDS` | `2` | Max concurrent command processes (`1..16`); extra commands stay queued |
 | `ENABLE_ADMIN_API` | `true` in dev, `false` in prod | Enables admin routes |
+| `CTF_WORDLIST_DIR` | `/usr/share/wordlists` | Root directory for the read-only wordlist browser and execution env injection |
 | `NODE_ENV` | `development` | Production hardens defaults |
 
 ## API and documentation entrypoints
@@ -131,6 +153,7 @@ Key tables currently tracked in SQLite:
 - `ai_usage`
 - `poc_steps`
 - `findings`
+- `flag_submissions`
 - `graph_state`
 - `app_logs`
 
@@ -147,6 +170,7 @@ Use the codebase by subsystem rather than the older single-file MVP model:
 
 ## Current export and report behavior
 - `technical-walkthrough` and `pentest` can include findings and PoC sections.
+- All report formats include cover/header metadata, and findings-backed severity summaries render when findings exist.
 - JSON exports include session metadata, generated report markdown, timeline, findings, PoC steps, and writeup content.
 - HTML and DOCX exports use the shared report-generation bundle so they stay aligned with Markdown and PDF output.
 
@@ -154,6 +178,23 @@ Use the codebase by subsystem rather than the older single-file MVP model:
 - Vitest is configured for isolated local test execution with a temporary data directory.
 - `npm run test`, `npm run lint`, and `npm run build` are the local quality gates.
 - GitHub Actions at the repository root enforce build, test, security, CodeQL, and changelog checks against `main`.
+
+## Release automation (Wave 9)
+- Docker publish workflow: `.github/workflows/docker-publish.yml`.
+- Release workflow: `.github/workflows/release.yml`.
+- Docs Pages workflow: `.github/workflows/docs-pages.yml`.
+
+Create a stable release:
+
+```bash
+git tag v0.4.0
+git push origin v0.4.0
+```
+
+Expected artifacts:
+- GHCR image tags: `v0.4.0`, `0.4.0`, and `latest`.
+- GitHub Release generated from the matching changelog section (`[0.4.0]`).
+- GitHub Pages docs deployment from root `docs/`.
 
 ## Companion resources
 - [Machine Template](./templates/Machine-Template/README.md)

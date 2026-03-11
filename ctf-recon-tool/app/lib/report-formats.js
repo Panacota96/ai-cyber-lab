@@ -1,6 +1,6 @@
 import { escapeMarkdownInline, normalizeAnalystName, normalizePlainText } from './text-sanitize';
 
-// Four report format generators for Helm's Watch
+// Report format generators for Helm's Watch
 
 /**
  * Build a markdown Table of Contents from ## and ### headings in a string.
@@ -36,6 +36,27 @@ function safeScreenshotTag(value) {
   return normalized ? escapeMarkdownInline(normalized) : '';
 }
 
+function safeScreenshotCaption(value) {
+  const normalized = normalizePlainText(value, 255);
+  return normalized ? escapeMarkdownInline(normalized) : '';
+}
+
+function safeScreenshotContext(value) {
+  const normalized = normalizePlainText(value, 2000);
+  return normalized ? escapeMarkdownInline(normalized) : '';
+}
+
+function renderScreenshotMetaMarkdown(screenshot) {
+  const tag = safeScreenshotTag(screenshot?.tag);
+  const caption = safeScreenshotCaption(screenshot?.caption);
+  const context = safeScreenshotContext(screenshot?.context);
+  let md = '';
+  if (tag) md += `*Tag:* #${tag}\n\n`;
+  if (caption) md += `*${caption}*\n\n`;
+  if (context) md += `${context}\n\n`;
+  return md;
+}
+
 function normalizePocStep(step) {
   if (!step || typeof step !== 'object') return null;
   return {
@@ -61,6 +82,7 @@ function normalizeFinding(finding) {
     description: finding.description || '',
     impact: finding.impact || '',
     remediation: finding.remediation || '',
+    tags: Array.isArray(finding.tags) ? finding.tags : [],
     evidenceEventIds: Array.isArray(finding.evidenceEventIds)
       ? finding.evidenceEventIds
       : Array.isArray(finding.evidence_event_ids)
@@ -72,6 +94,85 @@ function normalizeFinding(finding) {
         ? finding.evidence_events
         : [],
   };
+}
+
+const FINDING_SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+const REPORT_FORMAT_LABELS = {
+  'lab-report': 'Laboratory Report',
+  'executive-summary': 'Executive Summary',
+  'technical-walkthrough': 'Technical Walkthrough',
+  'ctf-solution': 'CTF Solution',
+  'bug-bounty': 'Bug Bounty Report',
+  pentest: 'Penetration Test Report',
+};
+
+function resolveGeneratedAt(options = {}) {
+  const provided = options?.generatedAt;
+  if (provided instanceof Date && !Number.isNaN(provided.getTime())) return provided;
+  const parsed = new Date(provided || Date.now());
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+export function buildReportMeta(session, format, analystName = 'Unknown', generatedAt = new Date()) {
+  const safeDate = generatedAt instanceof Date && !Number.isNaN(generatedAt.getTime()) ? generatedAt : new Date();
+  return {
+    sessionName: session?.name || 'Session',
+    target: session?.target || 'Not specified',
+    difficulty: String(session?.difficulty || 'N/A').toUpperCase(),
+    objective: session?.objective || 'Not specified',
+    analystName: normalizeAnalystName(analystName),
+    generatedAtIso: safeDate.toISOString(),
+    generatedAtLabel: safeDate.toLocaleString(),
+    format: String(format || 'technical-walkthrough'),
+    formatLabel: REPORT_FORMAT_LABELS[String(format || 'technical-walkthrough')] || String(format || 'technical-walkthrough'),
+  };
+}
+
+function renderReportCoverMarkdown(title, meta) {
+  return `# ${escapeMarkdownInline(title)}
+
+| Field | Value |
+| --- | --- |
+| Session | ${escapeMarkdownInline(meta.sessionName)} |
+| Target | ${escapeMarkdownInline(meta.target)} |
+| Difficulty | ${escapeMarkdownInline(meta.difficulty)} |
+| Objective | ${escapeMarkdownInline(meta.objective)} |
+| Analyst | ${escapeMarkdownInline(meta.analystName)} |
+| Generated | ${escapeMarkdownInline(meta.generatedAtLabel)} |
+| Format | ${escapeMarkdownInline(meta.formatLabel)} |
+
+`;
+}
+
+function buildSeveritySummary(findings = []) {
+  const summary = { critical: 0, high: 0, medium: 0, low: 0 };
+  const normalized = (Array.isArray(findings) ? findings : [])
+    .map(normalizeFinding)
+    .filter((finding) => finding && finding.title);
+  for (const finding of normalized) {
+    const key = finding.severity in summary ? finding.severity : 'medium';
+    summary[key] += 1;
+  }
+  return {
+    counts: summary,
+    total: normalized.length,
+  };
+}
+
+function renderSeveritySummaryMarkdown(findings = []) {
+  const summary = buildSeveritySummary(findings);
+  if (summary.total === 0) return '';
+  return `## Severity Summary
+
+| Severity | Count |
+| --- | --- |
+| Critical | ${summary.counts.critical} |
+| High | ${summary.counts.high} |
+| Medium | ${summary.counts.medium} |
+| Low | ${summary.counts.low} |
+| Total | ${summary.total} |
+
+`;
 }
 
 function findingSeverityLabel(severity) {
@@ -95,8 +196,7 @@ function renderFindingsSection(findings = []) {
     .map(normalizeFinding)
     .filter((finding) => finding && finding.title)
     .sort((a, b) => {
-      const rank = { critical: 0, high: 1, medium: 2, low: 3 };
-      return (rank[a.severity] ?? 99) - (rank[b.severity] ?? 99);
+      return (FINDING_SEVERITY_ORDER[a.severity] ?? 99) - (FINDING_SEVERITY_ORDER[b.severity] ?? 99);
     });
 
   let md = `## Findings\n\n`;
@@ -117,6 +217,9 @@ function renderFindingsSection(findings = []) {
   normalized.forEach((finding, index) => {
     md += `### ${index + 1}. ${finding.title}\n\n`;
     md += `**Severity:** ${findingSeverityLabel(finding.severity)}\n\n`;
+    if (finding.tags.length > 0) {
+      md += `**Tags:** ${finding.tags.map((tag) => `\`${escapeMarkdownInline(tag)}\``).join(', ')}\n\n`;
+    }
     md += `**Description:** ${finding.description || '_Not specified_'}\n\n`;
     md += `**Impact:** ${finding.impact || '_Not specified_'}\n\n`;
     md += `**Remediation:** ${finding.remediation || '_Not specified_'}\n\n`;
@@ -173,6 +276,7 @@ function renderPocSection(session, pocSteps) {
       const screenshotName = safeScreenshotName(screenshot.name || screenshot.filename, 'Screenshot');
       md += `**Evidence:** ${screenshotName}\n\n`;
       md += `![${screenshotName}](/api/media/${session.id}/${screenshot.filename})\n\n`;
+      md += renderScreenshotMetaMarkdown(screenshot);
     } else if (step.screenshotEventId) {
       md += `**Evidence:** _Linked screenshot not found (${step.screenshotEventId})_\n\n`;
     } else {
@@ -186,20 +290,16 @@ function renderPocSection(session, pocSteps) {
   return md;
 }
 
-export function labReport(session, events, analystName = 'Unknown') {
-  const timestamp = new Date().toLocaleString();
-  const safeAnalystName = safeAnalyst(analystName);
-  let md = `# Laboratory Report: ${session.name}\n\n`;
-  md += `**Date of Execution:** ${timestamp}\n`;
-  md += `**Analyst:** ${safeAnalystName}\n`;
-  if (session.target) md += `**Target:** ${session.target}\n`;
-  if (session.difficulty) md += `**Difficulty:** ${session.difficulty.toUpperCase()}\n`;
-  if (session.objective) md += `**Objective:** ${session.objective}\n`;
-  md += `\n`;
+export function labReport(session, events, analystName = 'Unknown', options = {}) {
+  const findings = Array.isArray(options?.findings) ? options.findings : [];
+  const generatedAt = resolveGeneratedAt(options);
+  const meta = buildReportMeta(session, 'lab-report', analystName, generatedAt);
+  let md = renderReportCoverMarkdown(`Laboratory Report: ${session.name}`, meta);
 
   let body = '';
   body += `## 1. Overview\n`;
   body += `This document serves as the official laboratory report for the reconnaissance session conducted on **${session.name}**. It contains a detailed log of commands executed, observations recorded, and technical evidence captured during the engagement.\n\n`;
+  body += renderSeveritySummaryMarkdown(findings);
 
   const notes = events.filter(e => e.type === 'note');
   body += `## 2. Reconnaissance Observations\n`;
@@ -233,11 +333,9 @@ export function labReport(session, events, analystName = 'Unknown') {
   if (screenshots.length > 0) {
     screenshots.forEach((ss, i) => {
       const screenshotName = safeScreenshotName(ss.name || ss.filename, 'Screenshot');
-      const screenshotTag = safeScreenshotTag(ss.tag);
       body += `### 4.${i + 1}. ${screenshotName}\n`;
       body += `![${screenshotName}](/api/media/${session.id}/${ss.filename})\n`;
-      if (screenshotTag) body += `*   **Tag:** #${screenshotTag}\n`;
-      body += `\n`;
+      body += renderScreenshotMetaMarkdown(ss);
     });
   } else {
     body += `No visual evidence was captured during the session.\n`;
@@ -249,18 +347,15 @@ export function labReport(session, events, analystName = 'Unknown') {
   return md + buildToc(body) + body;
 }
 
-export function executiveSummary(session, events, analystName = 'Unknown') {
-  const timestamp = new Date().toLocaleString();
-  const safeAnalystName = safeAnalyst(analystName);
-  let md = `# Executive Summary: ${session.name}\n\n`;
-  md += `**Date:** ${timestamp} | **Analyst:** ${safeAnalystName}`;
-  if (session.target) md += ` | **Target:** ${session.target}`;
-  if (session.difficulty) md += ` | **Difficulty:** ${session.difficulty.toUpperCase()}`;
-  md += `\n\n`;
+export function executiveSummary(session, events, analystName = 'Unknown', options = {}) {
+  const findings = Array.isArray(options?.findings) ? options.findings : [];
+  const meta = buildReportMeta(session, 'executive-summary', analystName, resolveGeneratedAt(options));
+  let md = renderReportCoverMarkdown(`Executive Summary: ${session.name}`, meta);
 
   if (session.objective) {
     md += `## Objective\n${session.objective}\n\n`;
   }
+  md += renderSeveritySummaryMarkdown(findings);
 
   const notes = events.filter(e => e.type === 'note');
   const commands = events.filter(e => e.type === 'command');
@@ -297,7 +392,8 @@ export function executiveSummary(session, events, analystName = 'Unknown') {
     screenshots.forEach(ss => {
       const screenshotName = safeScreenshotName(ss.name || ss.filename, 'Screenshot');
       const screenshotTag = safeScreenshotTag(ss.tag);
-      md += `- **${screenshotName}**${screenshotTag ? ` (#${screenshotTag})` : ''}\n`;
+      const screenshotCaption = safeScreenshotCaption(ss.caption);
+      md += `- **${screenshotName}**${screenshotTag ? ` (#${screenshotTag})` : ''}${screenshotCaption ? ` — ${screenshotCaption}` : ''}\n`;
     });
     md += `\n`;
   }
@@ -307,19 +403,16 @@ export function executiveSummary(session, events, analystName = 'Unknown') {
 }
 
 export function technicalWalkthrough(session, events, analystName = 'Unknown', options = {}) {
-  const timestamp = new Date().toLocaleString();
   const pocSteps = Array.isArray(options?.pocSteps) ? options.pocSteps : [];
   const findings = Array.isArray(options?.findings) ? options.findings : [];
-  const safeAnalystName = safeAnalyst(analystName);
-  let md = `# Technical Walkthrough: ${session.name}\n\n`;
-  md += `**Date:** ${timestamp} | **Analyst:** ${safeAnalystName}`;
-  if (session.target) md += ` | **Target:** ${session.target}`;
-  md += `\n\n`;
+  const meta = buildReportMeta(session, 'technical-walkthrough', analystName, resolveGeneratedAt(options));
+  let md = renderReportCoverMarkdown(`Technical Walkthrough: ${session.name}`, meta);
 
   if (session.objective) {
     md += `> **Objective:** ${session.objective}\n\n`;
   }
 
+  md += renderSeveritySummaryMarkdown(findings);
   md += `## Walkthrough\n\n`;
 
   const allEvents = [...events].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -343,6 +436,7 @@ export function technicalWalkthrough(session, events, analystName = 'Unknown', o
       const screenshotTag = safeScreenshotTag(event.tag);
       md += `**Evidence** *(${time}):* ${screenshotName}${screenshotTag ? ` — #${screenshotTag}` : ''}\n`;
       md += `![${screenshotName}](/api/media/${session.id}/${event.filename})\n\n`;
+      md += renderScreenshotMetaMarkdown(event);
     }
   }
 
@@ -353,13 +447,11 @@ export function technicalWalkthrough(session, events, analystName = 'Unknown', o
   return md;
 }
 
-export function ctfSolution(session, events, analystName = 'Unknown') {
-  const timestamp = new Date().toLocaleString();
-  const safeAnalystName = safeAnalyst(analystName);
-  let md = `# CTF Solution: ${session.name}\n\n`;
-  if (session.target) md += `**Target:** \`${session.target}\`  \n`;
-  if (session.difficulty) md += `**Difficulty:** ${session.difficulty}  \n`;
-  md += `**Date:** ${timestamp}  \n**Analyst:** ${safeAnalystName}\n\n`;
+export function ctfSolution(session, events, analystName = 'Unknown', options = {}) {
+  const findings = Array.isArray(options?.findings) ? options.findings : [];
+  const meta = buildReportMeta(session, 'ctf-solution', analystName, resolveGeneratedAt(options));
+  let md = renderReportCoverMarkdown(`CTF Solution: ${session.name}`, meta);
+  md += renderSeveritySummaryMarkdown(findings);
 
   if (session.objective) {
     md += `## Challenge Description\n${session.objective}\n\n`;
@@ -389,10 +481,8 @@ export function ctfSolution(session, events, analystName = 'Unknown') {
     md += `## Screenshots\n\n`;
     screenshots.forEach(ss => {
       const screenshotName = safeScreenshotName(ss.name || ss.filename, 'Screenshot');
-      const screenshotTag = safeScreenshotTag(ss.tag);
       md += `![${screenshotName}](/api/media/${session.id}/${ss.filename})\n`;
-      if (screenshotTag) md += `*${screenshotTag}*\n`;
-      md += `\n`;
+      md += renderScreenshotMetaMarkdown(ss);
     });
   }
 
@@ -400,14 +490,16 @@ export function ctfSolution(session, events, analystName = 'Unknown') {
   return md;
 }
 
-export function bugBountyReport(session, events, analystName = 'Unknown') {
-  const timestamp = new Date().toLocaleString();
+export function bugBountyReport(session, events, analystName = 'Unknown', options = {}) {
+  const timestamp = resolveGeneratedAt(options).toLocaleString();
   const commands = events.filter(e => e.type === 'command' && e.status === 'success');
   const notes = events.filter(e => e.type === 'note');
   const screenshots = events.filter(e => e.type === 'screenshot');
-  const safeAnalystName = safeAnalyst(analystName);
+  const findings = Array.isArray(options?.findings) ? options.findings : [];
+  const meta = buildReportMeta(session, 'bug-bounty', analystName, resolveGeneratedAt(options));
+  const safeAnalystName = safeAnalyst(meta.analystName);
 
-  let md = `# Bug Bounty Report\n\n`;
+  let md = renderReportCoverMarkdown('Bug Bounty Report', meta);
   md += `| Field | Value |\n| --- | --- |\n`;
   md += `| **Target** | ${session.target || '_unknown_'} |\n`;
   md += `| **Analyst** | ${safeAnalystName} |\n`;
@@ -417,6 +509,7 @@ export function bugBountyReport(session, events, analystName = 'Unknown') {
   md += `| **Date** | ${timestamp} |\n`;
   if (session.objective) md += `| **Summary** | ${session.objective} |\n`;
   md += `\n`;
+  md += renderSeveritySummaryMarkdown(findings);
 
   md += `## Summary\n\n`;
   md += `_Describe the vulnerability in 2-3 sentences: what it is, where it exists, and what an attacker could do._\n\n`;
@@ -446,11 +539,9 @@ export function bugBountyReport(session, events, analystName = 'Unknown') {
     md += `## Evidence\n\n`;
     screenshots.forEach((ss, i) => {
       const screenshotName = safeScreenshotName(ss.name || ss.filename, 'Screenshot');
-      const screenshotTag = safeScreenshotTag(ss.tag);
       md += `### Evidence ${i + 1}: ${screenshotName}\n`;
       md += `![${screenshotName}](/api/media/${session.id}/${ss.filename})\n`;
-      if (screenshotTag) md += `*${screenshotTag}*\n`;
-      md += `\n`;
+      md += renderScreenshotMetaMarkdown(ss);
     });
   }
 
@@ -461,7 +552,8 @@ export function bugBountyReport(session, events, analystName = 'Unknown') {
 }
 
 export function pentestReport(session, events, analystName = 'Unknown', options = {}) {
-  const timestamp = new Date().toLocaleString();
+  const generatedAt = resolveGeneratedAt(options);
+  const timestamp = generatedAt.toLocaleString();
   const pocSteps = Array.isArray(options?.pocSteps) ? options.pocSteps : [];
   const findings = Array.isArray(options?.findings) ? options.findings : [];
   const allCmds = events.filter(e => e.type === 'command');
@@ -470,13 +562,9 @@ export function pentestReport(session, events, analystName = 'Unknown', options 
   const notes = events.filter(e => e.type === 'note');
   const screenshots = events.filter(e => e.type === 'screenshot');
   const safeAnalystName = safeAnalyst(analystName);
+  const meta = buildReportMeta(session, 'pentest', analystName, generatedAt);
 
-  let md = `# Penetration Test Report\n\n`;
-  md += `**Engagement:** ${session.name}  \n`;
-  if (session.target) md += `**Target:** ${session.target}  \n`;
-  if (session.difficulty) md += `**Classification:** ${session.difficulty.toUpperCase()}  \n`;
-  md += `**Report Date:** ${timestamp}  \n`;
-  md += `**Prepared by:** ${safeAnalystName}  \n\n`;
+  let md = renderReportCoverMarkdown('Penetration Test Report', meta);
 
   md += `---\n\n## Executive Summary\n\n`;
   if (session.objective) {
@@ -489,6 +577,7 @@ export function pentestReport(session, events, analystName = 'Unknown', options 
   md += `| Notes Recorded | ${notes.length} |\n`;
   md += `| Screenshots | ${screenshots.length} |\n\n`;
   md += `_Overall risk posture: — fill in (Critical / High / Medium / Low)_\n\n`;
+  md += renderSeveritySummaryMarkdown(findings);
 
   md += `## Methodology\n\n`;
   md += `Testing followed a structured approach:\n\n`;
@@ -528,11 +617,9 @@ export function pentestReport(session, events, analystName = 'Unknown', options 
     md += `## Evidence\n\n`;
     screenshots.forEach((ss, i) => {
       const screenshotName = safeScreenshotName(ss.name || ss.filename, 'Screenshot');
-      const screenshotTag = safeScreenshotTag(ss.tag);
       md += `### ${i + 1}. ${screenshotName}\n`;
       md += `![${screenshotName}](/api/media/${session.id}/${ss.filename})\n`;
-      if (screenshotTag) md += `*${screenshotTag}*\n`;
-      md += `\n`;
+      md += renderScreenshotMetaMarkdown(ss);
     });
   }
 

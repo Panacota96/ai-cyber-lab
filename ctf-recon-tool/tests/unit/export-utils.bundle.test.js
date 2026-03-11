@@ -1,5 +1,5 @@
 import { addTimelineEvent, createFinding } from '@/lib/db';
-import { buildExportBundle } from '@/lib/export-utils';
+import { buildExportBundle, buildStandaloneHtmlDocument } from '@/lib/export-utils';
 import { cleanupTestSession, createTestSession } from '../helpers/test-helpers';
 
 describe('export bundle findings integration', () => {
@@ -43,5 +43,20 @@ describe('export bundle findings integration', () => {
     expect(bundle.findings[0].title).toBe('Server fingerprint exposed');
     expect(bundle.reportMarkdown).toContain('## Findings');
     expect(bundle.reportMarkdown).toContain('Server fingerprint exposed');
+  });
+
+  it('includes responsive media-query CSS in standalone HTML export', () => {
+    const html = buildStandaloneHtmlDocument({
+      title: 'Session Report',
+      session: { name: 'default' },
+      format: 'technical-walkthrough',
+      analystName: 'Tester',
+      markdown: '# Report\n\nSample text.',
+      reportMeta: { generatedAtIso: '2026-03-10T00:00:00.000Z' },
+    });
+
+    expect(html).toContain('@media (max-width: 1024px)');
+    expect(html).toContain('@media (max-width: 768px)');
+    expect(html).toContain('@media (max-width: 520px)');
   });
 });

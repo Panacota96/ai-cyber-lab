@@ -1,27 +1,35 @@
 import { NextResponse } from 'next/server';
 import { saveCoachFeedback, getCoachFeedback } from '@/lib/db';
-import { isApiTokenValid, isValidSessionId } from '@/lib/security';
 import { apiError } from '@/lib/api-error';
+import {
+  getRouteMeta,
+  readJsonBody,
+  withAuth,
+  withErrorHandler,
+  withValidSessionId,
+} from '@/lib/api-route';
 
-export async function GET(request) {
-  if (!isApiTokenValid(request)) return apiError('Unauthorized', 401);
-  const { searchParams } = new URL(request.url);
-  const sessionId = searchParams.get('sessionId');
-  if (!sessionId || !isValidSessionId(sessionId)) return apiError('sessionId required', 400);
-  return NextResponse.json(getCoachFeedback(sessionId));
-}
+export const GET = withErrorHandler(
+  withAuth(
+    withValidSessionId(async (request) => {
+      const { sessionId } = getRouteMeta(request);
+      return NextResponse.json(getCoachFeedback(sessionId));
+    }, { source: 'query', fallback: '' })
+  ),
+  { route: '/api/coach/feedback GET' }
+);
 
-export async function POST(request) {
-  if (!isApiTokenValid(request)) return apiError('Unauthorized', 401);
-  try {
-    const { sessionId, hash, rating } = await request.json();
-    if (!sessionId || !isValidSessionId(sessionId)) return apiError('sessionId required', 400);
-    if (!hash || typeof hash !== 'string') return apiError('hash required', 400);
-    if (rating !== 1 && rating !== -1) return apiError('rating must be 1 or -1', 400);
-    const ok = saveCoachFeedback(sessionId, hash, rating);
-    if (!ok) return apiError('Failed to save feedback', 500);
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    return apiError('Failed to save feedback', 500);
-  }
-}
+export const POST = withErrorHandler(
+  withAuth(
+    withValidSessionId(async (request) => {
+      const { sessionId } = getRouteMeta(request);
+      const { hash, rating } = await readJsonBody(request, {});
+      if (!hash || typeof hash !== 'string') return apiError('hash required', 400);
+      if (rating !== 1 && rating !== -1) return apiError('rating must be 1 or -1', 400);
+      const ok = saveCoachFeedback(sessionId, hash, rating);
+      if (!ok) return apiError('Failed to save feedback', 500);
+      return NextResponse.json({ success: true });
+    }, { source: 'body', fallback: '' })
+  ),
+  { route: '/api/coach/feedback POST' }
+);

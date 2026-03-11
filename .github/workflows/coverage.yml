@@ -1,0 +1,52 @@
+name: Coverage Badge
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - ctf-recon-tool/docs/badges/coverage.json
+  workflow_dispatch:
+
+concurrency:
+  group: coverage-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  coverage-badge:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ctf-recon-tool
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ctf-recon-tool/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate coverage report
+        run: npm run test:coverage
+
+      - name: Update coverage badge payload
+        run: |
+          node -e "const fs=require('fs'); const path=require('path'); const summaryPath=path.join(process.cwd(),'coverage','coverage-summary.json'); const summary=JSON.parse(fs.readFileSync(summaryPath,'utf8')); const pct=Math.round(Number(summary.total.lines.pct||0)); const color=pct>=90?'brightgreen':pct>=80?'green':pct>=70?'yellowgreen':pct>=60?'yellow':pct>=50?'orange':'red'; const badge={schemaVersion:1,label:'coverage',message:pct + '%',color}; const outPath=path.join(process.cwd(),'docs','badges','coverage.json'); fs.mkdirSync(path.dirname(outPath),{recursive:true}); fs.writeFileSync(outPath, JSON.stringify(badge, null, 2) + '\n');"
+
+      - name: Commit badge update
+        working-directory: .
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ctf-recon-tool/docs/badges/coverage.json
+          git diff --cached --quiet && exit 0
+          git commit -m "ci: update coverage badge [skip ci]"
+          git push

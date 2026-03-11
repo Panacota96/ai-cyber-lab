@@ -1,0 +1,39 @@
+site_name: AI Cyber Lab Documentation
+site_description: Shared documentation for Helm's Watch and repository domains.
+repo_url: https://github.com/Panacota96/ai-cyber-lab
+repo_name: Panacota96/ai-cyber-lab
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - AI:
+      - Skills: ai/SKILLS.md
+      - Models: ai/MODELS.md
+  - Backend:
+      - API Reference: backend/API_REFERENCE.md
+      - Database: backend/DATABASE.md
+  - Frontend:
+      - Architecture: frontend/ARCHITECTURE.md
+      - Themes: frontend/THEMES.md
+  - Implementation:
+      - Environment: implementation/ENVIRONMENT.md
+      - Docker Build: implementation/DOCKER_BUILD.md
+  - Testing:
+      - Verification: testing/VERIFICATION.md
+  - Usage:
+      - User Guide: usage/USER_GUIDE.md

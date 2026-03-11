@@ -13,6 +13,9 @@ import {
   parseTimelineMutationResponse,
   sanitizeTimelineEvents,
 } from '@/lib/timeline-client';
+import { OUTPUT_PAGE_LINES, OUTPUT_PREVIEW_LINES, paginateOutput } from '@/lib/output-pagination';
+import { buildReportAutosaveKey, chooseReportDraftSource, parseAutosavePayload } from '@/lib/report-autosave';
+import { getTimelineScrollState, shouldFollowTimeline } from '@/lib/timeline-scroll';
 
 // Lazy-load DiscoveryGraph (React Flow requires client-only; no SSR)
 const DiscoveryGraph = dynamic(() => import('@/components/DiscoveryGraph'), { ssr: false });
@@ -175,6 +178,68 @@ function markdownToReportBlocks(markdown) {
 
 const TIMELINE_AUTO_EXPAND_COUNT = 5;
 const FINDING_SEVERITIES = ['critical', 'high', 'medium', 'low'];
+const FINDING_TAG_VOCABULARY = [
+  'web', 'network', 'auth', 'injection', 'xss', 'sqli', 'idor', 'rce',
+  'file-upload', 'lfi-rfi', 'ssrf', 'csrf', 'config', 'crypto', 'secrets',
+  'windows', 'linux', 'active-directory', 'privilege-escalation',
+  'lateral-movement', 'post-exploitation',
+];
+const FLAG_STATUSES = ['captured', 'submitted', 'accepted', 'rejected'];
+const NOTE_TEMPLATES = [
+  {
+    id: 'owasp-top-10',
+    label: 'OWASP Top 10',
+    content: [
+      'OWASP Top 10 Review',
+      '- Authentication / session handling',
+      '- Access control / IDOR',
+      '- Injection / XSS / SSTI',
+      '- File upload / path traversal',
+      '- Security headers / config',
+      '- Logging / secrets exposure',
+    ].join('\n'),
+  },
+  {
+    id: 'ptes',
+    label: 'PTES',
+    content: [
+      'PTES Notes',
+      '- Pre-engagement',
+      '- Intelligence gathering',
+      '- Threat modeling',
+      '- Vulnerability analysis',
+      '- Exploitation',
+      '- Post exploitation',
+      '- Reporting',
+    ].join('\n'),
+  },
+  {
+    id: 'linux-privesc',
+    label: 'Linux PrivEsc',
+    content: [
+      'Linux PrivEsc Checklist',
+      '- sudo -l',
+      '- SUID/SGID binaries',
+      '- capabilities / getcap -r /',
+      '- cron / timers',
+      '- writable paths / PATH hijack',
+      '- kernel / container escape signal',
+    ].join('\n'),
+  },
+  {
+    id: 'windows-privesc',
+    label: 'Windows PrivEsc',
+    content: [
+      'Windows PrivEsc Checklist',
+      '- whoami /priv',
+      '- service misconfigurations',
+      '- AlwaysInstallElevated',
+      '- token impersonation / SeImpersonatePrivilege',
+      '- unquoted service paths',
+      '- scheduled tasks / startup folders',
+    ].join('\n'),
+  },
+];
 
 function normalizeFindingSeverity(rawSeverity = 'medium') {
   const normalized = String(rawSeverity || '').trim().toLowerCase();
@@ -212,6 +277,14 @@ function computeLineDiff(a, b) {
     }
   }
   return ops.reverse();
+}
+
+function formatTimerDuration(ms = 0) {
+  const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
 }
 
 function summarizeTimelineEvent(event) {
@@ -286,6 +359,7 @@ function buildFindingsSectionMarkdown(findings = []) {
       description: String(finding.description || '').trim(),
       impact: String(finding.impact || '').trim(),
       remediation: String(finding.remediation || '').trim(),
+      tags: Array.isArray(finding.tags) ? finding.tags : [],
       evidenceEvents: Array.isArray(finding.evidenceEvents) ? finding.evidenceEvents : [],
       evidenceEventIds: Array.isArray(finding.evidenceEventIds) ? finding.evidenceEventIds : [],
     }));
@@ -297,6 +371,10 @@ function buildFindingsSectionMarkdown(findings = []) {
     md += `| 1 | _Fill in_ | Critical / High / Medium / Low | _ref_ |\n`;
     return md.trim();
   }
+
+  const severitySummary = { critical: 0, high: 0, medium: 0, low: 0 };
+  normalized.forEach((finding) => { severitySummary[finding.severity] += 1; });
+  md = `## Severity Summary\n\n| Severity | Count |\n| --- | --- |\n| Critical | ${severitySummary.critical} |\n| High | ${severitySummary.high} |\n| Medium | ${severitySummary.medium} |\n| Low | ${severitySummary.low} |\n| Total | ${normalized.length} |\n\n${md}`;
 
   md += `| # | Finding | Severity | Evidence |\n| --- | --- | --- | --- |\n`;
   normalized.forEach((finding, idx) => {
@@ -310,6 +388,9 @@ function buildFindingsSectionMarkdown(findings = []) {
     const severityLabel = finding.severity.charAt(0).toUpperCase() + finding.severity.slice(1);
     md += `### ${idx + 1}. ${finding.title}\n\n`;
     md += `**Severity:** ${severityLabel}\n\n`;
+    if (finding.tags.length > 0) {
+      md += `**Tags:** ${finding.tags.map((tag) => `\`${safeMarkdownLabel(tag)}\``).join(', ')}\n\n`;
+    }
     md += `**Description:** ${finding.description || '_Not specified_'}\n\n`;
     md += `**Impact:** ${finding.impact || '_Not specified_'}\n\n`;
     md += `**Remediation:** ${finding.remediation || '_Not specified_'}\n\n`;
@@ -341,6 +422,7 @@ export default function Home() {
 
   // Session modal state
   const [showNewSessionModal, setShowNewSessionModal] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [newSessionName, setNewSessionName] = useState('');
   const [newSessionTarget, setNewSessionTarget] = useState('');
   const [newSessionDifficulty, setNewSessionDifficulty] = useState('medium');
@@ -362,6 +444,14 @@ export default function Home() {
   const [cmdHistory, setCmdHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
   const [mainView, setMainView] = useState('terminal'); // 'terminal' | 'graph'
+  const [wordlistState, setWordlistState] = useState({ root: '', currentPath: '', parentPath: null, entries: [] });
+  const [wordlistBusy, setWordlistBusy] = useState(false);
+  const [flags, setFlags] = useState([]);
+  const [flagValue, setFlagValue] = useState('');
+  const [flagStatus, setFlagStatus] = useState('captured');
+  const [flagNotes, setFlagNotes] = useState('');
+  const [sessionTimer, setSessionTimer] = useState({ elapsedMs: 0, running: true, startedAt: Date.now() });
+  const [selectedNoteTemplate, setSelectedNoteTemplate] = useState(NOTE_TEMPLATES[0]?.id || '');
 
   // Command timeout (seconds)
   const [cmdTimeout, setCmdTimeout] = useState(120);
@@ -398,6 +488,7 @@ export default function Home() {
 
   // Bulk screenshot selection
   const [selectedScreenshots, setSelectedScreenshots] = useState(new Set());
+  const [outputPageByEvent, setOutputPageByEvent] = useState({});
 
   // Collapsible output state
   const [expandedOutputs, setExpandedOutputs] = useState(new Set());
@@ -409,7 +500,7 @@ export default function Home() {
   const [copiedEventId, setCopiedEventId] = useState(null);
 
   // Screenshot inline editing state
-  const [editingScreenshot, setEditingScreenshot] = useState(null); // { id, name, tag }
+  const [editingScreenshot, setEditingScreenshot] = useState(null); // { id, name, tag, caption, context }
 
   // Command input history (arrow key cycling)
   const [inputHistory, setInputHistory] = useState([]);
@@ -420,6 +511,7 @@ export default function Home() {
   const [reportBlocks, setReportBlocks] = useState([newSectionBlock('Walkthrough', '')]);
   const [selectedReportBlocks, setSelectedReportBlocks] = useState([]);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [reportRestoreNotice, setReportRestoreNotice] = useState('');
   const [reportFormat, setReportFormat] = useState('technical-walkthrough');
   const [pdfStyle, setPdfStyle] = useState('terminal-dark');
   const [pocSteps, setPocSteps] = useState([]);
@@ -459,6 +551,7 @@ export default function Home() {
   const resizeStateRef = useRef({ startX: 0, startWidth: SIDEBAR_DEFAULT_WIDTH });
   const timelineSeenIdsRef = useRef(new Set());
   const filterKeywordRef = useRef(null);
+  const reportAutosaveSignatureRef = useRef('');
 
   const apiFetch = useCallback((url, options = {}) => {
     const headers = new Headers(options.headers || {});
@@ -474,9 +567,7 @@ export default function Home() {
   const syncTimelineScrollFlags = useCallback(() => {
     const feed = timelineFeedRef.current;
     if (!feed) return { nearTop: true, nearBottom: true };
-    const nearTop = feed.scrollTop <= 20;
-    const distanceFromBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
-    const nearBottom = distanceFromBottom <= 48;
+    const { nearTop, nearBottom } = getTimelineScrollState(feed);
     setTimelineAtTop(nearTop);
     setTimelineAtBottom(nearBottom);
     return { nearTop, nearBottom };
@@ -531,11 +622,13 @@ export default function Home() {
 
   const fetchCommandHistory = useCallback(async () => {
     try {
-      const res = await apiFetch(`/api/timeline?sessionId=${currentSession}`);
+      const res = await apiFetch(`/api/execute/history?sessionId=${currentSession}&limit=75`);
+      if (!res.ok) {
+        setCmdHistory([]);
+        return;
+      }
       const data = await res.json();
-      const cmds = sanitizeTimelineEvents(data).filter(e => e.type === 'command').reverse();
-      setCmdHistory(cmds);
-      setInputHistory(cmds.map(e => e.command).filter(Boolean));
+      setCmdHistory(Array.isArray(data) ? data : []);
     } catch (e) { /* silent */ }
   }, [currentSession, apiFetch]);
 
@@ -581,10 +674,49 @@ export default function Home() {
     }
   }, [currentSession, apiFetch]);
 
+  const fetchFlags = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/api/flags?sessionId=${currentSession}`);
+      if (!res.ok) {
+        setFlags([]);
+        return;
+      }
+      const data = await res.json();
+      setFlags(Array.isArray(data) ? data : []);
+    } catch (_) {
+      setFlags([]);
+    }
+  }, [currentSession, apiFetch]);
+
+  const fetchWordlists = useCallback(async (relativePath = '') => {
+    try {
+      setWordlistBusy(true);
+      const pathQuery = relativePath ? `?path=${encodeURIComponent(relativePath)}` : '';
+      const res = await apiFetch(`/api/wordlists${pathQuery}`);
+      if (!res.ok) {
+        setWordlistState({ root: '', currentPath: '', parentPath: null, entries: [] });
+        return;
+      }
+      const data = await res.json();
+      setWordlistState({
+        root: data.root || '',
+        currentPath: data.currentPath || '',
+        parentPath: data.parentPath ?? null,
+        entries: Array.isArray(data.entries) ? data.entries : [],
+      });
+    } catch (_) {
+      setWordlistState({ root: '', currentPath: '', parentPath: null, entries: [] });
+    } finally {
+      setWordlistBusy(false);
+    }
+  }, [apiFetch]);
+
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
   useEffect(() => { fetchAiUsage(); }, [fetchAiUsage]);
   useEffect(() => { fetchPocSteps(); }, [fetchPocSteps]);
   useEffect(() => { fetchFindings(); }, [fetchFindings]);
+  useEffect(() => { fetchFlags(); }, [fetchFlags]);
+  useEffect(() => { fetchWordlists(''); }, [fetchWordlists, currentSession]);
 
   useEffect(() => {
     fetchTimeline();
@@ -598,6 +730,13 @@ export default function Home() {
     setPocSteps([]);
     setFindings([]);
     setFindingProposals([]);
+    setSelectedScreenshots(new Set());
+    setTimelineFollowEnabled(true);
+    setOutputPageByEvent({});
+    setFlags([]);
+    setFlagValue('');
+    setFlagStatus('captured');
+    setFlagNotes('');
   }, [currentSession]);
 
   useEffect(() => {
@@ -630,9 +769,8 @@ export default function Home() {
   useEffect(() => {
     const feed = timelineFeedRef.current;
     if (!feed) return;
-    const distanceFromBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
-    const nearBottom = distanceFromBottom <= 48;
-    if (timelineFollowEnabled || nearBottom) {
+    const { nearBottom } = getTimelineScrollState(feed);
+    if (shouldFollowTimeline({ followEnabled: timelineFollowEnabled, nearBottom })) {
       feed.scrollTo({ top: feed.scrollHeight, behavior: 'auto' });
       setTimelineFollowEnabled(true);
     }
@@ -644,6 +782,19 @@ export default function Home() {
   useEffect(() => {
     if (sidebarTab === 'history') fetchCommandHistory();
   }, [sidebarTab, fetchCommandHistory]);
+
+  useEffect(() => {
+    if (sidebarTab === 'history') fetchCommandHistory();
+  }, [timeline, sidebarTab, fetchCommandHistory]);
+
+  useEffect(() => {
+    const commands = sanitizeTimelineEvents(timeline)
+      .filter((event) => event.type === 'command')
+      .map((event) => event.command)
+      .filter(Boolean)
+      .reverse();
+    setInputHistory(commands);
+  }, [timeline]);
 
   useEffect(() => {
     const handleResize = () => setViewportWidth(window.innerWidth);
@@ -662,12 +813,23 @@ export default function Home() {
       setFilterTag(localStorage.getItem('filter.tag') || '');
       setAnalystName(localStorage.getItem('report.analystName') || '');
       setApiKeys(JSON.parse(localStorage.getItem('aiApiKeys') || '{}'));
+      const storedMainView = localStorage.getItem('ui.mainView');
+      setMainView(storedMainView === 'graph' ? 'graph' : 'terminal');
+      const storedTimer = JSON.parse(localStorage.getItem(`session.timer.${currentSession}`) || 'null');
+      setSessionTimer(storedTimer && typeof storedTimer === 'object'
+        ? {
+            elapsedMs: Number(storedTimer.elapsedMs || 0),
+            running: Boolean(storedTimer.running),
+            startedAt: storedTimer.running ? Date.now() : Number(storedTimer.startedAt || Date.now()),
+          }
+        : { elapsedMs: 0, running: true, startedAt: Date.now() });
     } catch (_) {
       // localStorage unavailable
+      setSessionTimer({ elapsedMs: 0, running: true, startedAt: Date.now() });
     } finally {
       setPrefsHydrated(true);
     }
-  }, []);
+  }, [currentSession]);
 
   useEffect(() => {
     setTodayLabel(new Date().toLocaleDateString());
@@ -701,10 +863,12 @@ export default function Home() {
       localStorage.setItem('ui.sidebarCollapsed', sidebarCollapsed ? 'true' : 'false');
       localStorage.setItem('ui.hiddenCats', JSON.stringify([...hiddenCats]));
       localStorage.setItem('report.analystName', analystName);
+      localStorage.setItem('ui.mainView', mainView);
+      localStorage.setItem(`session.timer.${currentSession}`, JSON.stringify(sessionTimer));
     } catch (_) {
       // localStorage unavailable
     }
-  }, [prefsHydrated, sidebarWidth, sidebarCollapsed, hiddenCats, analystName]);
+  }, [prefsHydrated, sidebarWidth, sidebarCollapsed, hiddenCats, analystName, currentSession, sessionTimer, mainView]);
 
   useEffect(() => {
     if (!prefsHydrated) return;
@@ -726,21 +890,53 @@ export default function Home() {
     } catch (_) { /* localStorage unavailable */ }
   }, [prefsHydrated, filterType, filterStatus, filterKeyword, filterTag]);
 
+  useEffect(() => {
+    if (!sessionTimer.running) return undefined;
+    const interval = setInterval(() => {
+      setSessionTimer((prev) => ({ ...prev, elapsedMs: Number(prev.elapsedMs || 0) + 1000 }));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [sessionTimer.running]);
+
   // A.10 — Keyboard shortcuts
   useEffect(() => {
+    const isModalOverlayOpen =
+      showNewSessionModal ||
+      showReportModal ||
+      showVersionHistory ||
+      showDiffModal ||
+      showDbModal ||
+      showShortcutsModal;
+
     const isInputFocused = () => {
       const el = document.activeElement;
       return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
     };
+
     const onKeyDown = (e) => {
+      const focusedInput = isInputFocused();
+      const key = String(e.key || '').toLowerCase();
+
+      if (!focusedInput && !isModalOverlayOpen && ((e.shiftKey && key === '/') || key === '?')) {
+        e.preventDefault();
+        setShowShortcutsModal(true);
+        return;
+      }
+
       // Ctrl/Cmd+F → focus search filter
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      if ((e.ctrlKey || e.metaKey) && key === 'f') {
         e.preventDefault();
         filterKeywordRef.current?.focus();
         return;
       }
-      // Escape → clear filters and blur
+
+      // Escape → close shortcut modal first, otherwise clear filters and blur
       if (e.key === 'Escape') {
+        if (showShortcutsModal) {
+          e.preventDefault();
+          setShowShortcutsModal(false);
+          return;
+        }
         setFilterType('all');
         setFilterStatus('all');
         setFilterKeyword('');
@@ -748,17 +944,24 @@ export default function Home() {
         document.activeElement?.blur();
         return;
       }
+
+      if (!focusedInput && !isModalOverlayOpen && key === 'g') {
+        e.preventDefault();
+        setMainView((prev) => (prev === 'graph' ? 'terminal' : 'graph'));
+        return;
+      }
+
       // J/K vim-style scroll (only when no input focused)
-      if (!isInputFocused()) {
+      if (!focusedInput) {
         const feed = timelineFeedRef.current;
         if (!feed) return;
-        if (e.key === 'j') { feed.scrollTop += 80; }
-        if (e.key === 'k') { feed.scrollTop -= 80; }
+        if (key === 'j') { feed.scrollTop += 80; }
+        if (key === 'k') { feed.scrollTop -= 80; }
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [showNewSessionModal, showReportModal, showVersionHistory, showDiffModal, showDbModal, showShortcutsModal]);
 
   useEffect(() => {
     if (viewportWidth < 1200) {
@@ -783,6 +986,7 @@ export default function Home() {
     const val = inputVal;
     const tags = inputTags.split(',').map(t => t.trim()).filter(Boolean);
     const cvss = cvssScore.trim();
+    const noteContent = cvss ? `CVSS:${cvss} | ${val.trim()}` : val.trim();
 
     try {
       if (inputType === 'command') {
@@ -808,10 +1012,14 @@ export default function Home() {
         const res = await apiFetch('/api/timeline', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'note', content: cvss ? `CVSS:${cvss} | ${val}` : val, sessionId: currentSession, tags })
+          body: JSON.stringify({ sessionId: currentSession, type: 'note', content: noteContent, tags })
         });
         const result = await parseTimelineMutationResponse(res, 'Failed to add note.');
         if (!result.ok) {
+          if (res.status === 401) {
+            alert('Note save blocked by API token configuration. Set a valid app API token in the browser or server environment.');
+            return;
+          }
           alert(result.error);
           return;
         }
@@ -821,7 +1029,10 @@ export default function Home() {
         setCvssScore('');
         setHistoryIdx(-1);
       }
-    } catch (error) { console.error('Submission failed', error); }
+    } catch (error) {
+      console.error('Submission failed', error);
+      alert(`Submission failed: ${error.message}`);
+    }
     finally { setIsLoading(false); }
   };
 
@@ -915,14 +1126,51 @@ export default function Home() {
   const saveScreenshotEdit = async () => {
     if (!editingScreenshot) return;
     try {
-      await apiFetch('/api/timeline', {
+      const res = await apiFetch('/api/timeline', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: currentSession, id: editingScreenshot.id, name: editingScreenshot.name, tag: editingScreenshot.tag }),
+        body: JSON.stringify({
+          sessionId: currentSession,
+          id: editingScreenshot.id,
+          name: editingScreenshot.name,
+          tag: editingScreenshot.tag,
+          caption: editingScreenshot.caption,
+          context: editingScreenshot.context,
+        }),
       });
-      setTimeline(prev => prev.map(e => e.id === editingScreenshot.id ? { ...e, name: editingScreenshot.name, tag: editingScreenshot.tag } : e));
+      const updated = await res.json().catch(() => null);
+      if (!res.ok || !updated?.id) {
+        alert(updated?.error || 'Failed to update screenshot metadata.');
+        return;
+      }
+      setTimeline(prev => prev.map(e => e.id === editingScreenshot.id ? { ...e, ...updated } : e));
     } catch (err) { console.error('Failed to update screenshot', err); }
     finally { setEditingScreenshot(null); }
+  };
+
+  const rerunHistoryCommand = async (historyItem) => {
+    if (!historyItem?.latestEventId) return;
+    try {
+      setIsLoading(true);
+      const res = await apiFetch(`/api/execute/retry/${historyItem.latestEventId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const result = await parseTimelineMutationResponse(res, 'Failed to retry command.');
+      if (!result.ok) {
+        alert(result.error);
+        return;
+      }
+      setTimeline(prev => [...prev, result.event]);
+    } catch (error) {
+      console.error('Failed to rerun command', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const setOutputPage = (eventId, pageIndex) => {
+    setOutputPageByEvent((prev) => ({ ...prev, [eventId]: Math.max(0, pageIndex) }));
   };
 
   // ── PoC step handlers ─────────────────────────────────────────────────────
@@ -1208,6 +1456,32 @@ export default function Home() {
     }
   };
 
+  const autoTagFindings = async (findingId = null) => {
+    try {
+      const res = await apiFetch('/api/findings/auto-tag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          ...(findingId ? { findingId } : {}),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to auto-tag findings');
+        return;
+      }
+      const nextFindings = Array.isArray(data.findings) ? data.findings : [];
+      if (findingId && nextFindings.length === 1) {
+        upsertFindingLocal(nextFindings[0]);
+      } else if (nextFindings.length > 0) {
+        setFindings(nextFindings);
+      }
+    } catch (error) {
+      console.error('Failed to auto-tag findings', error);
+    }
+  };
+
   // ── Report handlers ───────────────────────────────────────────────────────
 
   const applyReportBlocks = useCallback((nextBlocks) => {
@@ -1226,6 +1500,23 @@ export default function Home() {
     }
     applyReportBlocks(markdownToReportBlocks(content));
   }, [applyReportBlocks]);
+
+  const readLocalReportDraft = useCallback((sessionId = currentSession, format = reportFormat) => {
+    try {
+      const rawValue = localStorage.getItem(buildReportAutosaveKey(sessionId, format));
+      return parseAutosavePayload(rawValue);
+    } catch {
+      return null;
+    }
+  }, [currentSession, reportFormat]);
+
+  const clearLocalReportDraft = useCallback((sessionId = currentSession, format = reportFormat) => {
+    try {
+      localStorage.removeItem(buildReportAutosaveKey(sessionId, format));
+    } catch {
+      // localStorage unavailable
+    }
+  }, [currentSession, reportFormat]);
 
   const getReportMarkdownWithPoc = useCallback((blocks = reportBlocks) => {
     const baseMarkdown = reportBlocksToMarkdown(blocks).trim();
@@ -1281,12 +1572,10 @@ export default function Home() {
     applyReportBlocks(next);
   };
 
-  const generateReport = async (fmt = reportFormat) => {
-    if (!analystName.trim()) {
-      setAnalystNameError(true);
-      return;
-    }
+  const generateReport = async (fmt = reportFormat, { forceRegenerate = false } = {}) => {
+    const safeAnalyst = (analystName || '').trim() || 'Unknown';
     setAnalystNameError(false);
+    setShowReportModal(true);
     try {
       setIsLoading(true);
       await fetchPocSteps();
@@ -1300,13 +1589,34 @@ export default function Home() {
         )
       );
 
-      if (hasExisting) {
-        loadReportPayload(existing);
+      const localDraft = readLocalReportDraft(currentSession, fmt);
+
+      if (!forceRegenerate && hasExisting) {
+        const draftChoice = chooseReportDraftSource({
+          localDraft,
+          serverUpdatedAt: existing.updated_at,
+          hasServerContent: hasExisting,
+        });
+        if (draftChoice.source === 'local' && draftChoice.blocks) {
+          applyReportBlocks(draftChoice.blocks);
+          reportAutosaveSignatureRef.current = JSON.stringify(draftChoice.blocks);
+        } else {
+          loadReportPayload(existing);
+          reportAutosaveSignatureRef.current = JSON.stringify(existing.contentJson || markdownToReportBlocks(String(existing.content || '')));
+        }
+        setReportRestoreNotice(draftChoice.notice);
       } else {
-        const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent(analystName.trim())}`);
+        const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent(safeAnalyst)}`);
         const data = await res.json();
-        if (data.report) {
-          applyReportBlocks(markdownToReportBlocks(data.report));
+        if (!forceRegenerate && localDraft?.blocks?.length) {
+          applyReportBlocks(localDraft.blocks);
+          reportAutosaveSignatureRef.current = JSON.stringify(localDraft.blocks);
+          setReportRestoreNotice('Recovered newer local draft.');
+        } else if (data.report) {
+          const generatedBlocks = markdownToReportBlocks(data.report);
+          applyReportBlocks(generatedBlocks);
+          reportAutosaveSignatureRef.current = JSON.stringify(generatedBlocks);
+          setReportRestoreNotice('');
         }
       }
       setSelectedReportBlocks([]);
@@ -1319,11 +1629,22 @@ export default function Home() {
     setReportFormat(fmt);
     if (showReportModal) {
       try {
-        const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent(analystName.trim())}`);
+        const localDraft = readLocalReportDraft(currentSession, fmt);
+        if (localDraft?.blocks?.length) {
+          applyReportBlocks(localDraft.blocks);
+          reportAutosaveSignatureRef.current = JSON.stringify(localDraft.blocks);
+          setSelectedReportBlocks([]);
+          setReportRestoreNotice('Recovered newer local draft.');
+          return;
+        }
+        const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent((analystName || '').trim() || 'Unknown')}`);
         const data = await res.json();
         if (data.report) {
-          applyReportBlocks(markdownToReportBlocks(data.report));
+          const generatedBlocks = markdownToReportBlocks(data.report);
+          applyReportBlocks(generatedBlocks);
+          reportAutosaveSignatureRef.current = JSON.stringify(generatedBlocks);
           setSelectedReportBlocks([]);
+          setReportRestoreNotice('');
         }
       } catch (_) {}
     }
@@ -1345,6 +1666,9 @@ export default function Home() {
         })
       });
       setReportDraft(markdown);
+      clearLocalReportDraft(currentSession, reportFormat);
+      reportAutosaveSignatureRef.current = JSON.stringify(reportBlocks);
+      setReportRestoreNotice('');
       setShowReportModal(false);
       alert('Write-up saved!');
     } catch (error) { console.error('Failed to save report', error); }
@@ -1418,6 +1742,26 @@ export default function Home() {
       fetchAiUsage();
     }
   };
+
+  useEffect(() => {
+    if (!showReportModal || !prefsHydrated) return undefined;
+    const interval = setInterval(() => {
+      try {
+        const serializedBlocks = JSON.stringify(reportBlocks);
+        if (serializedBlocks === reportAutosaveSignatureRef.current) {
+          return;
+        }
+        localStorage.setItem(buildReportAutosaveKey(currentSession, reportFormat), JSON.stringify({
+          savedAt: new Date().toISOString(),
+          blocks: JSON.parse(serializedBlocks),
+        }));
+        reportAutosaveSignatureRef.current = serializedBlocks;
+      } catch {
+        // localStorage unavailable
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [showReportModal, prefsHydrated, currentSession, reportFormat, reportBlocks]);
 
   const runCoach = async () => {
     setIsCoaching(true);
@@ -1746,6 +2090,13 @@ export default function Home() {
     setInputVal(prev => prev.includes(resolved) ? prev : `${prev} ${resolved}`.trim());
   };
 
+  const applyNoteTemplate = (templateId) => {
+    const template = NOTE_TEMPLATES.find((item) => item.id === templateId);
+    if (!template) return;
+    setInputType('note');
+    setInputVal((prev) => prev.trim() ? `${prev.trim()}\n\n${template.content}` : template.content);
+  };
+
   const toggleFavorite = (flag) => {
     setFavorites(prev => {
       const next = new Set(prev);
@@ -1753,6 +2104,96 @@ export default function Home() {
       localStorage.setItem('flagFavorites', JSON.stringify([...next]));
       return next;
     });
+  };
+
+  const createFlagEntry = async () => {
+    if (!flagValue.trim()) return;
+    try {
+      const res = await apiFetch('/api/flags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          value: flagValue.trim(),
+          status: flagStatus,
+          notes: flagNotes,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to save flag');
+        return;
+      }
+      if (data?.flag) {
+        setFlags((prev) => [data.flag, ...prev.filter((item) => item.id !== data.flag.id)]);
+        setFlagValue('');
+        setFlagStatus('captured');
+        setFlagNotes('');
+      }
+    } catch (error) {
+      console.error('Failed to create flag', error);
+    }
+  };
+
+  const persistFlagUpdate = async (id, patch) => {
+    try {
+      const res = await apiFetch('/api/flags', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, id, ...patch }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to update flag');
+        return;
+      }
+      if (data?.flag) {
+        setFlags((prev) => prev.map((item) => item.id === data.flag.id ? data.flag : item));
+      }
+    } catch (error) {
+      console.error('Failed to update flag', error);
+    }
+  };
+
+  const removeFlagEntry = async (id) => {
+    if (!confirm('Delete this flag entry?')) return;
+    try {
+      const res = await apiFetch(`/api/flags?sessionId=${currentSession}&id=${id}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to delete flag');
+        return;
+      }
+      setFlags((prev) => prev.filter((item) => item.id !== id));
+    } catch (error) {
+      console.error('Failed to delete flag', error);
+    }
+  };
+
+  const openWordlistPath = (relativePath = '') => {
+    fetchWordlists(relativePath);
+  };
+
+  const copyWordlistPath = async (relativePath) => {
+    const root = wordlistState.root || '/usr/share/wordlists';
+    const fullPath = relativePath ? `${root.replace(/[\\/]$/, '')}/${relativePath}` : root;
+    try {
+      await navigator.clipboard.writeText(fullPath);
+    } catch (_) {
+      setInputVal(fullPath);
+    }
+  };
+
+  const startSessionTimer = () => {
+    setSessionTimer((prev) => prev.running ? prev : { ...prev, running: true, startedAt: Date.now() });
+  };
+
+  const pauseSessionTimer = () => {
+    setSessionTimer((prev) => ({ ...prev, running: false, startedAt: Date.now() }));
+  };
+
+  const resetSessionTimer = () => {
+    setSessionTimer({ elapsedMs: 0, running: true, startedAt: Date.now() });
   };
 
   const handleCancelCommand = async (eventId, sessionId) => {
@@ -1771,7 +2212,12 @@ export default function Home() {
   const toggleOutput = (id) => {
     setExpandedOutputs(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        setOutputPageByEvent((pages) => ({ ...pages, [id]: 0 }));
+      }
       return next;
     });
   };
@@ -1837,6 +2283,7 @@ export default function Home() {
 
   const commandExecutionEnabled = healthData?.features?.commandExecutionEnabled !== false;
   const currentSessionData = sessions.find(s => s.id === currentSession);
+  const sessionTimerLabel = formatTimerDuration(sessionTimer.elapsedMs);
 
   const allTimelineTags = [...new Set(timeline.flatMap(e => {
     try { return JSON.parse(e.tags || '[]'); } catch { return []; }
@@ -1923,6 +2370,9 @@ export default function Home() {
     if (favorites.has(f.flag)) favFlagItems.push({ ...f, tool: tool.tool, cat: cat.name });
   })));
 
+  const headerTarget = currentSessionData?.target?.trim() || 'not set';
+  const headerDifficulty = (currentSessionData?.difficulty || 'unknown').toUpperCase();
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -1946,12 +2396,10 @@ export default function Home() {
                 {currentSessionData.difficulty.toUpperCase()}
               </span>
             )}
-            {currentSessionData?.target && (
-              <span className="mono" title={currentSessionData.target}
-                style={{ fontSize: '0.76rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px' }}>
-                ⌖ {currentSessionData.target}
-              </span>
-            )}
+            <span className="mono" title={`Target: ${headerTarget}`}
+              style={{ fontSize: '0.76rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '220px' }}>
+              ⌖ {headerTarget}
+            </span>
           </div>
 
           {/* Action buttons */}
@@ -1965,13 +2413,23 @@ export default function Home() {
               style={{ color: 'var(--accent-secondary)', borderColor: 'var(--accent-secondary)' }}>
               {isCoaching ? '…' : 'Coach'}
             </button>
-            <button className="btn-primary btn-compact" onClick={() => generateReport()}
+            <button className="btn-primary btn-compact" onClick={() => generateReport(reportFormat)}
               style={{ background: 'var(--accent-secondary)', color: '#fff' }}>Report</button>
+            <button className="btn-secondary btn-compact" onClick={() => setShowShortcutsModal(true)} title="Keyboard shortcuts (?)">?</button>
             <span className="mono ai-usage-pill" title={aiUsageTitle}>{aiUsageLabel}</span>
           </div>
 
           {/* Status dots */}
           <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', fontSize: '0.72rem', color: 'var(--text-muted)', flexShrink: 0 }}>
+            <span className="mono ai-usage-pill" title={`Session timer for ${currentSessionData?.name || currentSession}`}>
+              ⏱ {sessionTimerLabel}
+            </span>
+            <div style={{ display: 'flex', gap: '0.25rem' }}>
+              <button className="btn-secondary btn-compact" onClick={sessionTimer.running ? pauseSessionTimer : startSessionTimer} title={sessionTimer.running ? 'Pause session timer' : 'Resume session timer'}>
+                {sessionTimer.running ? 'Pause' : 'Resume'}
+              </button>
+              <button className="btn-secondary btn-compact" onClick={resetSessionTimer} title="Reset session timer">Reset</button>
+            </div>
             {(() => {
               const s = healthData?.status;
               const dotClass = s === 'ok' ? 'connected' : s === 'degraded' ? 'syncing' : 'disconnected';
@@ -2009,6 +2467,12 @@ export default function Home() {
                 : connectionStatus === 'disconnected' ? 'offline' : '…'}</span>
             </span>
           </div>
+        </div>
+        <div className="header-meta-strip mono">
+          <span title={`Session: ${currentSessionData?.name || currentSession}`}>Session: {currentSessionData?.name || currentSession}</span>
+          <span title={`Target: ${headerTarget}`}>Target: {headerTarget}</span>
+          <span title={`Difficulty: ${headerDifficulty}`}>Difficulty: {headerDifficulty}</span>
+          <span title={`View: ${mainView.toUpperCase()}`}>View: {mainView.toUpperCase()}</span>
         </div>
       </header>
 
@@ -2050,6 +2514,25 @@ export default function Home() {
         </div>
       )}
 
+      {showShortcutsModal && (
+        <div className="overlay" onClick={() => setShowShortcutsModal(false)}>
+          <div className="modal glass-panel shortcuts-modal" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <h3>Keyboard Shortcuts</h3>
+              <button className="btn-secondary" onClick={() => setShowShortcutsModal(false)}>Close</button>
+            </div>
+            <div className="mono shortcuts-grid">
+              <span>Ctrl/Cmd + F</span><span>Focus timeline search</span>
+              <span>Esc</span><span>Clear filters / close shortcuts</span>
+              <span>J / K</span><span>Scroll timeline down/up</span>
+              <span>G</span><span>Toggle terminal and graph view</span>
+              <span>?</span><span>Open shortcuts reference</span>
+              <span>↑ / ↓</span><span>Command input history</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Report Modal ──────────────────────────────────────────────────── */}
       {showReportModal && (
         <div className="overlay">
@@ -2082,12 +2565,12 @@ export default function Home() {
 
             {/* Analyst + Date row */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-              <label style={{ fontSize: '0.82rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Analyst *</label>
+              <label style={{ fontSize: '0.82rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Analyst</label>
               <input
                 type="text"
                 value={analystName}
                 onChange={e => { setAnalystName(e.target.value); setAnalystNameError(false); }}
-                placeholder="Your name (required)"
+                placeholder="Optional analyst name"
                 style={{
                   flex: 1, minWidth: '160px', fontSize: '0.82rem', padding: '4px 10px',
                   background: 'rgba(1,4,9,0.6)',
@@ -2098,10 +2581,13 @@ export default function Home() {
               <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                 {todayLabel}
               </span>
-              {analystNameError && (
-                <span style={{ fontSize: '0.78rem', color: 'var(--accent-danger, #f85149)' }}>required</span>
-              )}
             </div>
+
+            {reportRestoreNotice && (
+              <div className="mono" style={{ marginBottom: '0.5rem', fontSize: '0.76rem', color: 'var(--accent-secondary)', padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid rgba(88,166,255,0.3)', background: 'rgba(88,166,255,0.08)' }}>
+                {reportRestoreNotice}
+              </div>
+            )}
 
             {/* Visibility selector */}
             <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '0.5rem', alignItems: 'center' }}>
@@ -2389,6 +2875,14 @@ export default function Home() {
                   <button
                     type="button"
                     className="btn-secondary mono"
+                    style={{ fontSize: '0.75rem', padding: '3px 9px', color: '#d29922', borderColor: 'rgba(210,153,34,0.5)' }}
+                    onClick={() => autoTagFindings()}
+                  >
+                    [ Auto-tag Findings ]
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary mono"
                     style={{ fontSize: '0.75rem', padding: '3px 9px', color: '#f0883e', borderColor: 'rgba(240,136,62,0.5)' }}
                     onClick={extractFindings}
                     disabled={isExtractingFindings}
@@ -2554,6 +3048,30 @@ export default function Home() {
                     </select>
                   </div>
 
+                  <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      value={Array.isArray(finding.tags) ? finding.tags.join(', ') : ''}
+                      onChange={(e) => updateFindingLocal(finding.id, 'tags', e.target.value.split(',').map((tag) => tag.trim()).filter(Boolean))}
+                      onBlur={(e) => persistFindingUpdate(finding.id, { tags: e.target.value.split(',').map((tag) => tag.trim()).filter(Boolean) })}
+                      className="mono"
+                      placeholder="tags: web, auth, rce"
+                      style={{ flex: 1, minWidth: '220px', fontSize: '0.76rem', padding: '4px 8px' }}
+                    />
+                    <button
+                      type="button"
+                      className="btn-secondary mono"
+                      style={{ fontSize: '0.72rem', padding: '2px 7px', color: '#d29922', borderColor: 'rgba(210,153,34,0.45)' }}
+                      onClick={() => autoTagFindings(finding.id)}
+                    >
+                      Auto-tag
+                    </button>
+                  </div>
+                  <div className="finding-chip-row">
+                    {(finding.tags || []).map((tag) => (
+                      <span key={tag} className="mono finding-chip">{tag}</span>
+                    ))}
+                  </div>
+
                   <select
                     multiple
                     value={finding.evidenceEventIds || []}
@@ -2616,6 +3134,9 @@ export default function Home() {
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button className="btn-secondary" onClick={loadVersionHistory} style={{ fontSize: '0.8rem' }}>
                   [ Version History ]
+                </button>
+                <button className="btn-secondary" onClick={() => generateReport(reportFormat, { forceRegenerate: true })} style={{ fontSize: '0.8rem' }}>
+                  [ Generate From Timeline ]
                 </button>
                 <select value={aiSkill} onChange={(e) => setAiSkill(e.target.value)}
                   style={{ fontSize: '0.8rem', padding: '4px 8px' }} title="AI enhancement skill">
@@ -2979,6 +3500,101 @@ export default function Home() {
 
               {sidebarTab === 'flags' && (
                 <div className="cheatsheet-area animate-fade">
+                  <div style={{ marginBottom: '1rem', border: '1px solid rgba(63,185,80,0.18)', borderRadius: '8px', padding: '0.6rem', background: 'rgba(15,32,22,0.38)' }}>
+                    <div className="mono" style={{ color: '#3fb950', borderBottom: '1px solid rgba(63,185,80,0.2)', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+                      Flag Tracking
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                      <input
+                        className="mono"
+                        value={flagValue}
+                        onChange={(e) => setFlagValue(e.target.value)}
+                        placeholder="HTB{...} / flag / secret"
+                        style={{ fontSize: '0.76rem', padding: '6px 8px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', borderRadius: '5px', color: 'var(--text-main)' }}
+                      />
+                      <div style={{ display: 'flex', gap: '0.4rem' }}>
+                        <select value={flagStatus} onChange={(e) => setFlagStatus(e.target.value)} style={{ flex: '0 0 120px', fontSize: '0.76rem', padding: '4px 8px' }}>
+                          {FLAG_STATUSES.map((status) => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                        <button className="btn-secondary" onClick={createFlagEntry} style={{ fontSize: '0.76rem', padding: '4px 10px' }}>Add Flag</button>
+                      </div>
+                      <textarea
+                        className="mono"
+                        value={flagNotes}
+                        onChange={(e) => setFlagNotes(e.target.value)}
+                        placeholder="Optional notes"
+                        style={{ minHeight: '58px', resize: 'vertical', fontSize: '0.74rem', padding: '6px 8px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', borderRadius: '5px', color: 'var(--text-main)' }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginTop: '0.6rem', maxHeight: '240px', overflowY: 'auto' }}>
+                      {flags.length === 0 ? (
+                        <span className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>No captured flags for this session yet.</span>
+                      ) : flags.map((flag) => (
+                        <div key={flag.id} style={{ border: '1px solid rgba(63,185,80,0.12)', borderRadius: '6px', padding: '0.45rem', background: 'rgba(1,4,9,0.35)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <input
+                              className="mono"
+                              value={flag.value || ''}
+                              onChange={(e) => setFlags((prev) => prev.map((item) => item.id === flag.id ? { ...item, value: e.target.value } : item))}
+                              onBlur={(e) => persistFlagUpdate(flag.id, { value: e.target.value })}
+                              style={{ flex: 1, fontSize: '0.75rem', padding: '4px 6px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', borderRadius: '4px', color: 'var(--text-main)' }}
+                            />
+                            <select
+                              value={flag.status || 'captured'}
+                              onChange={(e) => persistFlagUpdate(flag.id, { status: e.target.value })}
+                              style={{ fontSize: '0.74rem', padding: '3px 6px' }}
+                            >
+                              {FLAG_STATUSES.map((status) => (
+                                <option key={status} value={status}>{status}</option>
+                              ))}
+                            </select>
+                            <button className="btn-secondary" onClick={() => removeFlagEntry(flag.id)} style={{ fontSize: '0.7rem', padding: '2px 7px', color: 'var(--accent-danger)', borderColor: 'var(--accent-danger)' }}>✕</button>
+                          </div>
+                          <textarea
+                            className="mono"
+                            value={flag.notes || ''}
+                            onChange={(e) => setFlags((prev) => prev.map((item) => item.id === flag.id ? { ...item, notes: e.target.value } : item))}
+                            onBlur={(e) => persistFlagUpdate(flag.id, { notes: e.target.value })}
+                            placeholder="Notes"
+                            style={{ width: '100%', minHeight: '48px', marginTop: '0.35rem', resize: 'vertical', fontSize: '0.72rem', padding: '5px 7px', background: 'rgba(1,4,9,0.55)', border: '1px solid var(--border-color)', borderRadius: '4px', color: 'var(--text-main)' }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: '1rem', border: '1px solid rgba(88,166,255,0.16)', borderRadius: '8px', padding: '0.6rem', background: 'rgba(10,20,34,0.32)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.45rem' }}>
+                      <div className="mono" style={{ color: 'var(--accent-secondary)', fontSize: '0.85rem' }}>Wordlists</div>
+                      <button className="btn-secondary" onClick={() => openWordlistPath(wordlistState.parentPath || '')} disabled={!wordlistState.parentPath && wordlistState.currentPath === ''} style={{ fontSize: '0.72rem', padding: '2px 8px' }}>Up</button>
+                    </div>
+                    <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '0.45rem' }}>
+                      {wordlistState.root || '/usr/share/wordlists'}{wordlistState.currentPath ? `/${wordlistState.currentPath}` : ''}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', maxHeight: '180px', overflowY: 'auto' }}>
+                      {wordlistBusy ? (
+                        <span className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Loading wordlists…</span>
+                      ) : wordlistState.entries.length === 0 ? (
+                        <span className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>No entries visible.</span>
+                      ) : wordlistState.entries.map((entry) => (
+                        <div key={`${entry.type}-${entry.relativePath}`} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                          <button
+                            className="flag-btn mono"
+                            title={entry.relativePath}
+                            onClick={() => entry.type === 'directory' ? openWordlistPath(entry.relativePath) : copyWordlistPath(entry.relativePath)}
+                          >
+                            {entry.type === 'directory' ? `📁 ${entry.name}` : entry.name}
+                          </button>
+                          {entry.type === 'file' && (
+                            <button className="btn-secondary" onClick={() => copyWordlistPath(entry.relativePath)} style={{ fontSize: '0.68rem', padding: '2px 6px' }}>Copy Path</button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   {favFlagItems.length > 0 && (
                     <div style={{ marginBottom: '1.5rem' }}>
                       <div className="mono" style={{ color: '#e3b341', borderBottom: '1px solid rgba(227,179,65,0.2)', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
@@ -3060,11 +3676,32 @@ export default function Home() {
                     <p className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>No commands yet.</p>
                   ) : (
                     cmdHistory.filter(cmd => !historySearch || cmd.command.toLowerCase().includes(historySearch.toLowerCase())).map((cmd, i) => (
-                      <div key={cmd.id || i} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(1,4,9,0.4)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '4px 6px' }}>
-                        <span className={`badge badge-${cmd.status}`} style={{ fontSize: '0.65rem', padding: '1px 4px', whiteSpace: 'nowrap' }}>{(cmd.status || '?').toUpperCase()}</span>
-                        <span className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={cmd.command}>{cmd.command}</span>
-                        <button onClick={() => { setInputType('command'); setInputVal(cmd.command); setSidebarTab('tools'); inputRef.current?.focus(); }}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-primary)', fontSize: '0.75rem', padding: '0 2px', whiteSpace: 'nowrap' }} title="Re-use command">↩</button>
+                      <div key={cmd.commandHash || i} style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', background: 'rgba(1,4,9,0.4)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <span className={`badge badge-${cmd.lastStatus || 'queued'}`} style={{ fontSize: '0.65rem', padding: '1px 4px', whiteSpace: 'nowrap' }}>{String(cmd.lastStatus || '?').toUpperCase()}</span>
+                          <span className="mono" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={cmd.command}>{cmd.command}</span>
+                        </div>
+                        <div className="mono" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                          <span>Runs {cmd.runCount}</span>
+                          <span>Success {cmd.successRate}%</span>
+                          <span>{formatTimelineDateTime(cmd.lastTimestamp)}</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'flex-end' }}>
+                          <button
+                            onClick={() => { setInputType('command'); setInputVal(cmd.command); setSidebarTab('tools'); inputRef.current?.focus(); }}
+                            style={{ background: 'none', border: '1px solid var(--border-color)', borderRadius: '4px', cursor: 'pointer', color: 'var(--accent-primary)', fontSize: '0.72rem', padding: '2px 7px', whiteSpace: 'nowrap' }}
+                            title="Load command into input"
+                          >
+                            Load
+                          </button>
+                          <button
+                            onClick={() => rerunHistoryCommand(cmd)}
+                            style={{ background: 'none', border: '1px solid rgba(63,185,80,0.4)', borderRadius: '4px', cursor: 'pointer', color: '#3fb950', fontSize: '0.72rem', padding: '2px 7px', whiteSpace: 'nowrap' }}
+                            title="Retry latest run immediately"
+                          >
+                            Rerun
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}
@@ -3168,6 +3805,9 @@ export default function Home() {
               )}
               {selectedScreenshots.size > 0 && (
                 <>
+                  <span className="mono" style={{ fontSize: '0.76rem', padding: '3px 8px', whiteSpace: 'nowrap', borderRadius: '999px', border: '1px solid rgba(63,185,80,0.4)', color: '#3fb950', background: 'rgba(63,185,80,0.1)' }}>
+                    {selectedScreenshots.size} selected
+                  </span>
                   <button
                     onClick={async () => {
                       if (!confirm(`Delete ${selectedScreenshots.size} screenshot(s)?`)) return;
@@ -3191,26 +3831,72 @@ export default function Home() {
           <div className="timeline-scroll-shell">
             <div ref={timelineFeedRef} onScroll={handleTimelineScroll} className="timeline-feed">
               {filteredTimeline.length === 0 && (
-                <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '2rem' }}>
-                  <p>{timeline.length === 0 ? `Session "${currentSession}" is empty. Start your recon!` : 'No events match the current filter.'}</p>
+                <div className="timeline-empty-state">
+                  {timeline.length === 0 ? (
+                    <div className="empty-onboarding">
+                      <h4>Session &quot;{currentSession}&quot; is ready</h4>
+                      <p className="mono">Start recon by running a command, adding a note, or attaching evidence.</p>
+                      <div className="empty-onboarding-actions">
+                        <button
+                          className="btn-secondary mono"
+                          onClick={() => { setInputType('command'); inputRef.current?.focus(); }}
+                        >
+                          Run first command
+                        </button>
+                        <button
+                          className="btn-secondary mono"
+                          onClick={() => {
+                            setInputType('note');
+                            setSelectedNoteTemplate(NOTE_TEMPLATES[0]?.id || '');
+                            inputRef.current?.focus();
+                          }}
+                        >
+                          Add first note
+                        </button>
+                        <button className="btn-secondary mono" onClick={() => fileInputRef.current?.click()}>
+                          Capture screenshot
+                        </button>
+                        <button className="btn-primary mono" onClick={() => generateReport(reportFormat)}>
+                          Open report
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p>No events match the current filter.</p>
+                  )}
                 </div>
               )}
 
               {filteredTimeline.map((event, idx) => {
                 const outputLines = (event.output || '').split('\n');
-                const PREVIEW_LINES = 4;
-                const isLong = outputLines.length > PREVIEW_LINES;
+                const isLong = outputLines.length > OUTPUT_PREVIEW_LINES;
                 const isExpanded = expandedOutputs.has(event.id);
-                const visibleOutput = isExpanded ? event.output : outputLines.slice(0, PREVIEW_LINES).join('\n');
+                const pagedOutput = paginateOutput(event.output || '', outputPageByEvent[event.id] || 0, OUTPUT_PAGE_LINES);
+                const isPagedOutput = pagedOutput.totalLines > OUTPUT_PAGE_LINES;
+                const visibleOutput = isExpanded
+                  ? (isPagedOutput ? pagedOutput.text : event.output)
+                  : outputLines.slice(0, OUTPUT_PREVIEW_LINES).join('\n');
                 const isTimelineEventExpanded = !timelineCollapsed || expandedTimelineEvents.has(event.id);
                 const compactSummary = summarizeTimelineEvent(event);
                 const isEventInPoc = pocLinkedEventIds.has(event.id);
                 const eventTime = formatTimelineTime(event.timestamp);
                 const elapsedSeconds = getTimelineElapsedSeconds(event.timestamp);
                 const tags = (() => { try { return JSON.parse(event.tags || '[]'); } catch { return []; } })();
+                const eventToneClass = event.type === 'note'
+                  ? 'timeline-event--note'
+                  : event.type === 'screenshot'
+                    ? 'timeline-event--screenshot'
+                    : event.status === 'success'
+                      ? 'timeline-event--success'
+                      : event.status === 'failed' || event.status === 'error'
+                        ? 'timeline-event--failed'
+                        : event.status === 'running' || event.status === 'queued'
+                          ? 'timeline-event--running'
+                          : 'timeline-event--default';
+                const eventExpandClass = isTimelineEventExpanded ? 'timeline-event--expanded' : 'timeline-event--collapsed';
 
                 return (
-                  <div key={event.id || idx} className="timeline-event">
+                  <div key={event.id || idx} className={`timeline-event ${eventToneClass} ${eventExpandClass}`}>
                     <div className="event-header">
                       <span className="mono" style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                         {eventTime}
@@ -3291,10 +3977,19 @@ export default function Home() {
                                     style={{ position: 'absolute', top: '6px', right: '6px', fontSize: '0.72rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', color: copiedEventId === event.id ? 'var(--accent-primary)' : 'var(--text-muted)', background: 'rgba(1,4,9,0.85)', cursor: 'pointer', lineHeight: 1.5 }}
                                   >{copiedEventId === event.id ? '✓ Copied' : 'Copy'}</button>
                                 </div>
+                                {isExpanded && isPagedOutput && (
+                                  <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.4rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                                    <button className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '2px 6px' }} disabled={pagedOutput.currentPage === 0} onClick={() => setOutputPage(event.id, 0)}>«</button>
+                                    <button className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '2px 6px' }} disabled={pagedOutput.currentPage === 0} onClick={() => setOutputPage(event.id, pagedOutput.currentPage - 1)}>‹</button>
+                                    <span>Lines {pagedOutput.startLine}-{pagedOutput.endLine} of {pagedOutput.totalLines}</span>
+                                    <button className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '2px 6px' }} disabled={pagedOutput.currentPage >= pagedOutput.totalPages - 1} onClick={() => setOutputPage(event.id, pagedOutput.currentPage + 1)}>›</button>
+                                    <button className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '2px 6px' }} disabled={pagedOutput.currentPage >= pagedOutput.totalPages - 1} onClick={() => setOutputPage(event.id, pagedOutput.totalPages - 1)}>»</button>
+                                  </div>
+                                )}
                                 {isLong && (
                                   <button onClick={() => toggleOutput(event.id)} className="mono"
                                     style={{ fontSize: '0.8rem', background: 'transparent', border: 'none', color: 'var(--accent-secondary)', cursor: 'pointer', padding: '3px 0', display: 'block' }}>
-                                    {isExpanded ? `▲ Collapse` : `▼ Show more (${outputLines.length - PREVIEW_LINES} more lines)`}
+                                    {isExpanded ? '▲ Collapse' : `▼ Show more (${outputLines.length - OUTPUT_PREVIEW_LINES} more lines)`}
                                   </button>
                                 )}
                               </>
@@ -3303,15 +3998,25 @@ export default function Home() {
                               <pre className="event-output mono">No output.</pre>
                             )}
                             {(event.status === 'running' || event.status === 'queued') && (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--accent-warning)', fontSize: '0.85rem' }}>
-                                <span className="status-dot status-dot--running" />
-                                <span className="mono">
-                                  {elapsedSeconds === null ? 'Running' : `${elapsedSeconds}s elapsed`}
-                                </span>
-                                <button
-                                  onClick={() => handleCancelCommand(event.id, event.session_id || currentSession)}
-                                  style={{ background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', color: '#ff5050', fontSize: '0.75rem', padding: '1px 6px', cursor: 'pointer' }}
-                                >✕ Cancel</button>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', color: 'var(--accent-warning)', fontSize: '0.85rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                  <span className="status-dot status-dot--running" />
+                                  <span className="mono">
+                                    {elapsedSeconds === null ? 'Running' : `${elapsedSeconds}s elapsed`}
+                                  </span>
+                                  <button
+                                    onClick={() => handleCancelCommand(event.id, event.session_id || currentSession)}
+                                    style={{ background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', color: '#ff5050', fontSize: '0.75rem', padding: '1px 6px', cursor: 'pointer' }}
+                                  >✕ Cancel</button>
+                                </div>
+                                {Number.isFinite(Number(event.progress_pct)) && Number(event.progress_pct) > 0 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <div style={{ flex: 1, minWidth: '180px', height: '8px', background: 'rgba(255,255,255,0.08)', borderRadius: '999px', overflow: 'hidden', border: '1px solid rgba(88,166,255,0.2)' }}>
+                                      <div style={{ width: `${Math.max(0, Math.min(100, Number(event.progress_pct)))}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent-secondary), var(--accent-primary))' }} />
+                                    </div>
+                                    <span className="mono" style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{Number(event.progress_pct)}%</span>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </>
@@ -3338,7 +4043,7 @@ export default function Home() {
                         })()}
 
                         {event.type === 'screenshot' && (
-                          <div className="event-screenshot">
+                          <div className="event-screenshot" style={selectedScreenshots.has(event.id) ? { borderColor: 'rgba(63,185,80,0.55)', boxShadow: '0 0 0 1px rgba(63,185,80,0.25)' } : undefined}>
                             <label style={{ position: 'absolute', top: '0.5rem', right: '0.5rem', cursor: 'pointer', zIndex: 1 }} title="Select for bulk delete">
                               <input type="checkbox" checked={selectedScreenshots.has(event.id)}
                                 onChange={() => setSelectedScreenshots(prev => { const next = new Set(prev); next.has(event.id) ? next.delete(event.id) : next.add(event.id); return next; })} />
@@ -3369,18 +4074,37 @@ export default function Home() {
                                   className="mono"
                                   style={{ fontSize: '0.8rem', padding: '3px 6px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', width: '100px' }}
                                 />
+                                <input
+                                  value={editingScreenshot.caption}
+                                  onChange={(e) => setEditingScreenshot(s => ({ ...s, caption: e.target.value }))}
+                                  placeholder="Caption"
+                                  className="mono"
+                                  style={{ fontSize: '0.8rem', padding: '3px 6px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', flex: '1', minWidth: '180px' }}
+                                />
+                                <textarea
+                                  value={editingScreenshot.context}
+                                  onChange={(e) => setEditingScreenshot(s => ({ ...s, context: e.target.value }))}
+                                  placeholder="Context"
+                                  className="mono"
+                                  rows={3}
+                                  style={{ width: '100%', fontSize: '0.8rem', padding: '6px 8px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', outline: 'none', resize: 'vertical' }}
+                                />
                                 <button className="btn-primary" onClick={saveScreenshotEdit} style={{ fontSize: '0.75rem', padding: '3px 10px' }}>Save</button>
                                 <button className="btn-secondary" onClick={() => setEditingScreenshot(null)} style={{ fontSize: '0.75rem', padding: '3px 10px' }}>Cancel</button>
                               </div>
                             ) : (
-                              <div className="screenshot-info mono" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <div className="screenshot-info mono" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.3rem', flexWrap: 'wrap' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                                 <span>{event.name}</span>
                                 {event.tag && <span style={{ color: 'var(--accent-primary)' }}>#{event.tag}</span>}
                                 <button
-                                  onClick={() => setEditingScreenshot({ id: event.id, name: event.name || '', tag: event.tag || '' })}
+                                  onClick={() => setEditingScreenshot({ id: event.id, name: event.name || '', tag: event.tag || '', caption: event.caption || '', context: event.context || '' })}
                                   style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.8rem', padding: '0 2px' }}
                                   title="Edit name / tag"
                                 >✏</button>
+                                </div>
+                                {event.caption && <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>{event.caption}</div>}
+                                {event.context && <div style={{ fontSize: '0.78rem', color: 'var(--text-main)', lineHeight: 1.45 }}>{event.context}</div>}
                               </div>
                             )}
                           </div>
@@ -3455,6 +4179,18 @@ export default function Home() {
                   placeholder="CVSS score (e.g. 7.5)" className="mono"
                   style={{ fontSize: '0.82rem', padding: '4px 10px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px', width: '180px', outline: 'none' }}
                 />
+                <select
+                  value={selectedNoteTemplate}
+                  onChange={(e) => setSelectedNoteTemplate(e.target.value)}
+                  style={{ fontSize: '0.8rem', padding: '4px 8px', minWidth: '180px' }}
+                >
+                  {NOTE_TEMPLATES.map((template) => (
+                    <option key={template.id} value={template.id}>{template.label}</option>
+                  ))}
+                </select>
+                <button type="button" className="btn-secondary mono" style={{ fontSize: '0.76rem', padding: '3px 9px' }} onClick={() => applyNoteTemplate(selectedNoteTemplate)}>
+                  Insert Template
+                </button>
                 <a href="https://www.first.org/cvss/calculator/3.1" target="_blank" rel="noopener noreferrer"
                   style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textDecoration: 'none', opacity: 0.7, whiteSpace: 'nowrap' }}>
                   ↗ CVSS Calculator
@@ -3559,12 +4295,17 @@ export default function Home() {
 
       <style jsx>{`
         .container { width: min(96vw, 1880px); margin: 0 auto; padding: clamp(12px, 1.2vw, 24px); height: calc(100vh - clamp(12px, 1.2vw, 24px) - var(--version-bar-height, 0px)); display: flex; flex-direction: column; gap: 0.5rem; }
-        .header { padding: 0.45rem 1.2rem; display: flex; flex-direction: row; align-items: center; gap: 0.6rem; }
+        .header { padding: 0.45rem 1.2rem; display: flex; flex-direction: column; align-items: stretch; gap: 0.35rem; }
 .header-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 0.45rem; flex-wrap: nowrap; min-height: unset; }
         .header-brand { font-size: 1.0rem; letter-spacing: 2px; white-space: nowrap; flex-shrink: 0; }
+        .header-meta-strip { width: 100%; display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; margin-top: 0.25rem; padding-top: 0.35rem; border-top: 1px solid rgba(88,166,255,0.2); font-size: 0.72rem; color: var(--text-muted); }
+        .header-meta-strip > span { padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(88,166,255,0.25); background: rgba(1,4,9,0.45); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .btn-compact { min-height: 30px !important; padding: 0.2rem 0.55rem !important; font-size: 0.8rem !important; }
         .ai-usage-pill { font-size: 0.7rem; color: var(--text-muted); border: 1px solid rgba(88,166,255,0.25); border-radius: 999px; padding: 0.22rem 0.52rem; background: rgba(1,4,9,0.5); white-space: nowrap; }
         .objective-bar { padding: 0.7rem 1.2rem; font-size: 0.92rem; color: var(--text-muted); border-top: none; }
+        .shortcuts-modal { width: 520px; max-width: 94vw; }
+        .shortcuts-grid { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 0.4rem 0.8rem; font-size: 0.82rem; }
+        .shortcuts-grid span:nth-child(odd) { color: var(--accent-secondary); }
 
         .report-modal { width: 88%; max-width: 1240px; height: 88vh; padding: 1.25rem; gap: 0.75rem; overflow: hidden; }
         .report-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.45rem; border: 1px solid var(--border-color); border-radius: 8px; padding: 0.5rem 0.6rem; background: rgba(1,4,9,0.45); }
@@ -3612,10 +4353,22 @@ export default function Home() {
         .input-area--collapsed { display: none; }
         .timeline-scroll-shell { flex-grow: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 0.55rem; margin-bottom: 1rem; }
         .timeline-feed { flex-grow: 1; overflow-y: auto; overflow-x: hidden; padding-right: 0.85rem; margin-bottom: 0; display: flex; flex-direction: column; gap: 1rem; min-height: 0; }
+        .timeline-empty-state { text-align: center; color: var(--text-muted); margin-top: 2rem; display: flex; justify-content: center; }
+        .empty-onboarding { max-width: 760px; padding: 1rem; border: 1px solid rgba(88,166,255,0.2); border-radius: 10px; background: rgba(1,4,9,0.38); text-align: left; }
+        .empty-onboarding h4 { margin: 0 0 0.4rem 0; color: var(--accent-secondary); font-size: 1rem; }
+        .empty-onboarding p { margin: 0 0 0.8rem 0; font-size: 0.82rem; color: var(--text-muted); }
+        .empty-onboarding-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
         .timeline-jump-controls { display: flex; flex-direction: column; justify-content: flex-end; gap: 0.35rem; padding-bottom: 0.2rem; }
         .timeline-jump-arrow { width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 1rem; line-height: 1; backdrop-filter: blur(3px); background: rgba(1,4,9,0.75); }
-        .timeline-event { background: rgba(1, 4, 9, 0.4); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.15rem; position: relative; }
-        .event-collapsed-summary { padding: 0.45rem 0.65rem; background: rgba(88,166,255,0.06); border-left: 2px solid rgba(88,166,255,0.45); border-radius: 4px; font-size: 0.82rem; color: var(--text-muted); white-space: pre-wrap; word-break: break-word; }
+        .timeline-event { background: rgba(1, 4, 9, 0.4); border: 1px solid var(--border-color); border-left: 4px solid transparent; border-radius: 8px; padding: 1.15rem; position: relative; }
+        .timeline-event.timeline-event--collapsed { border-left-color: rgba(139,148,158,0.6); background: rgba(1,4,9,0.32); }
+        .timeline-event.timeline-event--expanded.timeline-event--success { border-left-color: rgba(63,185,80,0.85); }
+        .timeline-event.timeline-event--expanded.timeline-event--failed { border-left-color: rgba(248,81,73,0.85); }
+        .timeline-event.timeline-event--expanded.timeline-event--running { border-left-color: rgba(210,153,34,0.85); }
+        .timeline-event.timeline-event--expanded.timeline-event--note { border-left-color: rgba(88,166,255,0.85); }
+        .timeline-event.timeline-event--expanded.timeline-event--screenshot { border-left-color: rgba(56,139,253,0.85); }
+        .timeline-event.timeline-event--expanded.timeline-event--default { border-left-color: rgba(139,148,158,0.72); }
+        .event-collapsed-summary { padding: 0.45rem 0.65rem; background: rgba(139,148,158,0.07); border-left: 2px solid rgba(139,148,158,0.5); border-radius: 4px; font-size: 0.82rem; color: var(--text-muted); white-space: pre-wrap; word-break: break-word; }
         .event-command { font-family: var(--font-mono); font-size: 1rem; margin-bottom: 0.5rem; color: #fff; }
         .event-output { background: rgba(1, 4, 9, 0.8); padding: 1rem; border-radius: 6px; font-size: 0.9rem; max-height: 320px; overflow-y: auto; border-left: 2px solid var(--accent-primary); white-space: pre-wrap; word-break: break-all; margin-bottom: 2px; }
         .event-note { font-size: 1.05rem; padding: 0.5rem 1rem; border-left: 3px solid var(--accent-secondary); background: rgba(88, 166, 255, 0.05); }
@@ -3654,6 +4407,8 @@ export default function Home() {
           .input-toolbar { gap: 0.4rem; margin-bottom: 0.35rem; }
           .input-extras { justify-content: flex-start; }
           .ai-usage-pill { display: none; }
+          .header-meta-strip { gap: 0.4rem; }
+          .header-meta-strip > span { font-size: 0.68rem; padding: 2px 6px; }
         }
 
         @media (max-width: 1280px) and (min-width: 1200px) {
