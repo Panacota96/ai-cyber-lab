@@ -1,15 +1,13 @@
 import {
   createWriteupSuggestion,
-  getSession,
-  getTimeline,
-  getTimelineEvent,
   getWriteup,
   getWriteupSuggestion,
   listWriteupSuggestions,
-  mergeSessionMetadata,
   saveWriteup,
   updateWriteupSuggestion,
-} from '@/lib/db';
+} from '@/lib/repositories/report-repository';
+import { getSession, mergeSessionMetadata } from '@/lib/repositories/session-repository';
+import { getTimeline, getTimelineEvent } from '@/lib/repositories/timeline-repository';
 import { logger } from '@/lib/logger';
 import { mergeReportPatches, parseWriteupBlocks, reportBlocksToMarkdown } from '@/lib/report-blocks';
 import { normalizePlainText, stripAnsiAndControl } from '@/lib/text-sanitize';

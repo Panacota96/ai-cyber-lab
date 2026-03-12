@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
-import { listSessions, createSession, deleteSession, updateSession } from '@/lib/db';
-import { isValidSessionId } from '@/lib/security';
+import { createSession, deleteSession, listSessions, updateSession } from '@/lib/repositories/session-repository';
 import { logger } from '@/lib/logger';
 import { apiError } from '@/lib/api-error';
-import { getRouteMeta, readJsonBody, withAuth, withErrorHandler, withValidSessionId } from '@/lib/api-route';
+import {
+  getRouteMeta,
+  readValidatedJsonBody,
+  withAuth,
+  withErrorHandler,
+  withValidSessionId,
+} from '@/lib/api-route';
+import { SessionCreateSchema, SessionPatchSchema } from '@/lib/route-contracts';
 
 export async function GET() {
   const sessions = listSessions();
@@ -12,15 +18,11 @@ export async function GET() {
 
 export const POST = withErrorHandler(
   withAuth(async (request) => {
-    const body = await readJsonBody(request, {});
+    const parsed = await readValidatedJsonBody(request, SessionCreateSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
     const { name, target, difficulty, objective, targets, metadata } = body;
     const id = body.id || crypto.randomUUID();
-    if (!isValidSessionId(id)) {
-      return apiError('Invalid session id', 400);
-    }
-    if (!name || !String(name).trim()) {
-      return apiError('Session name is required', 400);
-    }
     const session = createSession(id, name, { target, difficulty, objective, targets, metadata });
     if (!session) {
       return apiError('Session could not be created (possibly duplicate id)', 409);
@@ -48,22 +50,15 @@ export const DELETE = withErrorHandler(
 );
 
 export const PATCH = withErrorHandler(
-  withAuth(
-    withValidSessionId(async (request) => {
-      const { sessionId } = getRouteMeta(request);
-      const body = await readJsonBody(request, {});
-      const updated = updateSession(sessionId, {
-        name: body?.name,
-        target: body?.target,
-        difficulty: body?.difficulty,
-        objective: body?.objective,
-        metadata: body?.metadata,
-      });
-      if (!updated) {
-        return apiError('Session not found', 404);
-      }
-      return NextResponse.json(updated);
-    }, { source: 'body' })
-  ),
+  withAuth(async (request) => {
+    const parsed = await readValidatedJsonBody(request, SessionPatchSchema);
+    if (!parsed.success) return parsed.response;
+    const { sessionId, ...updates } = parsed.data;
+    const updated = updateSession(sessionId, updates);
+    if (!updated) {
+      return apiError('Session not found', 404);
+    }
+    return NextResponse.json(updated);
+  }),
   { route: '/api/sessions PATCH' }
 );

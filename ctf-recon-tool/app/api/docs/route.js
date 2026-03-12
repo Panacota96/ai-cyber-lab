@@ -17,9 +17,15 @@ const SPEC = {
       Error: {
         type: 'object',
         properties: {
+          ok: { type: 'boolean', enum: [false] },
           error: { type: 'string' },
+          status: { type: 'integer' },
+          details: {
+            type: 'array',
+            items: { type: 'object', additionalProperties: true },
+          },
         },
-        required: ['error'],
+        required: ['ok', 'error', 'status'],
       },
       Session: {
         type: 'object',

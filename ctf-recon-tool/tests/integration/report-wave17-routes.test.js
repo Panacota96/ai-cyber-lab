@@ -71,6 +71,16 @@ describe('Wave 17 reporting routes', () => {
     expect(body.report).toContain('## Delta Summary');
   });
 
+  it('rejects invalid comparison queries with validation details', async () => {
+    const res = await compareGet(makeJsonRequest('/api/report/compare?beforeSessionId=../bad&afterSessionId=', 'GET', null, { auth: true }));
+    const body = await readJson(res);
+
+    expect(res.status).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain('Validation failed');
+    expect(Array.isArray(body.details)).toBe(true);
+  });
+
   it('creates, updates, lists, and deletes report templates', async () => {
     const session = createTestSession();
     sessions.push(session.id);
@@ -102,6 +112,15 @@ describe('Wave 17 reporting routes', () => {
 
     const deleteRes = await templatesDelete(makeJsonRequest(`/api/report/templates?id=${createBody.template.id}`, 'DELETE', null, { auth: true }));
     expect(deleteRes.status).toBe(200);
+  });
+
+  it('rejects invalid report template list queries with validation details', async () => {
+    const res = await templatesGet(makeJsonRequest('/api/report/templates?sessionId=../bad', 'GET', null, { auth: true }));
+    const body = await readJson(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toContain('Validation failed');
+    expect(Array.isArray(body.details)).toBe(true);
   });
 
   it('returns fallback executive summary and remediation guidance without provider keys', async () => {
@@ -148,6 +167,29 @@ describe('Wave 17 reporting routes', () => {
     expect(remediationBody.suggestions[0].remediation.toLowerCase()).toContain('content security policy');
   });
 
+  it('rejects invalid executive summary and remediation payloads with validation details', async () => {
+    const session = createTestSession({ name: 'Validation session' });
+    sessions.push(session.id);
+
+    const summaryRes = await executiveSummaryPost(makeJsonRequest('/api/report/executive-summary', 'POST', {
+      sessionId: session.id,
+      provider: 'bogus-provider',
+    }, { auth: true }));
+    const summaryBody = await readJson(summaryRes);
+    expect(summaryRes.status).toBe(400);
+    expect(summaryBody.ok).toBe(false);
+    expect(Array.isArray(summaryBody.details)).toBe(true);
+
+    const remediationRes = await remediationPost(makeJsonRequest('/api/report/remediation', 'POST', {
+      sessionId: session.id,
+      findingIds: ['abc'],
+    }, { auth: true }));
+    const remediationBody = await readJson(remediationRes);
+    expect(remediationRes.status).toBe(400);
+    expect(remediationBody.ok).toBe(false);
+    expect(Array.isArray(remediationBody.details)).toBe(true);
+  });
+
   it('creates public share links and revokes them', async () => {
     const session = createTestSession({ name: 'Shared session' });
     sessions.push(session.id);
@@ -185,5 +227,22 @@ describe('Wave 17 reporting routes', () => {
       params: Promise.resolve({ token: shareBody.share.token }),
     });
     expect(revokedPublicRes.status).toBe(404);
+  });
+
+  it('rejects invalid share list and revoke payloads with validation details', async () => {
+    const listRes = await shareListGet(makeJsonRequest('/api/writeup/share?sessionId=../bad', 'GET', null, { auth: true }));
+    const listBody = await readJson(listRes);
+    expect(listRes.status).toBe(400);
+    expect(listBody.ok).toBe(false);
+    expect(Array.isArray(listBody.details)).toBe(true);
+
+    const patchRes = await sharePatch(makeJsonRequest('/api/writeup/share', 'PATCH', {
+      sessionId: 'default',
+      id: '   ',
+    }, { auth: true }));
+    const patchBody = await readJson(patchRes);
+    expect(patchRes.status).toBe(400);
+    expect(patchBody.ok).toBe(false);
+    expect(Array.isArray(patchBody.details)).toBe(true);
   });
 });

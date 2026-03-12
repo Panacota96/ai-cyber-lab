@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import {
   getRouteMeta,
   readJsonBody,
+  readValidatedJsonBody,
+  readValidatedSearchParams,
   withAuth,
   withErrorHandler,
   withValidSessionId,
@@ -39,7 +42,7 @@ describe('api route middleware helpers', () => {
 
     const response = await handler(request);
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' });
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: 'Unauthorized', status: 401 });
   });
 
   it('withAuth rejects mutating requests without a matching CSRF token', async () => {
@@ -54,7 +57,7 @@ describe('api route middleware helpers', () => {
     const handler = withAuth(async () => NextResponse.json({ ok: true }));
     const response = await handler(request);
     expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: 'Missing CSRF token' });
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: 'Missing CSRF token', status: 403 });
   });
 
   it('withAuth accepts mutating requests when CSRF header and cookie match', async () => {
@@ -92,7 +95,7 @@ describe('api route middleware helpers', () => {
 
     const response = await handler(request);
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: 'Invalid sessionId' });
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: 'Invalid sessionId', status: 400 });
   });
 
   it('readJsonBody caches the parsed request payload', async () => {
@@ -103,6 +106,27 @@ describe('api route middleware helpers', () => {
     expect(second).toEqual(first);
   });
 
+  it('readValidatedJsonBody returns parsed data for matching schemas', async () => {
+    const request = makeRequest({ body: { sessionId: 'abc', name: 'Demo' } });
+    const result = await readValidatedJsonBody(request, z.object({
+      sessionId: z.string(),
+      name: z.string(),
+    }));
+
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual({ sessionId: 'abc', name: 'Demo' });
+  });
+
+  it('readValidatedSearchParams returns validation errors with details', async () => {
+    const request = makeRequest({ url: 'http://localhost/api/test?limit=bad' });
+    const result = readValidatedSearchParams(request, z.object({
+      limit: z.coerce.number().int(),
+    }));
+
+    expect(result.success).toBe(false);
+    expect(result.response.status).toBe(400);
+  });
+
   it('withErrorHandler wraps thrown errors into 500 responses', async () => {
     const request = makeRequest();
     const handler = withErrorHandler(async () => {
@@ -111,6 +135,6 @@ describe('api route middleware helpers', () => {
 
     const response = await handler(request);
     expect(response.status).toBe(500);
-    await expect(response.json()).resolves.toEqual({ error: 'Internal server error' });
+    await expect(response.json()).resolves.toMatchObject({ ok: false, error: 'Internal server error', status: 500 });
   });
 });

@@ -2,6 +2,8 @@ import { normalizePlainText } from '@/lib/text-sanitize';
 
 export const PLATFORM_TYPES = ['htb', 'thm', 'ctfd'];
 
+import pkg from '../../package.json';
+
 const MCP_PROTOCOL_VERSION = '2025-06-18';
 
 function normalizePlatformType(value) {
@@ -242,7 +244,7 @@ async function initializeHtbSession(token, baseUrl) {
         capabilities: {},
         clientInfo: {
           name: 'helms-watch',
-          version: '0.3.0',
+          version: String(pkg.version || '0.0.0'),
         },
       },
     }),

@@ -9,7 +9,7 @@
 
 > Desktop-first cyber lab workspace for commands, evidence, AI-assisted analysis, and export-ready writeups.
 >
-> **Current Version:** `v0.3.0`  
+> **Current Version:** `v0.4.0`  
 > [Changelog](./CHANGELOG.md) | [Roadmap](./docs/ROADMAP.md) | [Improvement Backlog](./docs/improvement-backlog.md)
 
 ## Overview
@@ -76,7 +76,7 @@ The current product name is **Helm's Watch**. Some runtime identifiers still use
 - Security controls for command execution, admin APIs, API token enforcement, CSRF enforcement, and CSP headers.
 - Structured JSON logging is available via `LOG_FORMAT=json`.
 - Repo-level GitHub Actions for CI, tests, security scanning, CodeQL, and changelog enforcement.
-- Bundled operator tooling includes SearchSploit in Docker, with Exploit-DB and Metasploit references exposed in the toolbox/cheatsheet.
+- Bundled operator tooling includes SearchSploit in Docker, with Exploit-DB references and capability-gated local tool templates exposed in the toolbox/cheatsheet.
 - Docker runtime also bundles `john` and `hashcat` for the credential hash-identification workflow.
 
 ## Stack

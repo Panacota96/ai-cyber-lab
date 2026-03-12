@@ -38,11 +38,16 @@ export async function readJsonBody(request, fallback = {}) {
   }
 }
 
-function readSessionIdFromQuery(request, key) {
-  const url = new URL(request.url);
-  const searchParams = url.searchParams;
+export function readSearchParams(request) {
+  const meta = getOrInitMeta(request);
+  if (meta.searchParams) return meta.searchParams;
+  const searchParams = new URL(request.url).searchParams;
   setMeta(request, { searchParams });
-  const value = searchParams.get(key);
+  return searchParams;
+}
+
+function readSessionIdFromQuery(request, key) {
+  const value = readSearchParams(request).get(key);
   return value ?? null;
 }
 
@@ -61,6 +66,57 @@ export function withErrorHandler(handler, { route = 'API route' } = {}) {
       return apiError('Internal server error', 500);
     }
   };
+}
+
+function zodIssues(error) {
+  if (Array.isArray(error?.issues)) return error.issues;
+  if (Array.isArray(error?.errors)) return error.errors;
+  return [];
+}
+
+function searchParamsToObject(searchParams) {
+  const output = {};
+  searchParams.forEach((value, key) => {
+    if (!(key in output)) {
+      output[key] = value;
+      return;
+    }
+    if (Array.isArray(output[key])) {
+      output[key].push(value);
+      return;
+    }
+    output[key] = [output[key], value];
+  });
+  return output;
+}
+
+export function validationError(error, message = 'Validation failed') {
+  return apiError(message, 400, { details: zodIssues(error) });
+}
+
+export async function readValidatedJsonBody(request, schema, options = {}) {
+  const {
+    fallback = {},
+    errorMessage = 'Validation failed',
+  } = options;
+  const body = await readJsonBody(request, fallback);
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    return { success: false, response: validationError(parsed.error, errorMessage) };
+  }
+  setMeta(request, { body: parsed.data });
+  return { success: true, data: parsed.data };
+}
+
+export function readValidatedSearchParams(request, schema, options = {}) {
+  const {
+    errorMessage = 'Validation failed',
+  } = options;
+  const parsed = schema.safeParse(searchParamsToObject(readSearchParams(request)));
+  if (!parsed.success) {
+    return { success: false, response: validationError(parsed.error, errorMessage) };
+  }
+  return { success: true, data: parsed.data };
 }
 
 export function withAuth(handler) {

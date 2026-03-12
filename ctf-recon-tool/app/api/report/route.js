@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server';
 import { getSession, getTimeline as getTimelineEvents, listCredentials, listPocSteps, listFindings } from '@/lib/db';
 import { normalizeReportFilters } from '@/lib/finding-intelligence';
 import { labReport, executiveSummary, technicalWalkthrough, ctfSolution, bugBountyReport, pentestReport } from '@/lib/report-formats';
-import { isValidSessionId } from '@/lib/security';
 import { apiError } from '@/lib/api-error';
+import { readValidatedSearchParams, withErrorHandler } from '@/lib/api-route';
+import { logger } from '@/lib/logger';
+import { ReportQuerySchema } from '@/lib/route-contracts';
 import { normalizeAnalystName } from '@/lib/text-sanitize';
 
 const FORMATS = {
@@ -24,22 +26,27 @@ function parseBoolean(value, fallback = false) {
   return fallback;
 }
 
-export async function GET(request) {
-  const { searchParams } = new URL(request.url);
-  const sessionId = searchParams.get('sessionId');
-  const format = searchParams.get('format') || 'technical-walkthrough';
-  const analystName = normalizeAnalystName(searchParams.get('analystName'));
+export const GET = withErrorHandler(async (request) => {
+  const parsed = readValidatedSearchParams(request, ReportQuerySchema);
+  if (!parsed.success) return parsed.response;
+
+  const {
+    sessionId,
+    format = 'technical-walkthrough',
+    analystName: rawAnalystName,
+    minimumSeverity,
+    tag,
+    techniqueId,
+    includeDuplicates,
+  } = parsed.data;
+  const analystName = normalizeAnalystName(rawAnalystName);
   const generatedAt = new Date();
   const reportFilters = normalizeReportFilters({
-    minimumSeverity: searchParams.get('minimumSeverity'),
-    tag: searchParams.get('tag'),
-    techniqueId: searchParams.get('techniqueId'),
-    includeDuplicates: parseBoolean(searchParams.get('includeDuplicates'), false),
+    minimumSeverity,
+    tag,
+    techniqueId,
+    includeDuplicates: parseBoolean(includeDuplicates, false),
   });
-
-  if (!sessionId || !isValidSessionId(sessionId)) {
-    return apiError('Session ID required', 400);
-  }
 
   try {
     const session = getSession(sessionId);
@@ -66,7 +73,7 @@ export async function GET(request) {
 
     return NextResponse.json({ report, reportFilters });
   } catch (error) {
-    console.error('Report generation failed', error);
+    logger.error('Report generation failed', error);
     return apiError('Internal Server Error', 500);
   }
-}
+}, { route: '/api/report GET' });

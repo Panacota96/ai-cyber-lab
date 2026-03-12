@@ -4,16 +4,24 @@ All notable changes to Helm's Watch are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-12
+
 ### Added
-- Wave 10 `EX.6`: bounded command queueing with `MAX_CONCURRENT_COMMANDS` (`1..16`, default `2`) and `queued -> running` lifecycle handling.
-- Queued-command cancellation support in `/api/execute/cancel` for events that have not started.
-- Shared API middleware helpers in `app/lib/api-route.js`: `withAuth`, `withValidSessionId`, `withErrorHandler`, `readJsonBody`, and route meta helpers.
-- G.1 Phase 2 tests: `security.test.js`, `api-route.test.js`, `execute-queue.test.js`, plus execute-route integration coverage for queue/auth/session middleware behavior.
+- Waves 10.5-19B now ship in the `v0.4.0` line, including SSE execution streaming, credential management and verification, Nmap/XML intelligence, shell and artifact operations, multi-target sessions, richer reporting, platform sync, and the experimental offline/adversarial AI tracks.
+- Wave 20 initial architecture/contracts slice: shared zod-backed request contracts for session, report, report-template, and writeup-enhancement routes.
+- Shared route-validation helpers for parsed JSON/query input plus reusable validation-error details in `app/lib/api-route.js`.
+- New integration coverage for session-route contracts plus validation-path coverage for report templates and writeup enhancement.
+- Additional Wave 20 contract coverage for report comparison, executive-summary, remediation, and writeup-share routes.
 
 ### Changed
-- Core routes now use shared middleware patterns for consistent auth/session/error handling (`execute`, `timeline`, `findings`, `graph`, `poc`, `flags`, `sessions`, `writeup`, `upload`, `ai/usage`, `coach/feedback`).
-- `POST /api/execute` and `POST /api/execute/retry/:eventId` may now return `queued` events when concurrency slots are saturated.
-- API docs and README env docs now describe queue semantics and `MAX_CONCURRENT_COMMANDS`.
+- Project metadata, READMEs, template docs, HTB example docs, health/docs metadata, and the HTB MCP client version now align on release `v0.4.0`.
+- `apiError()` now emits one additive error envelope shape across routes: `ok: false`, `error`, `status`, and optional `details`.
+- `/api/sessions`, `/api/report`, `/api/report/templates`, `/api/report/compare`, `/api/report/executive-summary`, `/api/report/remediation`, `/api/writeup/share`, and `/api/writeup/enhance` now use shared route contracts instead of ad hoc inline request parsing.
+- Roadmap planning now extends past Wave 19B and marks Wave 20 architecture/contracts work as in progress.
+
+### Fixed
+- Invalid session/report/template/writeup payloads now fail early with consistent 400 responses and zod issue details instead of route-specific ad hoc errors.
+- Invalid report-comparison, executive-summary, remediation, and share-management payloads now fail through the same shared validation envelope instead of route-specific parsing branches.
 
 ## [0.3.0] - 2026-03-10
 

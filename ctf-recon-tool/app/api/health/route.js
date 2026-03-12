@@ -6,6 +6,10 @@ import pkg from '../../../package.json';
 import { config } from '@/lib/config';
 import { getOfflineProviderStatus } from '@/lib/ai-provider-runtime';
 import { getPlatformCapabilities } from '@/lib/platform-adapters';
+import { SUGGESTIONS } from '@/lib/constants';
+import { CHEATSHEET } from '@/lib/cheatsheet';
+import { collectToolRequirements } from '@/domains/toolbox/lib/capabilities';
+import { isToolAvailable } from '@/lib/tool-availability';
 import {
   isAdminApiEnabled,
   isAdversarialChallengeModeEnabled,
@@ -17,6 +21,10 @@ import {
 } from '@/lib/security';
 
 export async function GET() {
+  const toolAvailability = Object.fromEntries(
+    collectToolRequirements(SUGGESTIONS, CHEATSHEET)
+      .map((binary) => [binary, isToolAvailable(binary)])
+  );
   const result = {
     status: 'ok',
     version: pkg.version,
@@ -32,6 +40,7 @@ export async function GET() {
     disk: {
       dataDir: fs.existsSync(path.join(process.cwd(), 'data')) ? 'ok' : 'missing',
     },
+    toolAvailability,
     features: {
       commandExecutionEnabled: isCommandExecutionEnabled(),
       shellHubEnabled: isShellHubEnabled(),

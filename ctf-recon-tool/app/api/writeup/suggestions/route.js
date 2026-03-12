@@ -1,29 +1,36 @@
 import { NextResponse } from 'next/server';
-import { listWriteupSuggestions } from '@/lib/db';
+import { listWriteupSuggestions } from '@/lib/repositories/report-repository';
 import { apiError } from '@/lib/api-error';
 import { isAutoWriteupSuggestionsEnabled } from '@/lib/security';
 import {
-  getRouteMeta,
+  readValidatedSearchParams,
+  readValidatedJsonBody,
   withAuth,
   withErrorHandler,
-  withValidSessionId,
 } from '@/lib/api-route';
+import { WriteupSuggestionListQuerySchema } from '@/lib/route-contracts';
 
 export const GET = withErrorHandler(
-  withValidSessionId(async (request) => {
+  async (request) => {
+    const parsed = readValidatedSearchParams(request, WriteupSuggestionListQuerySchema);
+    if (!parsed.success) return parsed.response;
     if (!isAutoWriteupSuggestionsEnabled()) {
       return NextResponse.json({ suggestions: [] });
     }
-    const { sessionId } = getRouteMeta(request);
+    const { sessionId } = parsed.data;
     const suggestions = listWriteupSuggestions(sessionId, { limit: 40 });
     return NextResponse.json({ suggestions });
-  }, { source: 'query' }),
+  },
   { route: '/api/writeup/suggestions GET' }
 );
 
 export const POST = withErrorHandler(
   withAuth(
-    withValidSessionId(async () => apiError('Unsupported action', 405), { source: 'body' })
+    async (request) => {
+      const parsed = await readValidatedJsonBody(request, WriteupSuggestionListQuerySchema);
+      if (!parsed.success) return parsed.response;
+      return apiError('Unsupported action', 405);
+    }
   ),
   { route: '/api/writeup/suggestions POST' }
 );

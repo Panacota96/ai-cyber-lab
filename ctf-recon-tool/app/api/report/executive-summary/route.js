@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { apiError } from '@/lib/api-error';
-import { getRouteMeta, readJsonBody, withAuth, withErrorHandler, withValidSessionId } from '@/lib/api-route';
+import { readValidatedJsonBody, withAuth, withErrorHandler } from '@/lib/api-route';
 import { normalizeReportFilters } from '@/lib/finding-intelligence';
 import { getSession, getTimeline, listFindings } from '@/lib/db';
 import { buildExecutiveSummaryFallback } from '@/lib/report-assistant';
 import { completeReportAiText, resolveReportAiKey } from '@/lib/report-ai';
+import { ExecutiveSummaryRequestSchema } from '@/lib/route-contracts';
 
 function buildExecutiveSummaryPrompt(session, timeline, findings, reportFilters) {
   const commands = timeline.filter((event) => event?.type === 'command').length;
@@ -37,12 +38,16 @@ function buildExecutiveSummaryPrompt(session, timeline, findings, reportFilters)
 
 export const POST = withErrorHandler(
   withAuth(
-    withValidSessionId(async (request) => {
-      const { sessionId } = getRouteMeta(request);
-      const body = await readJsonBody(request, {});
-      const provider = String(body?.provider || 'claude').trim().toLowerCase();
-      const apiKey = String(body?.apiKey || '');
-      const reportFilters = normalizeReportFilters(body?.reportFilters || {});
+    async (request) => {
+      const parsed = await readValidatedJsonBody(request, ExecutiveSummaryRequestSchema);
+      if (!parsed.success) return parsed.response;
+      const {
+        sessionId,
+        provider,
+        apiKey,
+        reportFilters: rawReportFilters,
+      } = parsed.data;
+      const reportFilters = normalizeReportFilters(rawReportFilters);
       const session = getSession(sessionId);
       if (!session) return apiError('Session not found', 404);
 
@@ -73,7 +78,7 @@ export const POST = withErrorHandler(
           error: error.message,
         });
       }
-    }, { source: 'body', fallback: '' })
+    }
   ),
   { route: '/api/report/executive-summary POST' }
 );

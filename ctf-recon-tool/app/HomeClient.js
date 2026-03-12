@@ -11,6 +11,9 @@ import ShellHub from '@/components/shells/ShellHub';
 import ServiceSuggestionsPanel from '@/components/sidebar/ServiceSuggestionsPanel';
 import CommandEventCard from '@/components/timeline/CommandEventCard';
 import TimelineFilterBar from '@/components/timeline/TimelineFilterBar';
+import { filterCheatsheetTools, filterSuggestionGroups } from '@/domains/toolbox/lib/capabilities';
+import { useReportAutosave } from '@/domains/reporting/hooks/useReportAutosave';
+import { useReportResources } from '@/domains/reporting/hooks/useReportResources';
 import { useApiClient } from '@/hooks/useApiClient';
 import { useArtifacts } from '@/hooks/useArtifacts';
 import { useExecutionStream } from '@/hooks/useExecutionStream';
@@ -36,6 +39,14 @@ import {
   findInlineOperatorSuggestion,
   rankOperatorSuggestions,
 } from '@/lib/operator-suggestions';
+import {
+  markdownToReportBlocks,
+  newCodeBlock,
+  newImageBlock,
+  newSectionBlock,
+  reportBlocksToMarkdown,
+  reportFormatLabel,
+} from '@/lib/report-blocks';
 import { applyTemplatePlaceholders, buildReportTemplateContext } from '@/lib/report-template-utils';
 import { escapeMarkdownInline, normalizePlainText } from '@/lib/text-sanitize';
 import {
@@ -51,7 +62,7 @@ import {
   parseTimelineMutationResponse,
   sanitizeTimelineEvents,
 } from '@/lib/timeline-client';
-import { buildReportAutosaveKey, chooseReportDraftSource, parseAutosavePayload } from '@/lib/report-autosave';
+import { chooseReportDraftSource } from '@/lib/report-autosave';
 import { getTimelineScrollState, shouldFollowTimeline } from '@/lib/timeline-scroll';
 
 // Lazy-load DiscoveryGraph (React Flow requires client-only; no SSR)
@@ -180,165 +191,6 @@ function groupCredentialVerifications(entries = []) {
     acc[key].push(entry);
     return acc;
   }, {});
-}
-
-function newSectionBlock(title = 'Section', content = '') {
-  return { id: makeBlockId('sec'), blockType: 'section', title, content };
-}
-
-function newCodeBlock(title = 'Code Snippet', content = '', language = 'bash') {
-  return { id: makeBlockId('code'), blockType: 'code', title, content, language };
-}
-
-function newImageBlock(title = 'Screenshot Evidence', imageUrl = '', alt = 'Screenshot', caption = '', content = '') {
-  return { id: makeBlockId('img'), blockType: 'image', title, imageUrl, alt, caption, content };
-}
-
-function reportBlocksToMarkdown(blocks) {
-  if (!Array.isArray(blocks) || blocks.length === 0) return '';
-
-  return blocks.map((block) => {
-    if (block.blockType === 'code') {
-      const title = (block.title || 'Code Snippet').trim();
-      const lang = (block.language || 'bash').trim();
-      const body = (block.content || '').trim();
-      return `### ${title}\n\`\`\`${lang}\n${body}\n\`\`\``;
-    }
-
-    if (block.blockType === 'image') {
-      const title = (block.title || 'Screenshot Evidence').trim();
-      const alt = (block.alt || 'Screenshot').trim();
-      const imageUrl = (block.imageUrl || '').trim();
-      const caption = (block.caption || '').trim();
-      const notes = (block.content || '').trim();
-      const parts = [
-        `### ${title}`,
-        imageUrl ? `![${alt}](${imageUrl})` : '_No image selected_',
-      ];
-      if (caption) parts.push(`*${caption}*`);
-      if (notes) parts.push(notes);
-      return parts.join('\n\n');
-    }
-
-    const title = (block.title || 'Section').trim();
-    const body = (block.content || '').trim();
-    return `## ${title}\n${body}`;
-  }).join('\n\n').trim();
-}
-
-function markdownToReportBlocks(markdown) {
-  const source = String(markdown || '').replace(/\r\n/g, '\n').trim();
-  if (!source) {
-    return [newSectionBlock('Walkthrough', '')];
-  }
-
-  const lines = source.split('\n');
-  const blocks = [];
-  let currentSection = null;
-  let pendingTitle = '';
-
-  const pushCurrentSection = () => {
-    if (!currentSection) return;
-    const content = currentSection.content.join('\n').trim();
-    if (currentSection.title || content) {
-      blocks.push(newSectionBlock(currentSection.title || 'Section', content));
-    }
-    currentSection = null;
-  };
-
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
-
-    if (trimmed.startsWith('# ')) {
-      if (trimmed.slice(2).trim()) pendingTitle = trimmed.slice(2).trim();
-      i++;
-      continue;
-    }
-
-    const heading2 = trimmed.match(/^##\s+(.+)$/);
-    if (heading2) {
-      pushCurrentSection();
-      currentSection = { title: heading2[1].trim(), content: [] };
-      i++;
-      continue;
-    }
-
-    const heading3 = trimmed.match(/^###\s+(.+)$/);
-    if (heading3) {
-      pushCurrentSection();
-      pendingTitle = heading3[1].trim();
-      i++;
-      continue;
-    }
-
-    const codeFence = trimmed.match(/^```([\w+-]+)?$/);
-    if (codeFence) {
-      pushCurrentSection();
-      const language = (codeFence[1] || 'bash').trim();
-      i++;
-      const codeLines = [];
-      while (i < lines.length && !lines[i].trim().startsWith('```')) {
-        codeLines.push(lines[i]);
-        i++;
-      }
-      if (i < lines.length) i++;
-      blocks.push(newCodeBlock(pendingTitle || 'Code Snippet', codeLines.join('\n').trim(), language));
-      pendingTitle = '';
-      continue;
-    }
-
-    const imageMatch = trimmed.match(/^!\[(.*?)\]\((.*?)\)$/);
-    if (imageMatch) {
-      pushCurrentSection();
-      let caption = '';
-      let lookahead = i + 1;
-      while (lookahead < lines.length && lines[lookahead].trim() === '') lookahead++;
-      if (lookahead < lines.length) {
-        const capMatch = lines[lookahead].trim().match(/^\*(.+)\*$/);
-        if (capMatch) {
-          caption = capMatch[1].trim();
-          i = lookahead;
-        }
-      }
-      blocks.push(newImageBlock(
-        pendingTitle || 'Screenshot Evidence',
-        imageMatch[2].trim(),
-        (imageMatch[1] || 'Screenshot').trim(),
-        caption,
-        ''
-      ));
-      pendingTitle = '';
-      i++;
-      continue;
-    }
-
-    if (!currentSection) {
-      currentSection = { title: pendingTitle || 'Walkthrough', content: [] };
-      pendingTitle = '';
-    }
-    currentSection.content.push(line);
-    i++;
-  }
-
-  pushCurrentSection();
-  if (blocks.length === 0) {
-    blocks.push(newSectionBlock(pendingTitle || 'Walkthrough', source));
-  }
-  return blocks;
-}
-
-function reportFormatLabel(format) {
-  const labels = {
-    'lab-report': 'Lab Report',
-    'executive-summary': 'Executive Summary',
-    'technical-walkthrough': 'Technical Walkthrough',
-    'ctf-solution': 'CTF Solution',
-    'bug-bounty': 'Bug Bounty',
-    pentest: 'Pentest Report',
-  };
-  return labels[String(format || 'technical-walkthrough')] || String(format || 'technical-walkthrough');
 }
 
 const TIMELINE_AUTO_EXPAND_COUNT = 5;
@@ -773,15 +625,6 @@ export default function Home() {
   const [reportDraft, setReportDraft] = useState('');
   const [reportBlocks, setReportBlocks] = useState([newSectionBlock('Walkthrough', '')]);
   const [selectedReportBlocks, setSelectedReportBlocks] = useState([]);
-  const [reportTemplates, setReportTemplates] = useState([]);
-  const [selectedReportTemplateId, setSelectedReportTemplateId] = useState('');
-  const [reportTemplateName, setReportTemplateName] = useState('');
-  const [reportTemplateDescription, setReportTemplateDescription] = useState('');
-  const [reportTemplatesLoading, setReportTemplatesLoading] = useState(false);
-  const [reportTemplateBusy, setReportTemplateBusy] = useState(false);
-  const [reportShares, setReportShares] = useState([]);
-  const [reportSharesLoading, setReportSharesLoading] = useState(false);
-  const [reportShareBusy, setReportShareBusy] = useState(false);
   const [compareAgainstSessionId, setCompareAgainstSessionId] = useState('');
   const [reportCompareBusy, setReportCompareBusy] = useState(false);
   const [executiveSummaryBusy, setExecutiveSummaryBusy] = useState(false);
@@ -808,17 +651,12 @@ export default function Home() {
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [aiProvider, setAiProvider] = useState('claude');
   const [aiSkill, setAiSkill] = useState('enhance');
-  const [writeupSuggestions, setWriteupSuggestions] = useState([]);
-  const [writeupSuggestionsLoading, setWriteupSuggestionsLoading] = useState(false);
-  const [writeupSuggestionBusy, setWriteupSuggestionBusy] = useState({});
   const [analystName, setAnalystName] = useState('');
   const [analystNameError, setAnalystNameError] = useState(false);
   const [aiUsageSummary, setAiUsageSummary] = useState(null);
   const [apiKeys, setApiKeys] = useState({});
 
   // Version history modal
-  const [showVersionHistory, setShowVersionHistory] = useState(false);
-  const [writeupVersions, setWriteupVersions] = useState([]);
   const [prefsHydrated, setPrefsHydrated] = useState(false);
   const [todayLabel, setTodayLabel] = useState('');
 
@@ -843,9 +681,7 @@ export default function Home() {
   const graphToastRef = useRef({ reason: '', at: 0 });
   const shellErrorToastRef = useRef('');
   const artifactErrorToastRef = useRef('');
-  const writeupSuggestionToastRef = useRef({ readyCount: 0, sessionId: '' });
   const filterKeywordRef = useRef(null);
-  const reportAutosaveSignatureRef = useRef('');
   const { apiFetch, ensureCsrfToken } = useApiClient();
   const { toasts, pushToast, dismissToast } = useToastQueue();
   const shellHubEnabled = healthData?.features?.shellHubEnabled === true;
@@ -891,6 +727,33 @@ export default function Home() {
     createArtifactFromTranscript,
     deleteArtifact: deleteArtifactById,
   } = artifactsState;
+  const currentSessionData = sessions.find((session) => session.id === currentSession);
+  const linkedPlatform = platformLinkInfo.link || currentSessionData?.metadata?.platform || null;
+  const platformCapabilities = platformLinkInfo.capabilities || {};
+  const experimentalAiEnabled = healthData?.features?.experimentalAiEnabled === true;
+  const offlineAiEnabled = healthData?.features?.offlineAiEnabled === true;
+  const autoWriteupSuggestionsEnabled = healthData?.features?.autoWriteupSuggestionsEnabled === true;
+  const adversarialChallengeModeEnabled = healthData?.features?.adversarialChallengeModeEnabled === true;
+  const offlineProviderVisible = experimentalAiEnabled && offlineAiEnabled;
+  const adversarialCoachModeVisible = experimentalAiEnabled && adversarialChallengeModeEnabled;
+  const adversarialCoachModeActive = isAdversarialCoachSkill(coachSkill);
+  const autoWriteupSettings = getAutoWriteupSettings(currentSessionData);
+  const autoWriteupProvider = autoWriteupSettings.provider || 'claude';
+  const activePlatformCapability = linkedPlatform?.type ? platformCapabilities[linkedPlatform.type] : null;
+  const currentSessionTargets = getSessionTargets(currentSessionData);
+  const primarySessionTarget = getPrimarySessionTargetValue(currentSessionData);
+  const activeSessionTarget = currentSessionTargets.find((target) => target.id === activeTargetId)
+    || primarySessionTarget
+    || null;
+  const activeTargetValue = activeSessionTarget?.target?.trim()
+    || currentSessionData?.target?.trim()
+    || '';
+  const enrichedFindings = useMemo(() => enrichFindings(findings), [findings]);
+  const normalizedReportFilters = useMemo(() => normalizeReportFilters(reportFilters), [reportFilters]);
+  const reportScopedFindings = useMemo(
+    () => filterFindings(findings, normalizedReportFilters),
+    [findings, normalizedReportFilters]
+  );
 
   const openCommandPalette = useCallback((seed = '') => {
     setCommandPaletteQuery(String(seed || '').trim());
@@ -995,61 +858,6 @@ export default function Home() {
       setAiUsageSummary(null);
     }
   }, [currentSession, apiFetch]);
-
-  const fetchReportTemplates = useCallback(async () => {
-    try {
-      setReportTemplatesLoading(true);
-      const res = await apiFetch(`/api/report/templates?sessionId=${currentSession}&format=${encodeURIComponent(reportFormat)}`);
-      if (!res.ok) {
-        setReportTemplates([]);
-        return;
-      }
-      const data = await res.json();
-      setReportTemplates(Array.isArray(data?.templates) ? data.templates : []);
-    } catch (_) {
-      setReportTemplates([]);
-    } finally {
-      setReportTemplatesLoading(false);
-    }
-  }, [apiFetch, currentSession, reportFormat]);
-
-  const fetchReportShares = useCallback(async () => {
-    try {
-      setReportSharesLoading(true);
-      const res = await apiFetch(`/api/writeup/share?sessionId=${currentSession}`);
-      if (!res.ok) {
-        setReportShares([]);
-        return;
-      }
-      const data = await res.json();
-      setReportShares(Array.isArray(data?.shares) ? data.shares : []);
-    } catch (_) {
-      setReportShares([]);
-    } finally {
-      setReportSharesLoading(false);
-    }
-  }, [apiFetch, currentSession]);
-
-  const fetchWriteupSuggestions = useCallback(async ({ silent = false } = {}) => {
-    if (!currentSession || !autoWriteupSuggestionsEnabled) {
-      setWriteupSuggestions([]);
-      return;
-    }
-    try {
-      if (!silent) setWriteupSuggestionsLoading(true);
-      const res = await apiFetch(`/api/writeup/suggestions?sessionId=${currentSession}`);
-      if (!res.ok) {
-        setWriteupSuggestions([]);
-        return;
-      }
-      const data = await res.json().catch(() => ({}));
-      setWriteupSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
-    } catch (_) {
-      setWriteupSuggestions([]);
-    } finally {
-      if (!silent) setWriteupSuggestionsLoading(false);
-    }
-  }, [apiFetch, autoWriteupSuggestionsEnabled, currentSession]);
 
   const fetchPocSteps = useCallback(async () => {
     try {
@@ -1182,6 +990,116 @@ export default function Home() {
     }
   }, [apiFetch]);
 
+  const applyReportBlocks = useCallback((nextBlocks) => {
+    const normalized = Array.isArray(nextBlocks) && nextBlocks.length > 0
+      ? nextBlocks
+      : [newSectionBlock('Walkthrough', '')];
+    setReportBlocks(normalized);
+    setReportDraft(reportBlocksToMarkdown(normalized));
+  }, []);
+
+  const loadReportPayload = useCallback((payload) => {
+    const content = String(payload?.content || '');
+    if (Array.isArray(payload?.contentJson) && payload.contentJson.length > 0) {
+      applyReportBlocks(payload.contentJson);
+      return;
+    }
+    applyReportBlocks(markdownToReportBlocks(content));
+  }, [applyReportBlocks]);
+
+  const getReportMarkdownWithPoc = useCallback((blocks = reportBlocks) => {
+    const baseMarkdown = reportBlocksToMarkdown(blocks).trim();
+    const formatNeedsEvidence = reportFormat === 'technical-walkthrough' || reportFormat === 'pentest';
+    if (!formatNeedsEvidence) {
+      return baseMarkdown;
+    }
+
+    let nextMarkdown = baseMarkdown;
+
+    if (pocSteps.length > 0 && !/^##\s+Proof of Concept\b/im.test(nextMarkdown)) {
+      const pocSection = buildPocSectionMarkdown(currentSession, pocSteps);
+      if (pocSection) {
+        nextMarkdown = nextMarkdown ? `${nextMarkdown}\n\n${pocSection}` : pocSection;
+      }
+    }
+
+    if (reportScopedFindings.length > 0 && !/^##\s+Findings\b/im.test(nextMarkdown)) {
+      const findingsSection = buildFindingsSectionMarkdown(findings, normalizedReportFilters);
+      if (findingsSection) {
+        nextMarkdown = nextMarkdown ? `${nextMarkdown}\n\n${findingsSection}` : findingsSection;
+      }
+    }
+
+    return nextMarkdown;
+  }, [currentSession, findings, normalizedReportFilters, pocSteps, reportBlocks, reportFormat, reportScopedFindings.length]);
+
+  const {
+    readLocalReportDraft,
+    clearLocalReportDraft,
+    markReportAutosaveSignature,
+  } = useReportAutosave({
+    sessionId: currentSession,
+    reportFormat,
+    reportBlocks,
+    showReportModal,
+    prefsHydrated,
+  });
+
+  const handleLoadedWriteup = useCallback((payload, { openModal = false } = {}) => {
+    const content = String(payload?.content || '');
+    const nextBlocks = Array.isArray(payload?.contentJson) && payload.contentJson.length > 0
+      ? payload.contentJson
+      : markdownToReportBlocks(content);
+    loadReportPayload({ content, contentJson: nextBlocks });
+    setReportDraft(content || reportBlocksToMarkdown(nextBlocks));
+    markReportAutosaveSignature(nextBlocks);
+    if (openModal) setShowReportModal(true);
+  }, [loadReportPayload, markReportAutosaveSignature]);
+
+  const {
+    reportTemplates,
+    selectedReportTemplateId,
+    setSelectedReportTemplateId,
+    reportTemplateName,
+    setReportTemplateName,
+    reportTemplateDescription,
+    setReportTemplateDescription,
+    reportTemplatesLoading,
+    reportTemplateBusy,
+    reportShares,
+    reportSharesLoading,
+    reportShareBusy,
+    writeupSuggestions,
+    writeupSuggestionsLoading,
+    writeupSuggestionBusy,
+    showVersionHistory,
+    setShowVersionHistory,
+    writeupVersions,
+    refreshWriteupSuggestions,
+    applyQueuedWriteupSuggestion,
+    dismissQueuedWriteupSuggestion,
+    saveReportTemplate,
+    deleteSelectedReportTemplate,
+    createReportShare,
+    revokeReportShare,
+    loadVersionHistory,
+    restoreVersion,
+  } = useReportResources({
+    sessionId: currentSession,
+    sessionData: currentSessionData,
+    showReportModal,
+    reportFormat,
+    reportBlocks,
+    normalizedReportFilters,
+    analystName,
+    autoWriteupEnabled: autoWriteupSettings.enabled,
+    autoWriteupSuggestionsEnabled,
+    apiFetch,
+    pushToast,
+    getReportMarkdown: getReportMarkdownWithPoc,
+    onWriteupLoaded: handleLoadedWriteup,
+  });
+
   const clearTimelineFilters = useCallback(() => {
     setFilterType(DEFAULT_TIMELINE_FILTERS.type);
     setFilterStatus(DEFAULT_TIMELINE_FILTERS.status);
@@ -1273,51 +1191,6 @@ export default function Home() {
   useEffect(() => { fetchPlatformLink(); }, [fetchPlatformLink]);
   useEffect(() => { fetchWordlists(''); }, [fetchWordlists, currentSession]);
   useEffect(() => { void ensureCsrfToken(); }, [ensureCsrfToken]);
-  useEffect(() => {
-    if (!showReportModal) return;
-    void fetchReportTemplates();
-    void fetchReportShares();
-  }, [fetchReportShares, fetchReportTemplates, reportFormat, showReportModal]);
-  useEffect(() => {
-    if (!autoWriteupSuggestionsEnabled || !currentSession || !autoWriteupSettings.enabled) {
-      setWriteupSuggestions([]);
-      writeupSuggestionToastRef.current = { readyCount: 0, sessionId: currentSession || '' };
-      return;
-    }
-    void fetchWriteupSuggestions();
-  }, [autoWriteupSettings.enabled, autoWriteupSuggestionsEnabled, currentSession, fetchWriteupSuggestions]);
-  useEffect(() => {
-    if (!autoWriteupSuggestionsEnabled || !currentSession || !autoWriteupSettings.enabled) return undefined;
-    const interval = setInterval(() => {
-      void fetchWriteupSuggestions({ silent: true });
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [autoWriteupSettings.enabled, autoWriteupSuggestionsEnabled, currentSession, fetchWriteupSuggestions]);
-  useEffect(() => {
-    if (!currentSession || !autoWriteupSettings.enabled) return;
-    const readyCount = autoWriteupSuggestionReady.length;
-    const previous = writeupSuggestionToastRef.current;
-    if (previous.sessionId !== currentSession) {
-      writeupSuggestionToastRef.current = { readyCount, sessionId: currentSession };
-      return;
-    }
-    if (readyCount > previous.readyCount) {
-      pushToast({
-        tone: 'info',
-        title: 'Writeup suggestion ready',
-        message: `${readyCount} reviewable AI patch suggestion${readyCount === 1 ? '' : 's'} available.`,
-        durationMs: 3200,
-      });
-    }
-    writeupSuggestionToastRef.current = { readyCount, sessionId: currentSession };
-  }, [autoWriteupSettings.enabled, autoWriteupSuggestionReady.length, currentSession, pushToast]);
-
-  useEffect(() => {
-    const template = reportTemplates.find((entry) => entry.id === selectedReportTemplateId);
-    if (!template) return;
-    setReportTemplateName(template.name || '');
-    setReportTemplateDescription(template.description || '');
-  }, [reportTemplates, selectedReportTemplateId]);
 
   useEffect(() => {
     const linkedPlatform = platformLinkInfo.link || null;
@@ -1420,11 +1293,6 @@ export default function Home() {
     setFlagNotes('');
     setGraphRefreshToken(0);
     setReportFilters(DEFAULT_REPORT_FILTERS);
-    setReportTemplates([]);
-    setSelectedReportTemplateId('');
-    setReportTemplateName('');
-    setReportTemplateDescription('');
-    setReportShares([]);
     setCompareAgainstSessionId('');
     setShowCommandPalette(false);
     setCommandPaletteQuery('');
@@ -2418,23 +2286,6 @@ export default function Home() {
     setReportFilters((prev) => normalizeReportFilters({ ...prev, ...patch }));
   }, []);
 
-  const applyReportBlocks = useCallback((nextBlocks) => {
-    const normalized = Array.isArray(nextBlocks) && nextBlocks.length > 0
-      ? nextBlocks
-      : [newSectionBlock('Walkthrough', '')];
-    setReportBlocks(normalized);
-    setReportDraft(reportBlocksToMarkdown(normalized));
-  }, []);
-
-  const loadReportPayload = useCallback((payload) => {
-    const content = String(payload?.content || '');
-    if (Array.isArray(payload?.contentJson) && payload.contentJson.length > 0) {
-      applyReportBlocks(payload.contentJson);
-      return;
-    }
-    applyReportBlocks(markdownToReportBlocks(content));
-  }, [applyReportBlocks]);
-
   const updateAutoWriteupSettings = useCallback(async (enabled) => {
     if (!currentSessionData?.id) return;
     const nextMetadata = buildSessionMetadataWithAutoWriteup(currentSessionData, {
@@ -2459,9 +2310,9 @@ export default function Home() {
         entry.id === data.id ? data : entry
       )));
       if (enabled) {
-        void fetchWriteupSuggestions();
+        void refreshWriteupSuggestions();
       } else {
-        setWriteupSuggestions([]);
+        void refreshWriteupSuggestions();
       }
       pushToast({
         tone: enabled ? 'success' : 'info',
@@ -2474,126 +2325,7 @@ export default function Home() {
     } catch (error) {
       console.error('Failed to update auto-writeup settings', error);
     }
-  }, [aiProvider, apiFetch, autoWriteupProvider, currentSessionData, fetchWriteupSuggestions, pushToast]);
-
-  const applyQueuedWriteupSuggestion = useCallback(async (suggestionId) => {
-    if (!suggestionId) return;
-    setWriteupSuggestionBusy((prev) => ({ ...prev, [suggestionId]: 'apply' }));
-    try {
-      const res = await apiFetch('/api/writeup/suggestions/apply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: currentSession,
-          suggestionId,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(data.error || 'Failed to apply suggestion.');
-        return;
-      }
-      if (data?.writeup) {
-        loadReportPayload(data.writeup);
-        setReportDraft(String(data.writeup.content || ''));
-        reportAutosaveSignatureRef.current = JSON.stringify(data.writeup.contentJson || markdownToReportBlocks(String(data.writeup.content || '')));
-        setShowReportModal(true);
-      }
-      await fetchWriteupSuggestions({ silent: true });
-      pushToast({
-        tone: 'success',
-        title: 'Suggestion applied',
-        message: 'The queued writeup patch was merged into the saved draft.',
-        durationMs: 3200,
-      });
-    } catch (error) {
-      console.error('Failed to apply queued writeup suggestion', error);
-    } finally {
-      setWriteupSuggestionBusy((prev) => {
-        const next = { ...prev };
-        delete next[suggestionId];
-        return next;
-      });
-    }
-  }, [apiFetch, currentSession, fetchWriteupSuggestions, loadReportPayload, pushToast]);
-
-  const dismissQueuedWriteupSuggestion = useCallback(async (suggestionId) => {
-    if (!suggestionId) return;
-    setWriteupSuggestionBusy((prev) => ({ ...prev, [suggestionId]: 'dismiss' }));
-    try {
-      const res = await apiFetch('/api/writeup/suggestions/dismiss', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: currentSession,
-          suggestionId,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(data.error || 'Failed to dismiss suggestion.');
-        return;
-      }
-      await fetchWriteupSuggestions({ silent: true });
-      pushToast({
-        tone: 'warning',
-        title: 'Suggestion dismissed',
-        message: 'The queued writeup patch was dismissed without changing the draft.',
-        durationMs: 2800,
-      });
-    } catch (error) {
-      console.error('Failed to dismiss queued writeup suggestion', error);
-    } finally {
-      setWriteupSuggestionBusy((prev) => {
-        const next = { ...prev };
-        delete next[suggestionId];
-        return next;
-      });
-    }
-  }, [apiFetch, currentSession, fetchWriteupSuggestions, pushToast]);
-
-  const readLocalReportDraft = useCallback((sessionId = currentSession, format = reportFormat) => {
-    try {
-      const rawValue = localStorage.getItem(buildReportAutosaveKey(sessionId, format));
-      return parseAutosavePayload(rawValue);
-    } catch {
-      return null;
-    }
-  }, [currentSession, reportFormat]);
-
-  const clearLocalReportDraft = useCallback((sessionId = currentSession, format = reportFormat) => {
-    try {
-      localStorage.removeItem(buildReportAutosaveKey(sessionId, format));
-    } catch {
-      // localStorage unavailable
-    }
-  }, [currentSession, reportFormat]);
-
-  const getReportMarkdownWithPoc = useCallback((blocks = reportBlocks) => {
-    const baseMarkdown = reportBlocksToMarkdown(blocks).trim();
-    const formatNeedsEvidence = reportFormat === 'technical-walkthrough' || reportFormat === 'pentest';
-    if (!formatNeedsEvidence) {
-      return baseMarkdown;
-    }
-
-    let nextMarkdown = baseMarkdown;
-
-    if (pocSteps.length > 0 && !/^##\s+Proof of Concept\b/im.test(nextMarkdown)) {
-      const pocSection = buildPocSectionMarkdown(currentSession, pocSteps);
-      if (pocSection) {
-        nextMarkdown = nextMarkdown ? `${nextMarkdown}\n\n${pocSection}` : pocSection;
-      }
-    }
-
-    if (reportScopedFindings.length > 0 && !/^##\s+Findings\b/im.test(nextMarkdown)) {
-      const findingsSection = buildFindingsSectionMarkdown(findings, normalizedReportFilters);
-      if (findingsSection) {
-        nextMarkdown = nextMarkdown ? `${nextMarkdown}\n\n${findingsSection}` : findingsSection;
-      }
-    }
-
-    return nextMarkdown;
-  }, [reportBlocks, reportFormat, pocSteps, reportScopedFindings.length, findings, currentSession, normalizedReportFilters]);
+  }, [aiProvider, apiFetch, autoWriteupProvider, currentSessionData, pushToast, refreshWriteupSuggestions]);
 
   const addReportBlock = (blockType = 'section') => {
     let newBlock = newSectionBlock('New Section', '');
@@ -2669,10 +2401,9 @@ export default function Home() {
         });
         if (draftChoice.source === 'local' && draftChoice.blocks) {
           applyReportBlocks(draftChoice.blocks);
-          reportAutosaveSignatureRef.current = JSON.stringify(draftChoice.blocks);
+          markReportAutosaveSignature(draftChoice.blocks);
         } else {
-          loadReportPayload(existing);
-          reportAutosaveSignatureRef.current = JSON.stringify(existing.contentJson || markdownToReportBlocks(String(existing.content || '')));
+          handleLoadedWriteup(existing);
         }
         setReportRestoreNotice(draftChoice.notice);
       } else {
@@ -2682,12 +2413,12 @@ export default function Home() {
         const data = await res.json();
         if (!forceRegenerate && localDraft?.blocks?.length) {
           applyReportBlocks(localDraft.blocks);
-          reportAutosaveSignatureRef.current = JSON.stringify(localDraft.blocks);
+          markReportAutosaveSignature(localDraft.blocks);
           setReportRestoreNotice('Recovered newer local draft.');
         } else if (data.report) {
           const generatedBlocks = markdownToReportBlocks(data.report);
           applyReportBlocks(generatedBlocks);
-          reportAutosaveSignatureRef.current = JSON.stringify(generatedBlocks);
+          markReportAutosaveSignature(generatedBlocks);
           setReportRestoreNotice('');
         }
       }
@@ -2704,7 +2435,7 @@ export default function Home() {
         const localDraft = readLocalReportDraft(currentSession, fmt);
         if (localDraft?.blocks?.length) {
           applyReportBlocks(localDraft.blocks);
-          reportAutosaveSignatureRef.current = JSON.stringify(localDraft.blocks);
+          markReportAutosaveSignature(localDraft.blocks);
           setSelectedReportBlocks([]);
           setReportRestoreNotice('Recovered newer local draft.');
           return;
@@ -2716,7 +2447,7 @@ export default function Home() {
         if (data.report) {
           const generatedBlocks = markdownToReportBlocks(data.report);
           applyReportBlocks(generatedBlocks);
-          reportAutosaveSignatureRef.current = JSON.stringify(generatedBlocks);
+          markReportAutosaveSignature(generatedBlocks);
           setSelectedReportBlocks([]);
           setReportRestoreNotice('');
         }
@@ -2741,57 +2472,12 @@ export default function Home() {
       });
       setReportDraft(markdown);
       clearLocalReportDraft(currentSession, reportFormat);
-      reportAutosaveSignatureRef.current = JSON.stringify(reportBlocks);
+      markReportAutosaveSignature(reportBlocks);
       setReportRestoreNotice('');
       setShowReportModal(false);
       alert('Write-up saved!');
     } catch (error) { console.error('Failed to save report', error); }
     finally { setIsLoading(false); }
-  };
-
-  const saveReportTemplate = async () => {
-    const templateName = reportTemplateName.trim() || `${currentSessionData?.name || currentSession} ${reportFormatLabel(reportFormat)}`;
-    try {
-      setReportTemplateBusy(true);
-      const markdown = getReportMarkdownWithPoc(reportBlocks);
-      const payload = {
-        sessionId: currentSession,
-        name: templateName,
-        description: reportTemplateDescription.trim(),
-        format: reportFormat,
-        content: markdown,
-        contentJson: reportBlocks,
-      };
-      const url = '/api/report/templates';
-      const method = selectedReportTemplateId ? 'PATCH' : 'POST';
-      const res = await apiFetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(selectedReportTemplateId ? { id: selectedReportTemplateId, ...payload } : payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(data.error || 'Failed to save template');
-        return;
-      }
-      const savedTemplate = data?.template;
-      if (savedTemplate?.id) {
-        setSelectedReportTemplateId(savedTemplate.id);
-        setReportTemplateName(savedTemplate.name || '');
-        setReportTemplateDescription(savedTemplate.description || '');
-      }
-      await fetchReportTemplates();
-      pushToast({
-        tone: 'success',
-        title: 'Template saved',
-        message: templateName,
-        durationMs: 2600,
-      });
-    } catch (error) {
-      console.error('Failed to save report template', error);
-    } finally {
-      setReportTemplateBusy(false);
-    }
   };
 
   const applySelectedReportTemplate = () => {
@@ -2812,33 +2498,6 @@ export default function Home() {
     applyReportBlocks(hydratedBlocks);
     setReportRestoreNotice(`Applied template: ${template.name}`);
     setSelectedReportBlocks([]);
-  };
-
-  const deleteSelectedReportTemplate = async () => {
-    if (!selectedReportTemplateId || !confirm('Delete this report template?')) return;
-    try {
-      setReportTemplateBusy(true);
-      const res = await apiFetch(`/api/report/templates?id=${encodeURIComponent(selectedReportTemplateId)}`, { method: 'DELETE' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(data.error || 'Failed to delete template');
-        return;
-      }
-      setSelectedReportTemplateId('');
-      setReportTemplateName('');
-      setReportTemplateDescription('');
-      await fetchReportTemplates();
-      pushToast({
-        tone: 'warning',
-        title: 'Template deleted',
-        message: 'The saved report template was removed.',
-        durationMs: 2400,
-      });
-    } catch (error) {
-      console.error('Failed to delete report template', error);
-    } finally {
-      setReportTemplateBusy(false);
-    }
   };
 
   const insertExecutiveSummary = async () => {
@@ -2904,80 +2563,6 @@ export default function Home() {
       console.error('Failed to load comparison report', error);
     } finally {
       setReportCompareBusy(false);
-    }
-  };
-
-  const createReportShare = async () => {
-    try {
-      setReportShareBusy(true);
-      const markdown = getReportMarkdownWithPoc(reportBlocks);
-      const meta = {
-        sessionName: currentSessionData?.name || currentSession,
-        target: currentSessionData?.target || '',
-        difficulty: currentSessionData?.difficulty || '',
-        objective: currentSessionData?.objective || '',
-      };
-      const res = await apiFetch('/api/writeup/share', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: currentSession,
-          title: `${currentSessionData?.name || currentSession} ${reportFormatLabel(reportFormat)}`,
-          format: reportFormat,
-          analystName: (analystName || '').trim() || 'Unknown',
-          reportMarkdown: markdown,
-          reportContentJson: reportBlocks,
-          reportFilters: normalizedReportFilters,
-          meta,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.share) {
-        alert(data.error || 'Failed to create share link');
-        return;
-      }
-      await fetchReportShares();
-      if (data.share.shareUrl) {
-        await navigator.clipboard.writeText(data.share.shareUrl).catch(() => {});
-      }
-      pushToast({
-        tone: 'success',
-        title: 'Share link created',
-        message: 'Copied the read-only report URL to the clipboard.',
-        durationMs: 3200,
-      });
-    } catch (error) {
-      console.error('Failed to create report share', error);
-    } finally {
-      setReportShareBusy(false);
-    }
-  };
-
-  const revokeReportShare = async (shareId) => {
-    if (!shareId || !confirm('Revoke this share link?')) return;
-    try {
-      setReportShareBusy(true);
-      const res = await apiFetch('/api/writeup/share', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: currentSession, id: shareId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(data.error || 'Failed to revoke share');
-        return;
-      }
-      await fetchReportShares();
-      pushToast({
-        tone: 'warning',
-        title: 'Share link revoked',
-        message: 'The public report URL has been disabled.',
-        durationMs: 2600,
-      });
-    } catch (error) {
-      console.error('Failed to revoke report share', error);
-    } finally {
-      setReportShareBusy(false);
     }
   };
 
@@ -3048,26 +2633,6 @@ export default function Home() {
       fetchAiUsage();
     }
   };
-
-  useEffect(() => {
-    if (!showReportModal || !prefsHydrated) return undefined;
-    const interval = setInterval(() => {
-      try {
-        const serializedBlocks = JSON.stringify(reportBlocks);
-        if (serializedBlocks === reportAutosaveSignatureRef.current) {
-          return;
-        }
-        localStorage.setItem(buildReportAutosaveKey(currentSession, reportFormat), JSON.stringify({
-          savedAt: new Date().toISOString(),
-          blocks: JSON.parse(serializedBlocks),
-        }));
-        reportAutosaveSignatureRef.current = serializedBlocks;
-      } catch {
-        // localStorage unavailable
-      }
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [showReportModal, prefsHydrated, currentSession, reportFormat, reportBlocks]);
 
   const runCoach = async ({ bypassCache = false } = {}) => {
     setIsCoaching(true);
@@ -3361,31 +2926,6 @@ export default function Home() {
     a.download = `${currentSession}-timeline.json`;
     a.click();
     URL.revokeObjectURL(url);
-  };
-
-  const loadVersionHistory = async () => {
-    try {
-      const res = await apiFetch(`/api/writeup/history?sessionId=${currentSession}`);
-      const data = await res.json();
-      setWriteupVersions(data);
-      setShowVersionHistory(true);
-    } catch (_) {}
-  };
-
-  const restoreVersion = async (versionId) => {
-    try {
-      const res = await apiFetch(`/api/writeup/history?sessionId=${currentSession}&versionId=${versionId}`);
-      const data = await res.json();
-      if (data.content) {
-        if (Array.isArray(data.contentJson) && data.contentJson.length > 0) {
-          applyReportBlocks(data.contentJson);
-        } else {
-          applyReportBlocks(markdownToReportBlocks(data.content));
-        }
-        setSelectedReportBlocks([]);
-        setShowVersionHistory(false);
-      }
-    } catch (_) {}
   };
 
   // ── Sidebar helpers ───────────────────────────────────────────────────────
@@ -4016,26 +3556,8 @@ export default function Home() {
   };
 
   const commandExecutionEnabled = healthData?.features?.commandExecutionEnabled !== false;
-  const currentSessionData = sessions.find(s => s.id === currentSession);
-  const linkedPlatform = platformLinkInfo.link || currentSessionData?.metadata?.platform || null;
-  const platformCapabilities = platformLinkInfo.capabilities || {};
-  const experimentalAiEnabled = healthData?.features?.experimentalAiEnabled === true;
-  const offlineAiEnabled = healthData?.features?.offlineAiEnabled === true;
-  const autoWriteupSuggestionsEnabled = healthData?.features?.autoWriteupSuggestionsEnabled === true;
-  const adversarialChallengeModeEnabled = healthData?.features?.adversarialChallengeModeEnabled === true;
-  const offlineProviderVisible = experimentalAiEnabled && offlineAiEnabled;
-  const adversarialCoachModeVisible = experimentalAiEnabled && adversarialChallengeModeEnabled;
-  const adversarialCoachModeActive = isAdversarialCoachSkill(coachSkill);
-  const autoWriteupSettings = getAutoWriteupSettings(currentSessionData);
-  const autoWriteupProvider = autoWriteupSettings.provider || 'claude';
   const autoWriteupSuggestionReady = writeupSuggestions.filter((entry) => entry.status === 'ready');
   const autoWriteupSuggestionPending = writeupSuggestions.filter((entry) => entry.status === 'pending');
-  const activePlatformCapability = linkedPlatform?.type ? platformCapabilities[linkedPlatform.type] : null;
-  const currentSessionTargets = getSessionTargets(currentSessionData);
-  const primarySessionTarget = getPrimarySessionTargetValue(currentSessionData);
-  const activeSessionTarget = currentSessionTargets.find((target) => target.id === activeTargetId)
-    || primarySessionTarget
-    || null;
   const sessionTimerLabel = formatTimerDuration(sessionTimer.elapsedMs);
   const timelineFilters = {
     type: filterType,
@@ -4046,15 +3568,6 @@ export default function Home() {
   const compactTimelineFilters = viewportWidth < 1400;
   const allTimelineTags = extractTimelineTags(timeline);
   const filteredTimeline = filterTimelineEvents(timeline, timelineFilters);
-  const activeTargetValue = activeSessionTarget?.target?.trim()
-    || currentSessionData?.target?.trim()
-    || '';
-  const enrichedFindings = useMemo(() => enrichFindings(findings), [findings]);
-  const normalizedReportFilters = useMemo(() => normalizeReportFilters(reportFilters), [reportFilters]);
-  const reportScopedFindings = useMemo(
-    () => filterFindings(findings, normalizedReportFilters),
-    [findings, normalizedReportFilters]
-  );
   const reportTechniqueOptions = useMemo(() => {
     const byId = new Map();
     enrichedFindings.forEach((finding) => {
@@ -4069,6 +3582,17 @@ export default function Home() {
     () => sessions.filter((session) => session.id !== currentSession),
     [currentSession, sessions]
   );
+  const toolAvailability = healthData?.toolAvailability && typeof healthData.toolAvailability === 'object'
+    ? healthData.toolAvailability
+    : null;
+  const displayedStaticSuggestions = useMemo(
+    () => filterSuggestionGroups(SUGGESTIONS, toolAvailability, { hideLocalWhenUnknown: true }),
+    [toolAvailability]
+  );
+  const displayedCheatsheet = useMemo(
+    () => filterCheatsheetTools(CHEATSHEET, toolAvailability, { hideLocalWhenUnknown: true }),
+    [toolAvailability]
+  );
   const displayedServiceSuggestions = useMemo(() => {
     const items = Array.isArray(serviceSuggestions) ? [...serviceSuggestions] : [];
     return items.sort((left, right) => {
@@ -4080,7 +3604,7 @@ export default function Home() {
     });
   }, [activeTargetId, serviceSuggestions]);
   const operatorSuggestionEntries = useMemo(() => buildOperatorSuggestions({
-    staticSuggestions: SUGGESTIONS,
+    staticSuggestions: displayedStaticSuggestions,
     serviceSuggestions: displayedServiceSuggestions,
     historyCommands: inputHistory,
     context: {
@@ -4089,7 +3613,7 @@ export default function Home() {
       lhost: 'tun0-ip',
       lport: '4444',
     },
-  }), [activeTargetId, activeTargetValue, displayedServiceSuggestions, inputHistory]);
+  }), [activeTargetId, activeTargetValue, displayedServiceSuggestions, displayedStaticSuggestions, inputHistory]);
   const commandPaletteEntries = useMemo(() => rankOperatorSuggestions(
     operatorSuggestionEntries,
     commandPaletteQuery,
@@ -4160,9 +3684,7 @@ export default function Home() {
     : 'No AI usage recorded for this session yet.';
 
   const favFlagItems = [];
-  const allFlags = [];
-  CHEATSHEET.forEach(tool => tool.categories.forEach(cat => cat.flags.forEach(f => {
-    allFlags.push({ ...f, tool: tool.tool, cat: cat.name });
+  displayedCheatsheet.forEach(tool => tool.categories.forEach(cat => cat.flags.forEach(f => {
     if (favorites.has(f.flag)) favFlagItems.push({ ...f, tool: tool.tool, cat: cat.name });
   })));
 
@@ -5866,7 +5388,7 @@ export default function Home() {
                   />
                   {!toolboxSearch && (
                     <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                      <button className="btn-secondary" onClick={() => setExpandedCats(SUGGESTIONS.map(g => g.category))} style={{ fontSize: '0.8rem', padding: '3px 8px' }}>Expand All</button>
+                      <button className="btn-secondary" onClick={() => setExpandedCats(displayedStaticSuggestions.map(g => g.category))} style={{ fontSize: '0.8rem', padding: '3px 8px' }}>Expand All</button>
                       <button className="btn-secondary" onClick={() => setExpandedCats([])} style={{ fontSize: '0.8rem', padding: '3px 8px' }}>Collapse All</button>
                       <button className="btn-secondary" onClick={() => setShowCatManager(v => !v)} style={{ fontSize: '0.8rem', padding: '3px 8px', marginLeft: 'auto', color: hiddenCats.size > 0 ? 'var(--accent-warning)' : undefined }} title="Show/hide categories">
                         ⚙{hiddenCats.size > 0 ? ` (${hiddenCats.size})` : ''}
@@ -5876,7 +5398,7 @@ export default function Home() {
                   {showCatManager && !toolboxSearch && (
                     <div style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0.5rem 0.65rem', marginBottom: '0.5rem' }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>Show / hide categories</div>
-                      {SUGGESTIONS.map(g => (
+                      {displayedStaticSuggestions.map(g => (
                         <label key={g.category} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', cursor: 'pointer', padding: '2px 0', color: hiddenCats.has(g.category) ? 'var(--text-muted)' : 'var(--text-main)' }}>
                           <input type="checkbox" checked={!hiddenCats.has(g.category)}
                             onChange={() => setHiddenCats(prev => { const next = new Set(prev); next.has(g.category) ? next.delete(g.category) : next.add(g.category); return next; })} />
@@ -5885,7 +5407,7 @@ export default function Home() {
                       ))}
                     </div>
                   )}
-                  {SUGGESTIONS.map((group, i) => {
+                  {displayedStaticSuggestions.map((group, i) => {
                     if (hiddenCats.has(group.category) && !toolboxSearch) return null;
                     const q = toolboxSearch.toLowerCase();
                     const filteredItems = toolboxSearch
@@ -6076,9 +5598,9 @@ export default function Home() {
                   )}
                   <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem' }}>
                     <button className="btn-secondary" onClick={() => setCollapsedTools(new Set())} style={{ fontSize: '0.8rem', padding: '3px 8px' }}>Expand All</button>
-                    <button className="btn-secondary" onClick={() => setCollapsedTools(new Set(CHEATSHEET.map((_, i) => i)))} style={{ fontSize: '0.8rem', padding: '3px 8px' }}>Collapse All</button>
+                    <button className="btn-secondary" onClick={() => setCollapsedTools(new Set(displayedCheatsheet.map((_, i) => i)))} style={{ fontSize: '0.8rem', padding: '3px 8px' }}>Collapse All</button>
                   </div>
-                  {CHEATSHEET.map((tool, i) => {
+                  {displayedCheatsheet.map((tool, i) => {
                     const isCollapsed = collapsedTools.has(i);
                     return (
                       <div key={i} style={{ marginBottom: '0.6rem', borderRadius: '6px', border: '1px solid rgba(88,166,255,0.12)', overflow: 'hidden' }}>

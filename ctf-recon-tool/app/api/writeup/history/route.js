@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
-import { getWriteupVersions, getWriteupVersionForSession } from '@/lib/db';
+import { getWriteupVersionForSession, getWriteupVersions } from '@/lib/repositories/report-repository';
 import { apiError } from '@/lib/api-error';
-import { getRouteMeta, withErrorHandler, withValidSessionId } from '@/lib/api-route';
+import { readValidatedSearchParams, withErrorHandler } from '@/lib/api-route';
+import { WriteupHistoryQuerySchema } from '@/lib/route-contracts';
 
 export const GET = withErrorHandler(
-  withValidSessionId(async (request) => {
-    const { sessionId, searchParams } = getRouteMeta(request);
-    const versionId = searchParams?.get('versionId');
+  async (request) => {
+    const parsed = readValidatedSearchParams(request, WriteupHistoryQuerySchema);
+    if (!parsed.success) return parsed.response;
+    const { sessionId, versionId } = parsed.data;
 
     if (versionId) {
       const version = getWriteupVersionForSession(sessionId, versionId);
@@ -27,6 +29,6 @@ export const GET = withErrorHandler(
 
     const versions = getWriteupVersions(sessionId);
     return NextResponse.json(versions);
-  }, { source: 'query', fallback: '' }),
+  },
   { route: '/api/writeup/history GET' }
 );

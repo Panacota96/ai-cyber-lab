@@ -17,7 +17,7 @@ Helm's Watch is a production-grade Next.js 16 CTF reconnaissance assistant with:
 - Multi-format export: PDF, DOCX, HTML, JSON, Markdown
 - Vitest test suite (Phase 2 complete)
 
-**Current gaps:** deeper `HomeClient` / persistence decomposition, executive/report audience automation beyond the current Chronicle workflow, external reporting handoff paths such as SysReptor, and deeper shell transports beyond reverse/webshell v1.
+**Current gaps:** Wave 20 architecture/contracts work still needs to finish the `HomeClient` / persistence split and complete the repository migration behind the DB facade, Wave 21 needs to add report audience packs plus SysReptor handoff, Wave 22 still needs deeper shell transports and shell-driven evidence acquisition, and Waves 23-24 remain open for cross-session analysis plus collaboration/coach-quality hardening.
 
 **Product scope:** Helm's Paladin is desktop/laptop-first; tablet and mobile responsive work is intentionally out of scope.
 
@@ -46,9 +46,9 @@ All `Effort = S` roadmap items are now completed.
 
 Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE execution transport, session credential manager, CSRF middleware, structured JSON logging).
 
-### Next Wave Set (Post-Wave-12.5 Track)
+### Implemented Wave Set (Waves 10.5-19B)
 
-> Selected strategy: **Stabilize first, then expand the target model, then accelerate operator/reporting workflows**. The runtime, intelligence, shell/artifact, and hash-identification foundations are in place; the next sequence should reduce structural risk before broadening session scope and report surfaces.
+> Implemented strategy: **Stabilize first, then expand the target model, then accelerate operator/reporting workflows**. The runtime, intelligence, shell/artifact, and hash-identification foundations are in place; this sequence reduced structural risk before broadening session scope and report surfaces.
 
 #### Wave 10.5 — Runtime Foundation
 
@@ -219,6 +219,75 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 - Kept it isolated inside the existing coach workflow behind an explicit feature flag rather than broadening it into a larger simulation subsystem.
 - Disabled compare mode for adversarial runs so the experimental behavior stays single-provider and easier to reason about.
 
+### Planned Wave Set (Post-19B Track)
+
+> Selected strategy: **Finish architecture and contracts first, then reporting handoff and audience packs, then deepen shell/evidence operations, then add cross-session analysis, and only after that take on collaboration and higher-cost coach quality features.**
+
+#### Wave 20 — Architecture and Contracts
+
+**Status:** In Progress (2026-03-12)
+
+**Scope:** `G.7`, `G.2`, `G.5`, `G.6`
+
+**Outcome:**
+- Finish the `HomeClient` and persistence decomposition so core operator flows stop bottlenecking on oversized client/runtime modules.
+- Move more extracted modules and route contracts to TypeScript, centralize shared constants, and standardize error envelopes plus route schema validation.
+- Keep this wave focused on product hardening rather than net-new operator surfaces.
+
+**Implemented so far:**
+- Added shared zod-backed route contracts plus reusable validation helpers for JSON/query payloads.
+- Migrated `/api/sessions`, `/api/report`, `/api/report/templates`, and `/api/writeup/enhance` onto the shared contract/error path.
+- Extended the same contract/error path across `/api/report/compare`, `/api/report/executive-summary`, `/api/report/remediation`, and `/api/writeup/share`.
+- Standardized route error envelopes so validation failures now expose a consistent `ok/error/status/details` shape.
+- Added integration coverage for comparison, executive-summary, remediation, and share-route validation behavior so the Wave 20 contract layer is enforced, not just documented.
+- Restored report-block compatibility for writeup suggestions by moving block parsing/patch merge helpers into the reporting domain and keeping the legacy import path as a compatibility wrapper.
+- Added capability-driven toolbox and cheatsheet filtering via `/api/health` tool availability, so unsupported local commands such as `msfconsole` no longer surface in the operator UI by default.
+- Started the repository split with report, session, and timeline repositories, and migrated writeup/session/platform/report-template flows plus writeup suggestion orchestration onto those wrappers.
+- Redirected `HomeClient` reporting imports toward domain entrypoints so the reporting domain can keep moving out of the composition root without breaking compatibility.
+
+#### Wave 21 — Reporting Handoff and Audience Packs
+
+**Status:** Planned
+
+**Scope:** `R.15`, `D.9`, `R.16`
+
+**Outcome:**
+- Add SysReptor handoff so Chronicle/report output can move into a dedicated downstream reporting platform.
+- Add report format presets, CVSS-linked severity workflow, and audience-specific output packs driven by the same Chronicle/report model.
+- Keep reporting data single-sourced so executive, technical, and certification-oriented views do not fork the evidence base.
+
+#### Wave 22 — Shell Depth and Evidence Acquisition
+
+**Status:** Planned
+
+**Scope:** `EX.13`, `CTF.15`, `C.8`
+
+**Outcome:**
+- Extend the shell hub beyond reverse-shell/webshell v1 using the existing transcript/session model rather than a parallel runtime.
+- Support direct artifact pull and provenance from shell sessions back into the session artifact store.
+- Improve shell and history usability with fuzzy search, output diffing, and bulk evidence operations.
+
+#### Wave 23 — Search and Cross-Session Analysis
+
+**Status:** Planned
+
+**Scope:** `C.3`, `C.4`, `C.9`, `C.10`
+
+**Outcome:**
+- Add session comparison, tagging/custom fields, global cross-session search, and scheduled execution.
+- Let operators reason across multiple engagements over time instead of treating each session as isolated.
+
+#### Wave 24 — Collaboration and Coach Quality
+
+**Status:** Planned
+
+**Scope:** `C.5`, `E.4`, `E.6`, `E.7`
+
+**Outcome:**
+- Add live collaboration only after the single-operator product surface and route contracts are stable.
+- Improve coach trust with feedback capture, command validation, provider comparison, and confidence cues.
+- Keep experimental AI closed after Wave 19B until this productization sequence is complete.
+
 #### Structural Refactor Track
 
 **Scope:** split `app/HomeClient.js` by domain and decompose `app/lib/db.js` into narrower repositories/services before Wave 12 shell/artifact work.
@@ -241,6 +310,11 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 - Wave 18: additive coach behavior, optional CTF platform/session integration paths, and the planning anchor for downstream report-platform linkage such as SysReptor.
 - Wave 19A: additive experimental offline-provider support plus review-first writeup suggestion APIs behind explicit runtime flags.
 - Wave 19B: additive adversarial challenge coaching behind explicit runtime flags and constrained to the existing coach workflow.
+- Wave 20: primarily internal architecture work across extracted client modules, constants, route schemas, and consistent error contracts.
+- Wave 21: additive report presets, audience-pack outputs, CVSS-linked severity workflow, and SysReptor handoff on top of the existing Chronicle/report pipeline.
+- Wave 22: additive shell transport depth, shell-driven artifact pull, and shell/history ergonomics without replacing the current transcript/session model.
+- Wave 23: additive cross-session indexing, comparison, tagging, and scheduled execution on top of the existing multi-target session model.
+- Wave 24: additive collaboration and coach-quality controls after the product/runtime surface is structurally stable.
 
 #### Success Criteria
 
@@ -256,6 +330,24 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 - Wave 18: implemented coach difficulty/context scaling plus optional HTB / THM / CTFd linkage, while preserving the roadmap linkage toward SysReptor-based downstream reporting workflows.
 - Wave 19A: offline AI and auto-writeup stay opt-in, bounded, and review-first so they do not silently mutate core evidence or reporting state.
 - Wave 19B: adversarial challenge guidance remains isolated from the core execution, evidence, and reporting paths.
+- Wave 20: extracted modules, route schemas, shared constants, and error envelopes reduce change risk across execute, graph, report, credential, shell, and artifact flows.
+- Wave 21: one Chronicle/report source can produce audience-specific outputs, CVSS-linked severity context, and SysReptor-ready handoff payloads without duplicate report models.
+- Wave 22: shell work is no longer limited to reverse-shell/webshell v1, and shell-pulled evidence retains transcript/session provenance inside the artifact store.
+- Wave 23: operators can search, compare, tag, and schedule across sessions without losing target or evidence context.
+- Wave 24: collaboration conflicts stay manageable, and coach trust improves through validation, comparison, feedback, and confidence signals without degrading the existing coach workflow.
+
+### Session Workflow & Collaboration
+
+| ID | Item | Impact | Effort |
+|----|------|--------|--------|
+| C.3 | Session comparison mode (side-by-side diff in commands/findings) | Low-Med | H |
+| C.4 | Session tagging + custom fields + cross-session full-text search | Med | M |
+| C.5 | Live collaboration (multi-user session with live updates) | Med | H |
+| C.6 | Command history fuzzy search on command text and output | Implemented | S |
+| C.7 | Bulk screenshot operations (batch-tag/delete/rename) | Implemented | S |
+| C.8 | Output diff view for similar commands | Low-Med | M |
+| C.9 | Global search across sessions | Med | M |
+| C.10 | Scheduled command execution | Low-Med | H |
 
 ### UX
 
@@ -292,7 +384,10 @@ All currently tracked GitHub / CI-CD items are completed through Wave 9.
 | R.9 | Report filtering: generate subset by severity, date range, or tag | Med | M |
 | R.10 | Before/after session comparison report (delta: new/remediated/changed findings) | Med | M |
 | R.11 | Finding deduplication + relationship tracking (`relatedFindingIds`) | Med | M |
+| D.9 | CVSS score integration (link calculator + persist severity ratings) | Low-Med | M |
+| D.10 | Report format presets (Pentest / CTF / Bug Bounty) | Implemented | S |
 | R.15 | SysReptor bridge — hand off Chronicle/report output into SysReptor workflows using its reporting platform and certification-oriented templates | Med | H |
+| R.16 | Audience pack outputs — executive, technical, and certification-oriented report views from one Chronicle/report model | Med | M |
 
 ### Execution Engine (NEW)
 
@@ -301,6 +396,7 @@ All currently tracked GitHub / CI-CD items are completed through Wave 9.
 | EX.2 | Nmap XML auto-parser (`-oX` output → graph host/service nodes) | High | M |
 | EX.3 | Structured output detection (auto-pretty-print JSON/XML in terminal) | Med | M |
 | EX.12 | Interactive shell session hub — v1 ships reverse shells and webshells with multiple live tabs and transcript persistence; deeper transports stay deferred | High | H |
+| EX.13 | Extended shell transports — deepen shell-hub support beyond reverse-shell/webshell v1 on the current transcript/session model | High | H |
 
 ### CTF-Specific Features (NEW)
 
@@ -314,13 +410,18 @@ All currently tracked GitHub / CI-CD items are completed through Wave 9.
 | CTF.10 | CVE/ExploitDB lookup integration — auto-fetch CVSS + PoC count when CVE node created | High | M |
 | CTF.11 | Credential verification + blast radius — test found creds against all discovered services | Med | M |
 | CTF.14 | Session artifact manager — save documents/files pulled from shells or webshells as session-scoped loot linked to notes and reports | High | M |
+| CTF.15 | Remote artifact pull from shells — save files pulled from shell sessions into the artifact store with transcript/session provenance | High | M |
 
 ### Code Quality & Tests
 
 | ID | Item | Impact | Effort |
 |----|------|--------|--------|
 | G.2 | TypeScript gradual conversion for new or extracted modules first (streaming, credentials, shell transport) | Med | H |
+| G.4 | Constants consolidation into shared config modules | Implemented | S |
+| G.5 | Error handling consistency across routes and UI boundaries | Low-Med | M |
+| G.6 | API request/response schema validation via zod | Low-Med | M |
 | G.7 | Frontend state refactor: split `app/HomeClient.js` into domain modules/reducers/hooks | Med | H |
+| G.8 | CSS module organization for extracted components | Implemented | S |
 
 ### Security
 
@@ -337,6 +438,10 @@ All currently tracked ops/infrastructure items are completed through Wave 10.5.
 | E.1 | Coach persona difficulty levels (beginner / intermediate / expert) | Med | M |
 | E.2 | Coach caching + context limit management (avoid token overflow on long sessions) | Med | M |
 | E.3 | Offline coach mode (ollama / local OpenAI-compatible provider) | Implemented | H |
+| E.4 | Coach feedback loop (thumbs up/down on suggestions) | Low-Med | M |
+| E.5 | Coach command validation against allowlist before execution | Implemented | S |
+| E.6 | Multi-model coach comparison | Low-Med | M |
+| E.7 | Coach confidence scoring | Low | M |
 | E.8 | Auto writeup enhancement when timeline is updated | Implemented | H |
 | E.9 | Adversarial challenge mode (AI simulates the target system) | Implemented | H |
 
@@ -460,7 +565,7 @@ All currently tracked ops/infrastructure items are completed through Wave 10.5.
 - CTF.4 Read-only wordlist browser rooted at `CTF_WORDLIST_DIR`
 - CTF.9 Local flag submission tracking with per-session CRUD
 - CTF.12 Note templates for OWASP Top 10, PTES, and Linux/Windows privesc workflows
-- CTF.13 Cheatsheet expansion with SearchSploit, Exploit-DB, Metasploit templates, Windows privesc, AD, post-exploitation, and reverse shells
+- CTF.13 Cheatsheet expansion with SearchSploit, Exploit-DB references, capability-gated Metasploit templates, Windows privesc, AD, post-exploitation, and reverse shells
 - OPS.1 `HEALTHCHECK` instruction in `Dockerfile`
 - OPS.2 Resource limits in `docker-compose.yml` (`mem_limit`, `cpus`)
 

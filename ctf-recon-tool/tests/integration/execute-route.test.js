@@ -119,8 +119,10 @@ describe('/api/execute route runtime hardening', () => {
 
     const executeRes = await executePost(executeReq);
     expect(executeRes.status).toBe(403);
-    await expect(readJson(executeRes)).resolves.toEqual({
+    await expect(readJson(executeRes)).resolves.toMatchObject({
+      ok: false,
       error: 'Command execution is disabled in this environment.',
+      status: 403,
     });
   });
 
@@ -136,7 +138,7 @@ describe('/api/execute route runtime hardening', () => {
 
     const executeRes = await executePost(executeReq);
     expect(executeRes.status).toBe(401);
-    await expect(readJson(executeRes)).resolves.toEqual({ error: 'Unauthorized' });
+    await expect(readJson(executeRes)).resolves.toMatchObject({ ok: false, error: 'Unauthorized', status: 401 });
   });
 
   it('stores sanitized output and clears registry on success', async () => {
@@ -518,7 +520,7 @@ describe('/api/execute route runtime hardening', () => {
     const historyReq = makeJsonRequest('/api/execute/history?sessionId=../../bad', 'GET');
     const historyRes = await historyGet(historyReq);
     expect(historyRes.status).toBe(400);
-    await expect(readJson(historyRes)).resolves.toEqual({ error: 'Invalid sessionId' });
+    await expect(readJson(historyRes)).resolves.toMatchObject({ ok: false, error: 'Invalid sessionId', status: 400 });
   });
 
   it('rejects retry requests for non-command events', async () => {
@@ -535,8 +537,10 @@ describe('/api/execute route runtime hardening', () => {
     const retryRes = await retryPost(retryReq, { params: { eventId: event.id } });
 
     expect(retryRes.status).toBe(400);
-    await expect(readJson(retryRes)).resolves.toEqual({
+    await expect(readJson(retryRes)).resolves.toMatchObject({
+      ok: false,
       error: 'Retry is only supported for command events',
+      status: 400,
     });
   });
 

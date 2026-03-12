@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { apiError } from '@/lib/api-error';
+import { readValidatedJsonBody, withAuth, withErrorHandler } from '@/lib/api-route';
 import {
   getOfflineProviderStatus,
   resolveProviderApiKey,
@@ -12,11 +13,10 @@ import {
   WRITEUP_SKILL_PROMPTS,
 } from '@/lib/writeup-ai';
 import {
-  isApiTokenValid,
   isExperimentalAiEnabled,
   isOfflineAiEnabled,
-  isValidSessionId,
 } from '@/lib/security';
+import { WriteupEnhanceSchema } from '@/lib/route-contracts';
 
 const STREAM_HEADERS = {
   'Content-Type': 'text/plain; charset=utf-8',
@@ -56,14 +56,12 @@ function resolveProviderName(provider) {
   return 'Anthropic';
 }
 
-export async function POST(request) {
-  try {
-    if (!isApiTokenValid(request)) {
-      return apiError('Unauthorized', 401);
-    }
+export const POST = withErrorHandler(withAuth(async (request) => {
+    const parsed = await readValidatedJsonBody(request, WriteupEnhanceSchema);
+    if (!parsed.success) return parsed.response;
 
     const {
-      sessionId = 'default',
+      sessionId,
       reportContent,
       provider = 'claude',
       apiKey = '',
@@ -72,19 +70,10 @@ export async function POST(request) {
       reportBlocks = [],
       selectedSectionIds = [],
       evidenceContext = '',
-    } = await request.json();
+    } = parsed.data;
 
-    if (!sessionId || !isValidSessionId(sessionId)) {
-      return apiError('sessionId is required', 400);
-    }
-    if (!reportContent) {
-      return apiError('reportContent is required', 400);
-    }
     if (!REPORT_SKILLS.has(skill)) {
-      return NextResponse.json(
-        { error: `Unsupported reporter skill "${skill}". Allowed: enhance, writeup-refiner, report.` },
-        { status: 400 }
-      );
+      return apiError(`Unsupported reporter skill "${skill}". Allowed: enhance, writeup-refiner, report.`, 400);
     }
 
     const normalizedProvider = String(provider || 'claude').trim().toLowerCase();
@@ -145,8 +134,4 @@ export async function POST(request) {
         },
       }
     );
-  } catch (error) {
-    console.error('AI enhance failed:', error);
-    return apiError('Enhancement failed', 500);
-  }
-}
+}), { route: '/api/writeup/enhance POST' });

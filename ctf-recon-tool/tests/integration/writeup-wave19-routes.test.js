@@ -114,6 +114,22 @@ describe('wave 19 writeup routes', () => {
     expect(body.patches[0].content).toContain('offline provider');
   });
 
+  it('rejects invalid writeup enhancement payloads before provider execution', async () => {
+    const session = createTestSession();
+    sessions.push(session.id);
+
+    const res = await writeupEnhancePost(makeJsonRequest('/api/writeup/enhance', 'POST', {
+      sessionId: session.id,
+      reportContent: '',
+      provider: 'offline',
+    }, { auth: true }));
+    const body = await readJson(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toContain('Validation failed');
+    expect(Array.isArray(body.details)).toBe(true);
+  });
+
   it('queues and applies a review-first auto-writeup suggestion from tagged evidence', async () => {
     const session = createTestSession();
     sessions.push(session.id);
@@ -195,5 +211,30 @@ describe('wave 19 writeup routes', () => {
 
     const stored = getWriteup(session.id);
     expect(stored.content).toContain('Unchanged draft');
+  });
+
+  it('rejects invalid writeup suggestion queries and mutations with validation details', async () => {
+    const listRes = await suggestionsGet(new Request('http://localhost/api/writeup/suggestions?sessionId=../bad'));
+    const listBody = await readJson(listRes);
+
+    expect(listRes.status).toBe(400);
+    expect(listBody.error).toContain('Validation failed');
+    expect(Array.isArray(listBody.details)).toBe(true);
+
+    const applyRes = await applySuggestionPost(makeJsonRequest('/api/writeup/suggestions/apply', 'POST', {
+      sessionId: 'default',
+      suggestionId: '',
+    }, { auth: true }));
+    const applyBody = await readJson(applyRes);
+    expect(applyRes.status).toBe(400);
+    expect(Array.isArray(applyBody.details)).toBe(true);
+
+    const dismissRes = await dismissSuggestionPost(makeJsonRequest('/api/writeup/suggestions/dismiss', 'POST', {
+      sessionId: 'default',
+      suggestionId: '',
+    }, { auth: true }));
+    const dismissBody = await readJson(dismissRes);
+    expect(dismissRes.status).toBe(400);
+    expect(Array.isArray(dismissBody.details)).toBe(true);
   });
 });

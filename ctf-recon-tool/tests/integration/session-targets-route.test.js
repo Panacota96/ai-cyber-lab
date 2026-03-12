@@ -52,4 +52,16 @@ describe('session targets route', () => {
     const deleted = await readJson(deleteRes);
     expect(deleted.targets).toHaveLength(1);
   });
+
+  it('rejects invalid target payloads with validation details', async () => {
+    const res = await targetsPost(makeJsonRequest('/api/sessions/targets', 'POST', {
+      sessionId: '../bad',
+      target: '',
+    }, { auth: true }));
+    const body = await readJson(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toContain('Validation failed');
+    expect(Array.isArray(body.details)).toBe(true);
+  });
 });

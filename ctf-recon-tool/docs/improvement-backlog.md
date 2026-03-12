@@ -14,8 +14,8 @@ format: knowledge-sync compatible
 
 ## Roadmap Wave Sync
 
-### Next Wave Set — Waves 13-19 Active
-**Status:** Active (2026-03-12)
+### Implemented Wave Set — Waves 10.5-19B
+**Status:** Implemented (2026-03-12)
 
 - **Wave 10.5 — Runtime Foundation:** Implemented with `EX.1`, `CTF.1`, `SEC.2`, `B.7`.
 - **Wave 11 — Operator Intelligence Layer:** Implemented with `EX.2`, `EX.3`, `CTF.5`, `CTF.10`, `CTF.11`.
@@ -29,7 +29,17 @@ format: knowledge-sync compatible
 - **Wave 18 — Coach and Platform Expansion:** Implemented with `E.1`, `E.2`, `CTF.7`.
 - **Wave 19A — Experimental Offline Coach and Auto-Writeup:** Implemented with `E.3`, `E.8`.
 - **Wave 19B — Adversarial Challenge Mode:** Implemented with `E.9`.
-- Strategy rationale: the runtime, intelligence, shell/artifact, and hash-identification foundations now exist; the next sequence should reduce structural risk first, then expand target scope, then deepen operator/reporting workflows.
+- Strategy rationale: the runtime, intelligence, shell/artifact, and hash-identification foundations now exist, and this implemented sequence reduced structural risk first, then expanded target scope, then deepened operator/reporting workflows.
+
+### Post-19B Wave Set — Waves 20-24 Planned
+**Status:** Active (2026-03-12)
+
+- **Wave 20 — Architecture and Contracts:** In progress with `G.7`, `G.2`, `G.5`, `G.6`.
+- **Wave 21 — Reporting Handoff and Audience Packs:** Planned with `R.15`, `D.9`, `R.16`.
+- **Wave 22 — Shell Depth and Evidence Acquisition:** Planned with `EX.13`, `CTF.15`, `C.8`.
+- **Wave 23 — Search and Cross-Session Analysis:** Planned with `C.3`, `C.4`, `C.9`, `C.10`.
+- **Wave 24 — Collaboration and Coach Quality:** Planned with `C.5`, `E.4`, `E.6`, `E.7`.
+- Strategy rationale: finish architecture/contracts first, then reporting handoff and audience packs, then shell/evidence depth, then cross-session analysis, and only after that live collaboration plus higher-cost coach quality work.
 
 ### Wave 12 — Shell and Artifact Operations
 **Status:** Implemented (2026-03-11)
@@ -108,6 +118,43 @@ format: knowledge-sync compatible
 - `E.9` now ships as an experimental `adversarial-challenge` coach skill that challenges the operator's current assumption, asks one pressure-test question, and proposes a falsification command.
 - The mode stays single-provider and compare-disabled so the experimental behavior is easier to reason about and remains isolated from the core operator workflow.
 
+### Wave 20 — Architecture and Contracts
+**Status:** In Progress (2026-03-12)
+
+- `G.7`, `G.2`, `G.5`, `G.6` will finish the `HomeClient` / persistence split, push extracted modules and route contracts further into TypeScript, and standardize route schemas plus error envelopes on top of the already-landed constants/CSS cleanup.
+- This wave is intentionally structural: it should reduce core-change risk before adding more operator-facing breadth.
+- Shared route-validation helpers plus new TypeScript-backed request contracts now cover `/api/sessions`, `/api/report`, `/api/report/templates`, and `/api/writeup/enhance`.
+- Error responses on those paths now use one additive envelope shape with validation `details`, giving Wave 20 a concrete contracts baseline before more `HomeClient` / persistence decomposition.
+- The same contract/error layer now also covers `/api/report/compare`, `/api/report/executive-summary`, `/api/report/remediation`, and `/api/writeup/share`.
+- Integration coverage now explicitly exercises the new validation envelope on comparison, executive-summary, remediation, and writeup-share flows.
+- Reporting block helpers now live behind the reporting domain compatibility layer so auto-writeup suggestion flows no longer depend on stale report-block exports.
+- Toolbox and cheatsheet catalog entries now declare runtime requirements, `/api/health` exposes tool availability, and unsupported local commands like `msfconsole` are hidden instead of surfacing dead templates.
+- The first repository wrappers (`report`, `session`, `timeline`) are now in use for writeup/session/platform/report-template flows and writeup suggestion orchestration.
+
+### Wave 21 — Reporting Handoff and Audience Packs
+**Status:** Planned
+
+- `R.15` will add SysReptor handoff from Chronicle/report output into a downstream reporting platform.
+- `D.9` and `R.16` will add CVSS-linked severity workflow and audience-pack outputs from the same Chronicle/report data instead of forking report state.
+
+### Wave 22 — Shell Depth and Evidence Acquisition
+**Status:** Planned
+
+- `EX.13` and `CTF.15` will deepen shell operations beyond reverse-shell/webshell v1 and preserve provenance when artifacts are pulled from shells into the loot store.
+- `C.8` will improve shell/history usability with output diffing on top of the already-landed fuzzy history search and bulk screenshot tooling.
+
+### Wave 23 — Search and Cross-Session Analysis
+**Status:** Planned
+
+- `C.3`, `C.4`, `C.9`, and `C.10` will let operators compare sessions, tag/customize them, search across engagements, and queue scheduled execution safely.
+
+### Wave 24 — Collaboration and Coach Quality
+**Status:** Planned
+
+- `C.5` enters only here, after the single-operator runtime is structurally stable.
+- `E.4`, `E.5`, `E.6`, and `E.7` then improve coach trust with feedback capture, command validation, comparison, and confidence signals.
+- Experimental AI stays closed after Wave 19B until this productization sequence is complete.
+
 ### Wave 10.5 — Runtime Foundation
 **Status:** Implemented (2026-03-11)
 
@@ -172,7 +219,7 @@ format: knowledge-sync compatible
 - `R.3` Every report and export now includes a severity summary table when persisted findings exist.
 - `R.7` Report generation now emits a reusable cover/header metadata block across modal, Markdown, HTML, PDF, DOCX, and JSON exports.
 - `R.12` Findings now store editable `tags`, and `POST /api/findings/auto-tag` applies deterministic rule-based tags.
-- `CTF.13` Toolbox and cheatsheet now include SearchSploit, Exploit-DB, Metasploit templates, Windows privesc, AD, post-exploitation, and reverse-shell helpers.
+- `CTF.13` Toolbox and cheatsheet now include SearchSploit, Exploit-DB references, capability-gated Metasploit templates, Windows privesc, AD, post-exploitation, and reverse-shell helpers.
 - `CTF.12` Note mode now supports insertable OWASP Top 10, PTES, Linux privesc, and Windows privesc templates.
 - `CTF.4` Added a read-only wordlist browser rooted at `CTF_WORDLIST_DIR`.
 - `CTF.3` Added a per-session timer with pause/resume/reset and local persistence.
@@ -348,11 +395,13 @@ format: knowledge-sync compatible
 **What:** Regex/fuzzy search on command text and output in history sidebar.
 **Files:** `app/HomeClient.js`, extracted sidebar/history modules
 **Difficulty:** Easy | **Impact:** Low-Med
+**Status:** Implemented (2026-03-09).
 
 ### C.7 — Bulk Screenshot Operations
 **What:** Select multiple screenshots; batch-tag, delete, or rename.
 **Files:** `app/HomeClient.js`, extracted sidebar/media modules
 **Difficulty:** Easy | **Impact:** Low
+**Status:** Implemented (2026-03-09).
 
 ### C.8 — Output Diff View
 **What:** Side-by-side diff when two similar commands produce different output.
@@ -393,11 +442,21 @@ format: knowledge-sync compatible
 **Difficulty:** Hard | **Impact:** High
 **Status:** Implemented (2026-03-11). Reverse-shell listeners, webshell command routing, transcript persistence, shell SSE, and the tabbed shell workspace are now live. Meterpreter remains deferred.
 
+### EX.13 — Extended Shell Transports
+**What:** Expand the shell hub beyond reverse-shell/webshell v1 while keeping the current transcript/session model as the only runtime and provenance source of truth.
+**Files:** `app/lib/shell-runtime.js`, `app/lib/shell-repository.js`, `app/lib/shell-stream.js`, `app/api/shell/`, `app/components/shells/`, `app/hooks/useShellHub.js`
+**Difficulty:** Hard | **Impact:** High
+
 ### CTF.14 — Session Artifact / Loot Manager
 **What:** Save documents and files collected from shell sessions (config dumps, loot, proofs) as session-scoped artifacts that can be previewed, downloaded, linked to notes, and referenced in reports.
 **Files:** `app/lib/artifact-repository.js`, `app/lib/artifact-utils.js`, new artifact routes under `app/api/`, `app/components/sidebar/ArtifactsPanel.js`, `app/hooks/useArtifacts.js`, `app/HomeClient.js`
 **Difficulty:** Medium | **Impact:** High
 **Status:** Implemented (2026-03-11). Uploaded files and transcript-saved evidence now persist per session with preview/download APIs and insert-only report linkage.
+
+### CTF.15 — Remote Artifact Pull from Shells
+**What:** Save files pulled directly from shell sessions into the session artifact store with provenance back to the shell session and transcript context.
+**Files:** `app/lib/artifact-repository.js`, `app/lib/artifact-utils.js`, `app/lib/shell-runtime.js`, `app/api/artifacts/`, `app/api/shell/`, `app/components/sidebar/ArtifactsPanel.js`, `app/components/shells/`
+**Difficulty:** Medium | **Impact:** High
 
 ---
 
@@ -457,6 +516,7 @@ format: knowledge-sync compatible
 **What:** Pre-built templates for Pentest, CTF, Bug Bounty engagement types.
 **Files:** `app/lib/report-formats.js`
 **Difficulty:** Easy | **Impact:** Medium
+**Status:** Implemented (2026-03-09).
 
 ### R.15 — SysReptor Bridge
 **What:** Export or hand off Chronicle/report output into SysReptor so operators can continue inside a dedicated reporting platform after evidence collection and first-pass writeup work in Helm's Watch.
@@ -464,6 +524,11 @@ format: knowledge-sync compatible
 **References:** https://docs.sysreptor.com/ · https://docs.sysreptor.com/htb-reporting-with-sysreptor/
 **Files:** `app/lib/export-utils.js`, `app/api/export/*`, future `app/api/report/sysreptor/*`
 **Difficulty:** Hard | **Impact:** Medium
+
+### R.16 — Audience Pack Outputs
+**What:** Generate executive, technical, and certification-oriented report views from the same Chronicle/report data instead of maintaining separate report branches.
+**Files:** `app/lib/report-formats.js`, `app/lib/export-utils.js`, `app/api/report/route.js`, `app/api/export/*`, `app/HomeClient.js`
+**Difficulty:** Medium | **Impact:** Medium
 
 ---
 
@@ -494,6 +559,7 @@ format: knowledge-sync compatible
 **What:** Validate coach-suggested commands against allowlist before execution.
 **Files:** `app/api/coach/route.js`, `app/lib/security.js`
 **Difficulty:** Easy | **Impact:** Low
+**Status:** Implemented (2026-03-09).
 
 ### E.6 — Multi-Model Coach Comparison
 **What:** Run coach query on multiple providers in parallel; show side-by-side.
@@ -606,6 +672,7 @@ format: knowledge-sync compatible
 **What:** Move `SUGGESTIONS`, `DIFFICULTY_COLORS`, etc. to a config file.
 **Files:** `app/lib/constants.js` (new), `app/HomeClient.js`
 **Difficulty:** Easy | **Impact:** Low
+**Status:** Implemented (2026-03-09).
 
 ### G.5 — Error Handling Consistency
 **What:** Global error boundary; standardized error response format across all endpoints.
@@ -626,6 +693,7 @@ format: knowledge-sync compatible
 **What:** Break inline JS styles and `globals.css` into component-level CSS modules.
 **Files:** `app/HomeClient.js`, extracted component modules, `app/globals.css`
 **Difficulty:** Easy | **Impact:** Low
+**Status:** Implemented (2026-03-09).
 
 ### G.9 — Dependency Audit + Updates
 **What:** `npm audit`; update to latest compatible versions.

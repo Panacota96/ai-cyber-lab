@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { apiError } from '@/lib/api-error';
-import { getRouteMeta, readJsonBody, withAuth, withErrorHandler, withValidSessionId } from '@/lib/api-route';
+import { readValidatedJsonBody, withAuth, withErrorHandler } from '@/lib/api-route';
 import { listFindings } from '@/lib/db';
 import {
-  buildRemediationSuggestionFallback,
   buildRemediationSuggestionsFallback,
 } from '@/lib/report-assistant';
 import { completeReportAiText, extractJsonObject, resolveReportAiKey } from '@/lib/report-ai';
+import { RemediationRequestSchema } from '@/lib/route-contracts';
 
 function normalizeSuggestion(entry, fallbackEntry) {
   return {
@@ -42,14 +42,15 @@ function buildRemediationPrompt(findings) {
 
 export const POST = withErrorHandler(
   withAuth(
-    withValidSessionId(async (request) => {
-      const { sessionId } = getRouteMeta(request);
-      const body = await readJsonBody(request, {});
-      const provider = String(body?.provider || 'claude').trim().toLowerCase();
-      const apiKey = String(body?.apiKey || '');
-      const findingIds = Array.isArray(body?.findingIds)
-        ? body.findingIds.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
-        : [];
+    async (request) => {
+      const parsed = await readValidatedJsonBody(request, RemediationRequestSchema);
+      if (!parsed.success) return parsed.response;
+      const {
+        sessionId,
+        provider,
+        apiKey,
+        findingIds,
+      } = parsed.data;
       const allFindings = listFindings(sessionId);
       const targetFindings = findingIds.length > 0
         ? allFindings.filter((finding) => findingIds.includes(Number(finding.id)))
@@ -91,7 +92,7 @@ export const POST = withErrorHandler(
           error: error.message,
         });
       }
-    }, { source: 'body', fallback: '' })
+    }
   ),
   { route: '/api/report/remediation POST' }
 );

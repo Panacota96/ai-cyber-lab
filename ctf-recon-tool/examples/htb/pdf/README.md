@@ -1,6 +1,6 @@
 # HackTheBox Report Templates - Reference Library
 
-This folder contains HackTheBox-oriented report references and scaffolds that can be used as structure and styling input for Helm's Watch `v0.3.0` exports.
+This folder contains HackTheBox-oriented report references and scaffolds that can be used as structure and styling input for Helm's Watch `v0.4.0` exports.
 
 ## Available HTB report templates
 

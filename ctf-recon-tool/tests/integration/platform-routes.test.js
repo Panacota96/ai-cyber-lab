@@ -150,4 +150,23 @@ describe('platform integration routes', () => {
     expect(body.result.status).toBe('accepted');
     expect(body.link.lastFlagSubmission.status).toBe('accepted');
   });
+
+  it('rejects invalid platform-link and flag-submission payloads with validation details', async () => {
+    const linkRes = await sessionLinkGet(makeJsonRequest('/api/platform/session-link?sessionId=../bad', 'GET', null, { auth: true }));
+    const linkBody = await readJson(linkRes);
+
+    expect(linkRes.status).toBe(400);
+    expect(linkBody.error).toContain('Validation failed');
+    expect(Array.isArray(linkBody.details)).toBe(true);
+
+    const submitRes = await submitFlagPost(makeJsonRequest('/api/platform/submit-flag', 'POST', {
+      sessionId: 'default',
+      flagId: '',
+    }, { auth: true }));
+    const submitBody = await readJson(submitRes);
+
+    expect(submitRes.status).toBe(400);
+    expect(submitBody.error).toContain('Validation failed');
+    expect(Array.isArray(submitBody.details)).toBe(true);
+  });
 });

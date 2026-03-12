@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GET as healthGet } from '@/api/health/route';
+import * as toolAvailability from '@/lib/tool-availability';
 
 async function readJson(response) {
   return response.json().catch(() => ({}));
@@ -14,6 +15,7 @@ describe('/api/health route', () => {
   const originalToken2 = process.env.APP_API_TOKEN_2;
 
   afterEach(() => {
+    vi.restoreAllMocks();
     process.env.NODE_ENV = originalNodeEnv;
     process.env.ENABLE_COMMAND_EXECUTION = originalExec;
     process.env.ENABLE_ADMIN_API = originalAdmin;
@@ -27,6 +29,9 @@ describe('/api/health route', () => {
     delete process.env.ENABLE_ADMIN_API;
     process.env.APP_API_TOKEN = 'token-a';
     delete process.env.APP_API_TOKEN_2;
+    vi.spyOn(toolAvailability, 'isToolAvailable').mockImplementation((binary) => (
+      binary === 'nmap' || binary === 'searchsploit'
+    ));
 
     const response = await healthGet();
     expect(response.status).toBe(200);
@@ -42,6 +47,11 @@ describe('/api/health route', () => {
       autoWriteupSuggestionsEnabled: false,
       adversarialChallengeModeEnabled: false,
       apiTokenRequired: true,
+    });
+    expect(payload.toolAvailability).toMatchObject({
+      nmap: true,
+      searchsploit: true,
+      msfconsole: false,
     });
   });
 });

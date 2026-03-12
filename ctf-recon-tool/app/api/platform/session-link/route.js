@@ -1,28 +1,22 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { apiError } from '@/lib/api-error';
 import {
   createSessionTarget,
   getSession,
   listSessionTargets,
   updateSession,
-} from '@/lib/db';
+} from '@/lib/repositories/session-repository';
 import { getPlatformCapabilities, syncPlatformLink } from '@/lib/platform-adapters';
 import {
-  getRouteMeta,
-  readJsonBody,
+  readValidatedJsonBody,
+  readValidatedSearchParams,
   withAuth,
   withErrorHandler,
-  withValidSessionId,
 } from '@/lib/api-route';
-
-const SessionLinkSchema = z.object({
-  sessionId: z.string().optional().default('default'),
-  platformType: z.enum(['htb', 'thm', 'ctfd']).optional(),
-  remoteId: z.string().trim().min(1).max(128).optional(),
-  label: z.string().trim().max(255).optional(),
-  context: z.record(z.string(), z.any()).optional(),
-});
+import {
+  PlatformSessionLinkQuerySchema,
+  PlatformSessionLinkSchema,
+} from '@/lib/route-contracts';
 
 function ensureSessionExists(sessionId) {
   return getSession(sessionId) ? null : apiError('Session not found', 404);
@@ -67,8 +61,10 @@ function mergeImportedTargets(sessionId, importedTargets = [], platformLabel = '
 
 export const GET = withErrorHandler(
   withAuth(
-    withValidSessionId(async (request) => {
-      const { sessionId } = getRouteMeta(request);
+    async (request) => {
+      const parsed = readValidatedSearchParams(request, PlatformSessionLinkQuerySchema);
+      if (!parsed.success) return parsed.response;
+      const { sessionId } = parsed.data;
       const missing = ensureSessionExists(sessionId);
       if (missing) return missing;
       const session = getSession(sessionId);
@@ -77,20 +73,17 @@ export const GET = withErrorHandler(
         link: session?.metadata?.platform || null,
         capabilities: getPlatformCapabilities(),
       });
-    }, { source: 'query' })
+    }
   ),
   { route: '/api/platform/session-link GET' }
 );
 
 export const POST = withErrorHandler(
   withAuth(
-    withValidSessionId(async (request) => {
-      const parsed = SessionLinkSchema.safeParse(await readJsonBody(request, {}));
-      if (!parsed.success) {
-        return apiError('Validation failed', 400, { details: parsed.error.errors });
-      }
-
-      const { sessionId } = getRouteMeta(request);
+    async (request) => {
+      const parsed = await readValidatedJsonBody(request, PlatformSessionLinkSchema);
+      if (!parsed.success) return parsed.response;
+      const { sessionId } = parsed.data;
       const missing = ensureSessionExists(sessionId);
       if (missing) return missing;
       const session = getSession(sessionId);
@@ -134,7 +127,7 @@ export const POST = withErrorHandler(
         link: updatedSession?.metadata?.platform || storedPlatform,
         capabilities: getPlatformCapabilities(),
       });
-    }, { source: 'body' })
+    }
   ),
   { route: '/api/platform/session-link POST' }
 );

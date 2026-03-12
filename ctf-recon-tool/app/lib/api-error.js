@@ -8,5 +8,5 @@ import { NextResponse } from 'next/server';
  * @param {object} headers - Additional response headers
  */
 export function apiError(message, status = 500, extra = {}, headers = {}) {
-  return NextResponse.json({ error: message, ...extra }, { status, headers });
+  return NextResponse.json({ ok: false, error: message, status, ...extra }, { status, headers });
 }

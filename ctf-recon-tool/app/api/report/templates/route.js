@@ -5,18 +5,25 @@ import {
   deleteReportTemplate,
   listReportTemplates,
   updateReportTemplate,
-} from '@/lib/db';
-import { getRouteMeta, readJsonBody, withAuth, withErrorHandler } from '@/lib/api-route';
-import { isValidSessionId } from '@/lib/security';
+} from '@/lib/repositories/report-repository';
+import {
+  readValidatedJsonBody,
+  readValidatedSearchParams,
+  withAuth,
+  withErrorHandler,
+} from '@/lib/api-route';
+import {
+  ReportTemplateCreateSchema,
+  ReportTemplateDeleteQuerySchema,
+  ReportTemplateListQuerySchema,
+  ReportTemplatePatchSchema,
+} from '@/lib/route-contracts';
 
 export const GET = withErrorHandler(
   withAuth(async (request) => {
-    const { searchParams } = new URL(request.url);
-    const sessionId = String(searchParams.get('sessionId') || '').trim();
-    const format = String(searchParams.get('format') || '').trim();
-    if (sessionId && !isValidSessionId(sessionId)) {
-      return apiError('Invalid sessionId', 400);
-    }
+    const parsed = readValidatedSearchParams(request, ReportTemplateListQuerySchema);
+    if (!parsed.success) return parsed.response;
+    const { sessionId, format } = parsed.data;
     return NextResponse.json({
       templates: listReportTemplates({
         sessionId: sessionId || null,
@@ -29,8 +36,9 @@ export const GET = withErrorHandler(
 
 export const POST = withErrorHandler(
   withAuth(async (request) => {
-    const body = await readJsonBody(request, {});
-    const template = createReportTemplate(body);
+    const parsed = await readValidatedJsonBody(request, ReportTemplateCreateSchema);
+    if (!parsed.success) return parsed.response;
+    const template = createReportTemplate(parsed.data);
     if (!template) {
       return apiError('Failed to create report template', 400);
     }
@@ -41,10 +49,10 @@ export const POST = withErrorHandler(
 
 export const PATCH = withErrorHandler(
   withAuth(async (request) => {
-    const body = await readJsonBody(request, {});
-    const id = String(body?.id || '').trim();
-    if (!id) return apiError('Template id required', 400);
-    const template = updateReportTemplate(id, body);
+    const parsed = await readValidatedJsonBody(request, ReportTemplatePatchSchema);
+    if (!parsed.success) return parsed.response;
+    const { id, ...updates } = parsed.data;
+    const template = updateReportTemplate(id, updates);
     if (!template) {
       return apiError('Failed to update report template', 400);
     }
@@ -55,9 +63,9 @@ export const PATCH = withErrorHandler(
 
 export const DELETE = withErrorHandler(
   withAuth(async (request) => {
-    const { searchParams } = new URL(request.url);
-    const id = String(searchParams.get('id') || '').trim();
-    if (!id) return apiError('Template id required', 400);
+    const parsed = readValidatedSearchParams(request, ReportTemplateDeleteQuerySchema);
+    if (!parsed.success) return parsed.response;
+    const { id } = parsed.data;
     const ok = deleteReportTemplate(id);
     if (!ok) return apiError('Template not found', 404);
     return NextResponse.json({ success: true });

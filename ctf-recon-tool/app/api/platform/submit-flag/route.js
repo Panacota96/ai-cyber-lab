@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { apiError } from '@/lib/api-error';
 import {
   getFlagSubmission,
@@ -9,17 +8,11 @@ import {
 } from '@/lib/db';
 import { getPlatformCapabilities, submitPlatformFlag } from '@/lib/platform-adapters';
 import {
-  getRouteMeta,
-  readJsonBody,
+  readValidatedJsonBody,
   withAuth,
   withErrorHandler,
-  withValidSessionId,
 } from '@/lib/api-route';
-
-const SubmitFlagSchema = z.object({
-  sessionId: z.string().optional().default('default'),
-  flagId: z.coerce.number().int().positive(),
-});
+import { PlatformSubmitFlagSchema } from '@/lib/route-contracts';
 
 function ensureSessionExists(sessionId) {
   return getSession(sessionId) ? null : apiError('Session not found', 404);
@@ -37,13 +30,10 @@ function mergeFlagMetadata(existing = {}, patch = {}) {
 
 export const POST = withErrorHandler(
   withAuth(
-    withValidSessionId(async (request) => {
-      const parsed = SubmitFlagSchema.safeParse(await readJsonBody(request, {}));
-      if (!parsed.success) {
-        return apiError('Validation failed', 400, { details: parsed.error.errors });
-      }
-
-      const { sessionId } = getRouteMeta(request);
+    async (request) => {
+      const parsed = await readValidatedJsonBody(request, PlatformSubmitFlagSchema);
+      if (!parsed.success) return parsed.response;
+      const { sessionId } = parsed.data;
       const missing = ensureSessionExists(sessionId);
       if (missing) return missing;
 
@@ -112,7 +102,7 @@ export const POST = withErrorHandler(
         link: updatedSession?.metadata?.platform || null,
         capabilities: getPlatformCapabilities(),
       });
-    }, { source: 'body' })
+    }
   ),
   { route: '/api/platform/submit-flag POST' }
 );
