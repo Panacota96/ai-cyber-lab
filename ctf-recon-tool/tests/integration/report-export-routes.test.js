@@ -46,6 +46,44 @@ describe('report and export routes findings integration', () => {
     expect(body.report).toContain('Server banner disclosure');
   });
 
+  it('applies report filters to generated report output', async () => {
+    const session = createTestSession();
+    sessions.push(session.id);
+
+    const event = addTimelineEvent(session.id, {
+      type: 'command',
+      command: 'curl http://127.0.0.1/admin',
+      output: 'HTTP/1.1 200 OK',
+      status: 'success',
+    });
+
+    createFinding(session.id, {
+      title: 'Admin surface exposure',
+      severity: 'high',
+      likelihood: 'high',
+      tags: ['web', 'auth'],
+      description: 'Public-facing admin portal exposed.',
+      evidenceEventIds: [event.id],
+      source: 'manual',
+    });
+    createFinding(session.id, {
+      title: 'Minor banner disclosure',
+      severity: 'low',
+      tags: ['network'],
+      description: 'Low-priority header leak.',
+      evidenceEventIds: [event.id],
+      source: 'manual',
+    });
+
+    const req = makeJsonRequest(`/api/report?sessionId=${session.id}&format=technical-walkthrough&analystName=Tester&minimumSeverity=high&tag=web`, 'GET');
+    const res = await reportGet(req);
+    expect(res.status).toBe(200);
+    const body = await readJson(res);
+    expect(body.report).toContain('Included findings: 1/2');
+    expect(body.report).toContain('Admin surface exposure');
+    expect(body.report).not.toContain('Minor banner disclosure');
+  });
+
   it('does not inject findings into non-findings format', async () => {
     const session = createTestSession();
     sessions.push(session.id);
@@ -71,7 +109,17 @@ describe('report and export routes findings integration', () => {
     createFinding(session.id, {
       title: 'Exported finding',
       severity: 'high',
+      likelihood: 'high',
+      cvssScore: 8.7,
+      tags: ['web'],
       description: 'High-risk condition.',
+      source: 'manual',
+    });
+    createFinding(session.id, {
+      title: 'Duplicate exported finding',
+      severity: 'medium',
+      tags: ['web'],
+      description: 'Duplicate of the same issue.',
       source: 'manual',
     });
 
@@ -80,17 +128,28 @@ describe('report and export routes findings integration', () => {
       format: 'technical-walkthrough',
       analystName: 'Tester',
       inlineImages: false,
+      reportFilters: {
+        minimumSeverity: 'high',
+        tag: 'web',
+        includeDuplicates: false,
+      },
     });
     const res = await exportJsonPost(req);
     expect(res.status).toBe(200);
 
     const body = await readJson(res);
     expect(Array.isArray(body.findings)).toBe(true);
-    expect(body.findings).toHaveLength(1);
-    expect(body.findings[0].title).toBe('Exported finding');
+    expect(body.findings).toHaveLength(2);
+    expect(body.findings.some((finding) => finding.title === 'Exported finding')).toBe(true);
+    expect(Array.isArray(body.reportFindings)).toBe(true);
+    expect(body.reportFindings).toHaveLength(1);
+    expect(body.reportFindings[0].title).toBe('Exported finding');
+    expect(body.reportFilters.minimumSeverity).toBe('high');
+    expect(body.findingIntelligence).toHaveProperty('riskMatrix');
     expect(body).toHaveProperty('report.markdown');
     expect(body.meta.sessionName).toBe(session.name);
     expect(body.meta.formatLabel).toBeTruthy();
+    expect(body.meta.includedFindingCount).toBe(1);
   });
 
   it('sanitizes analystName as plain text in generated reports', async () => {

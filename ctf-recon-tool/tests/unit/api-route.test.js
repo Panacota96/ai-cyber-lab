@@ -42,6 +42,38 @@ describe('api route middleware helpers', () => {
     await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' });
   });
 
+  it('withAuth rejects mutating requests without a matching CSRF token', async () => {
+    process.env.APP_API_TOKEN = 'secret-token';
+    const request = makeRequest({
+      headers: {
+        'x-api-token': 'secret-token',
+      },
+    });
+    request.method = 'POST';
+
+    const handler = withAuth(async () => NextResponse.json({ ok: true }));
+    const response = await handler(request);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: 'Missing CSRF token' });
+  });
+
+  it('withAuth accepts mutating requests when CSRF header and cookie match', async () => {
+    process.env.APP_API_TOKEN = 'secret-token';
+    const request = makeRequest({
+      headers: {
+        'x-api-token': 'secret-token',
+        'x-csrf-token': 'csrf-123',
+        cookie: 'helms_watch_csrf=csrf-123',
+      },
+    });
+    request.method = 'POST';
+
+    const handler = withAuth(async () => NextResponse.json({ ok: true }));
+    const response = await handler(request);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+  });
+
   it('withValidSessionId reads and validates query session ids', async () => {
     const request = makeRequest({ url: 'http://localhost/api/test?sessionId=session_01' });
     const handler = withValidSessionId(async (req) => {

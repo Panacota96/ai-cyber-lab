@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
-import { getTimeline, getSession, recordAiUsage } from '@/lib/db';
+import { getTimeline, getSession, listCredentials, listFindings, recordAiUsage } from '@/lib/db';
 import { buildEstimatedUsage } from '@/lib/ai-cost';
+import {
+  buildCoachCacheKey,
+  buildCoachContext,
+  buildCoachPersonaPrompt,
+  getCoachCacheEntry,
+  setCoachCacheEntry,
+} from '@/lib/coach-context';
 import { isApiTokenValid, isValidSessionId } from '@/lib/security';
 import { rateLimit } from '@/lib/rate-limit';
 import { config } from '@/lib/config';
@@ -14,6 +21,9 @@ const CoachSchema = z.object({
   apiKey: z.string().optional().default(''),
   skill: z.string().optional().default('enum-target'),
   compare: z.boolean().optional().default(false),
+  coachLevel: z.enum(['beginner', 'intermediate', 'expert']).optional().default('intermediate'),
+  contextMode: z.enum(['balanced', 'compact', 'full']).optional().default('balanced'),
+  bypassCache: z.boolean().optional().default(false),
 });
 
 const COACH_SYSTEM_PROMPT = `You are CTF-Coach, an expert CTF machine coach with a phase-driven methodology.
@@ -89,28 +99,18 @@ const COACH_MODELS = {
   openai: 'gpt-4o',
 };
 
-function formatTimeline(events) {
-  if (!events || events.length === 0) {
-    return 'No commands or notes recorded yet. Session is empty.';
-  }
-  return events.map((e, i) => {
-    if (e.type === 'command') {
-      const output = e.output
-        ? (e.output.length > 500 ? e.output.substring(0, 500) + '\n...[truncated]' : e.output)
-        : '(no output)';
-      return `[${i + 1}] COMMAND (${e.status || 'unknown'}) | tag: ${e.tag || 'none'}\n$ ${e.command}\n${output}`;
-    }
-    if (e.type === 'note') {
-      return `[${i + 1}] NOTE | tag: ${e.tag || 'none'}\n${e.content}`;
-    }
-    if (e.type === 'screenshot') {
-      return `[${i + 1}] SCREENSHOT: ${e.name || 'untitled'} | tag: ${e.tag || 'none'}`;
-    }
-    return `[${i + 1}] EVENT: ${e.type}`;
-  }).join('\n\n');
+function buildCoachHeaders({ cacheStatus = 'miss', coachLevel = 'intermediate', contextMode = 'balanced', summary = {}, includeStreamHeaders = true } = {}) {
+  return {
+    ...(includeStreamHeaders ? STREAM_HEADERS : {}),
+    'X-Coach-Cache': cacheStatus,
+    'X-Coach-Level': coachLevel,
+    'X-Coach-Context-Mode': contextMode,
+    'X-Coach-Events': String(summary?.includedEvents ?? 0),
+    'X-Coach-Omitted-Events': String(summary?.omittedEvents ?? 0),
+  };
 }
 
-function makeStream(generatorFn, { onComplete } = {}) {
+function makeStream(generatorFn, { onComplete, headers } = {}) {
   const encoder = new TextEncoder();
   return new NextResponse(
     new ReadableStream({
@@ -130,7 +130,7 @@ function makeStream(generatorFn, { onComplete } = {}) {
         }
       },
     }),
-    { headers: STREAM_HEADERS }
+    { headers: headers || STREAM_HEADERS }
   );
 }
 
@@ -196,34 +196,63 @@ export async function POST(request) {
 
     const parsed = CoachSchema.safeParse(await request.json());
     if (!parsed.success) return apiError('Validation failed', 400, { details: parsed.error.errors });
-    const { sessionId, provider, apiKey, skill, compare } = parsed.data;
+    const {
+      sessionId,
+      provider,
+      apiKey,
+      skill,
+      compare,
+      coachLevel,
+      contextMode,
+      bypassCache,
+    } = parsed.data;
     if (!isValidSessionId(sessionId)) {
       return apiError('sessionId is required', 400);
     }
 
     const skillFocus = COACH_SKILL_FOCUS[skill] || COACH_SKILL_FOCUS['enum-target'];
-    const systemPrompt = `${COACH_SYSTEM_PROMPT}\n\nSkill Focus (${skill}):\n${skillFocus}`;
+    const personaPrompt = buildCoachPersonaPrompt(coachLevel);
+    const systemPrompt = `${COACH_SYSTEM_PROMPT}\n\n${personaPrompt}\n\nSkill Focus (${skill}):\n${skillFocus}`;
 
     const session = getSession(sessionId);
+    if (!session) {
+      return apiError('Session not found', 404);
+    }
     const events = getTimeline(sessionId);
-    const sessionName = session?.name || sessionId;
-    const timelineText = formatTimeline(events);
-
-    const userMessage = `Session: "${sessionName}"
-Target: ${session?.target || 'unknown'}
-OS: ${session?.os || 'unknown'}
-Difficulty: ${session?.difficulty || 'unknown'}
-
---- TIMELINE (${events.length} events) ---
-${timelineText}
---- END TIMELINE ---
-
-Based on this timeline, what is the single best next action to take?`;
+    const findings = listFindings(sessionId);
+    const credentials = listCredentials(sessionId);
+    const context = buildCoachContext({
+      session,
+      events,
+      findings,
+      credentials,
+      coachLevel,
+      contextMode,
+    });
+    const userMessage = context.userMessage;
+    const cacheKey = buildCoachCacheKey({
+      sessionId,
+      provider,
+      skill,
+      coachLevel,
+      contextMode,
+      compare,
+      signature: context.signature,
+    });
 
     const createTrackedStream = (selectedProvider, selectedModel, streamFn, apiKeyToUse, trackingMeta = {}) => makeStream(
       () => streamFn(userMessage, apiKeyToUse, systemPrompt),
       {
         onComplete: async (completionText) => {
+          setCoachCacheEntry(cacheKey, {
+            type: 'text',
+            provider: selectedProvider,
+            model: selectedModel,
+            content: completionText,
+            contextSummary: context.summary,
+            coachLevel,
+            contextMode,
+          });
           try {
             const usage = buildEstimatedUsage({
               provider: selectedProvider,
@@ -246,14 +275,39 @@ Based on this timeline, what is the single best next action to take?`;
                 mode: 'stream',
                 skill,
                 events: events.length,
+                coachLevel,
+                contextMode,
+                cache: 'miss',
+                contextSummary: context.summary,
               },
             });
           } catch (trackingError) {
             console.error('[Coach Usage Tracking Error]', trackingError);
           }
         },
+        headers: buildCoachHeaders({
+          cacheStatus: bypassCache ? 'bypass' : 'miss',
+          coachLevel,
+          contextMode,
+          summary: context.summary,
+        }),
       }
     );
+
+    if (!bypassCache) {
+      const cached = getCoachCacheEntry(cacheKey);
+      if (cached?.type === 'compare' && compare) {
+        return NextResponse.json(
+          { responses: cached.responses || [] },
+          { headers: buildCoachHeaders({ cacheStatus: 'hit', coachLevel, contextMode, summary: cached.contextSummary || context.summary, includeStreamHeaders: false }) }
+        );
+      }
+      if (cached?.type === 'text' && !compare) {
+        return new NextResponse(cached.content || '', {
+          headers: buildCoachHeaders({ cacheStatus: 'hit', coachLevel, contextMode, summary: cached.contextSummary || context.summary }),
+        });
+      }
+    }
 
     // E.6 — Multi-model compare mode: run all configured providers in parallel, return JSON
     if (compare) {
@@ -280,7 +334,17 @@ Based on this timeline, what is the single best next action to take?`;
         content: results[i].status === 'fulfilled' ? results[i].value : `Error: ${results[i].reason?.message || 'failed'}`,
         ok: results[i].status === 'fulfilled',
       }));
-      return NextResponse.json({ responses });
+      setCoachCacheEntry(cacheKey, {
+        type: 'compare',
+        responses,
+        contextSummary: context.summary,
+        coachLevel,
+        contextMode,
+      });
+      return NextResponse.json(
+        { responses },
+        { headers: buildCoachHeaders({ cacheStatus: bypassCache ? 'bypass' : 'miss', coachLevel, contextMode, summary: context.summary, includeStreamHeaders: false }) }
+      );
     }
 
     // Explicit provider override (manual selection from UI)

@@ -10,6 +10,7 @@ FROM node:20-bookworm AS builder
 WORKDIR /app
 
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV HELMS_DATA_DIR=/tmp/helms-build-data
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -33,7 +34,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffuf \
     git \
     gobuster \
+    hashcat \
     iputils-ping \
+    john \
     ldap-utils \
     netcat-openbsd \
     nmap \

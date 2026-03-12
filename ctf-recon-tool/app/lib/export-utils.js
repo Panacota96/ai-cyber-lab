@@ -4,9 +4,18 @@ import {
   getSession,
   getTimeline,
   getWriteup,
+  listCredentials,
   listPocSteps,
   listFindings,
 } from '@/lib/db';
+import { listArtifacts } from '@/lib/artifact-repository';
+import {
+  buildAttackCoverage,
+  buildRiskMatrix,
+  filterFindings,
+  normalizeReportFilters,
+} from '@/lib/finding-intelligence';
+import { listShellSessions, listShellTranscript } from '@/lib/shell-repository';
 import {
   labReport,
   executiveSummary,
@@ -166,6 +175,7 @@ export function buildExportBundle({
   format = 'technical-walkthrough',
   analystName = 'Unknown',
   inlineImages = false,
+  reportFilters = {},
 }) {
   const safeAnalystName = normalizeAnalystName(analystName);
   const session = getSession(sessionId);
@@ -176,10 +186,33 @@ export function buildExportBundle({
   const timeline = getTimeline(sessionId);
   const pocSteps = listPocSteps(sessionId);
   const findings = listFindings(sessionId);
+  const normalizedReportFilters = normalizeReportFilters(reportFilters);
+  const reportFindings = filterFindings(findings, normalizedReportFilters);
+  const findingIntelligence = {
+    riskMatrix: buildRiskMatrix(reportFindings),
+    attackCoverage: buildAttackCoverage(reportFindings),
+  };
+  const credentials = listCredentials(sessionId);
+  const shellSessions = listShellSessions(sessionId);
+  const shellTranscripts = Object.fromEntries(
+    shellSessions.map((shellSession) => [
+      shellSession.id,
+      listShellTranscript(sessionId, shellSession.id, { cursor: 0, limit: 5000 }),
+    ])
+  );
+  const artifacts = listArtifacts(sessionId);
   const generatedAt = new Date();
   const formatGenerator = FORMATS[format] || technicalWalkthrough;
   const reportMeta = buildReportMeta(session, format, safeAnalystName, generatedAt);
-  const reportMarkdownRaw = formatGenerator(session, timeline, safeAnalystName, { pocSteps, findings, generatedAt });
+  const reportMarkdownRaw = formatGenerator(session, timeline, safeAnalystName, {
+    pocSteps,
+    findings: reportFindings,
+    allFindings: findings,
+    reportFilters: normalizedReportFilters,
+    findingIntelligence,
+    credentials,
+    generatedAt,
+  });
   const reportMarkdown = inlineImages ? inlineMarkdownImages(reportMarkdownRaw) : reportMarkdownRaw;
 
   const timelineHydrated = hydrateTimelineInlineImages(timeline, sessionId, inlineImages);
@@ -195,6 +228,13 @@ export function buildExportBundle({
     timeline: timelineHydrated,
     pocSteps: pocHydrated,
     findings,
+    reportFindings,
+    reportFilters: normalizedReportFilters,
+    findingIntelligence,
+    credentials,
+    shellSessions,
+    shellTranscripts,
+    artifacts,
     writeup,
   };
 }
@@ -220,7 +260,7 @@ function renderInline(text) {
   return value;
 }
 
-function markdownToHtmlContent(markdown) {
+export function markdownToHtmlContent(markdown) {
   const lines = String(markdown || '').replace(/\r\n/g, '\n').split('\n');
   const html = [];
   let paragraphLines = [];

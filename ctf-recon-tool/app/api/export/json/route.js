@@ -19,6 +19,7 @@ export async function POST(request) {
     const format = String(payload?.format || 'technical-walkthrough');
     const analystName = normalizeAnalystName(payload?.analystName);
     const inlineImages = normalizeBoolean(payload?.inlineImages, false);
+    const reportFilters = payload?.reportFilters || {};
 
     if (!sessionId || !isValidSessionId(sessionId)) {
       return apiError('sessionId is required', 400);
@@ -29,6 +30,7 @@ export async function POST(request) {
       format,
       analystName,
       inlineImages,
+      reportFilters,
     });
     if (!bundle) {
       return apiError('Session not found', 404);
@@ -42,10 +44,14 @@ export async function POST(request) {
         analystName: bundle.analystName,
         sessionName: bundle.reportMeta?.sessionName || bundle.session.name,
         target: bundle.reportMeta?.target || bundle.session.target || null,
+        primaryTargetId: bundle.session.primaryTargetId || null,
+        targetCount: Array.isArray(bundle.session.targets) ? bundle.session.targets.length : 0,
         difficulty: bundle.reportMeta?.difficulty || bundle.session.difficulty || null,
         objective: bundle.reportMeta?.objective || bundle.session.objective || null,
         generatedAt: bundle.reportMeta?.generatedAtIso || null,
         formatLabel: bundle.reportMeta?.formatLabel || bundle.format,
+        findingCount: Array.isArray(bundle.findings) ? bundle.findings.length : 0,
+        includedFindingCount: Array.isArray(bundle.reportFindings) ? bundle.reportFindings.length : 0,
       },
       session: bundle.session,
       report: {
@@ -54,6 +60,13 @@ export async function POST(request) {
       timeline: bundle.timeline,
       pocSteps: bundle.pocSteps,
       findings: bundle.findings,
+      reportFindings: bundle.reportFindings,
+      reportFilters: bundle.reportFilters,
+      findingIntelligence: bundle.findingIntelligence,
+      credentials: bundle.credentials,
+      shellSessions: bundle.shellSessions,
+      shellTranscripts: bundle.shellTranscripts,
+      artifacts: bundle.artifacts,
       writeup: bundle.writeup,
     };
 

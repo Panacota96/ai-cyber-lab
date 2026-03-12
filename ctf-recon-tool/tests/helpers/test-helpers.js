@@ -8,6 +8,7 @@ import {
 } from '@/lib/db';
 
 export const TEST_API_TOKEN = process.env.APP_API_TOKEN || 'test-token';
+export const TEST_CSRF_TOKEN = 'test-csrf-token';
 
 export function makeSessionId(prefix = 'test') {
   const token = crypto.randomBytes(4).toString('hex');
@@ -20,7 +21,8 @@ export function createTestSession(overrides = {}) {
   const target = overrides.target || '127.0.0.1';
   const difficulty = overrides.difficulty || 'medium';
   const objective = overrides.objective || 'Test objective';
-  const created = createSession(id, name, { target, difficulty, objective });
+  const targets = Array.isArray(overrides.targets) ? overrides.targets : undefined;
+  const created = createSession(id, name, { target, difficulty, objective, targets });
   if (!created) {
     throw new Error(`Failed to create test session: ${id}`);
   }
@@ -40,6 +42,10 @@ export function makeJsonRequest(urlPath, method = 'GET', body = null, { auth = f
   }
   if (auth) {
     headers.set('x-api-token', TEST_API_TOKEN);
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) {
+      headers.set('x-csrf-token', TEST_CSRF_TOKEN);
+      headers.set('cookie', `helms_watch_csrf=${encodeURIComponent(TEST_CSRF_TOKEN)}`);
+    }
   }
   return new Request(`http://localhost${urlPath}`, {
     method,

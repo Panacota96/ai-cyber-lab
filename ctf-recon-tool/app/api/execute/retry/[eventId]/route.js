@@ -15,6 +15,7 @@ import {
 
 const RetrySchema = z.object({
   command: z.string().min(1).max(4000).optional(),
+  targetId: z.string().optional(),
   timeout: z.number().optional(),
 });
 
@@ -75,6 +76,7 @@ export const POST = withErrorHandler(
 
     const result = startCommandExecution({
       sessionId: sourceEvent.session_id,
+      targetId: parsed.data.targetId || sourceEvent.target_id || null,
       command,
       timeoutMs: normalizeExecuteTimeout(parsed.data.timeout),
       tags: Array.isArray(tags) ? tags : [],

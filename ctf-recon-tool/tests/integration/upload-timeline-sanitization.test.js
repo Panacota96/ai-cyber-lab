@@ -2,6 +2,7 @@ import { PATCH as timelinePatch, POST as timelinePost } from '@/api/timeline/rou
 import { POST as uploadPost } from '@/api/upload/route';
 import {
   TEST_API_TOKEN,
+  TEST_CSRF_TOKEN,
   cleanupTestSession,
   createTestSession,
   readJson,
@@ -29,7 +30,11 @@ function makeUploadRequest({ sessionId, name, tag, caption, context }) {
   if (context !== undefined) formData.set('context', context);
   return new Request('http://localhost/api/upload', {
     method: 'POST',
-    headers: new Headers({ 'x-api-token': TEST_API_TOKEN }),
+    headers: new Headers({
+      'x-api-token': TEST_API_TOKEN,
+      'x-csrf-token': TEST_CSRF_TOKEN,
+      cookie: `helms_watch_csrf=${encodeURIComponent(TEST_CSRF_TOKEN)}`,
+    }),
     body: formData,
   });
 }
@@ -79,6 +84,8 @@ describe('upload and timeline metadata sanitization', () => {
       headers: new Headers({
         'Content-Type': 'application/json',
         'x-api-token': TEST_API_TOKEN,
+        'x-csrf-token': TEST_CSRF_TOKEN,
+        cookie: `helms_watch_csrf=${encodeURIComponent(TEST_CSRF_TOKEN)}`,
       }),
       body: JSON.stringify({
         sessionId: session.id,
@@ -107,6 +114,8 @@ describe('upload and timeline metadata sanitization', () => {
       headers: new Headers({
         'Content-Type': 'application/json',
         'x-api-token': TEST_API_TOKEN,
+        'x-csrf-token': TEST_CSRF_TOKEN,
+        cookie: `helms_watch_csrf=${encodeURIComponent(TEST_CSRF_TOKEN)}`,
       }),
       body: JSON.stringify({
         sessionId: session.id,
@@ -136,6 +145,8 @@ describe('upload and timeline metadata sanitization', () => {
       headers: new Headers({
         'Content-Type': 'application/json',
         'x-api-token': TEST_API_TOKEN,
+        'x-csrf-token': TEST_CSRF_TOKEN,
+        cookie: `helms_watch_csrf=${encodeURIComponent(TEST_CSRF_TOKEN)}`,
       }),
       body: JSON.stringify({
         sessionId: session.id,

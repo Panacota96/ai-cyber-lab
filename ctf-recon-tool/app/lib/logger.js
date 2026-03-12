@@ -4,6 +4,7 @@ import { logToDb } from './db';
 
 const LOG_DIR = path.join(process.cwd(), 'data');
 const LOG_FILE = path.join(LOG_DIR, 'app.log');
+const JSON_LOGGING = String(process.env.LOG_FORMAT || '').trim().toLowerCase() === 'json';
 
 if (!fs.existsSync(LOG_DIR)) {
   fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -16,11 +17,25 @@ function errorMeta(error) {
   return error instanceof Error ? { message: error.message, stack: error.stack } : error;
 }
 
+function serializeEntry(level, message, metadata) {
+  return {
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+    metadata,
+  };
+}
+
 function write(level, message, metadata, persistToDb) {
-  const entry = JSON.stringify({ timestamp: new Date().toISOString(), level, message, metadata }) + '\n';
-  try { fs.appendFileSync(LOG_FILE, entry); } catch (_) { /* ignore fs errors */ }
+  const entry = serializeEntry(level, message, metadata);
+  try { fs.appendFileSync(LOG_FILE, `${JSON.stringify(entry)}\n`); } catch (_) { /* ignore fs errors */ }
+
   const consoleFn = level === 'ERROR' ? console.error : level === 'WARN' ? console.warn : console.log;
-  consoleFn(`[${level}] ${message}`, metadata);
+  if (JSON_LOGGING) {
+    consoleFn(JSON.stringify(entry));
+  } else {
+    consoleFn(`[${level}] ${message}`, metadata);
+  }
   if (persistToDb) logToDb(level, message, metadata);
 }
 

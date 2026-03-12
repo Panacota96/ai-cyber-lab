@@ -12,12 +12,12 @@ Helm's Watch is a production-grade Next.js 16 CTF reconnaissance assistant with:
 
 - Clean separation of concerns (frontend, API routes, SQLite DB, security layer)
 - Multi-provider AI coach (Claude, Gemini, OpenAI) with streaming, cost tracking, and feedback
-- Rich CTF-specific features: session mgmt, timeline, discovery graph, PoC recorder, AI findings, reporting, local flags, wordlist browsing, SearchSploit, and operator templates
-- Robust security: path traversal protection, rate limiting, API token rotation, zod validation
+- Rich CTF-specific features: session mgmt, timeline, discovery graph, credential manager, PoC recorder, AI findings, reporting, local flags, wordlist browsing, SearchSploit, and operator templates
+- Robust security: path traversal protection, rate limiting, API token rotation, CSRF enforcement, and zod validation
 - Multi-format export: PDF, DOCX, HTML, JSON, Markdown
 - Vitest test suite (Phase 2 complete)
 
-**Current gaps:** real-time output streaming, interactive shell/session bridging, CTF platform integrations, advanced graph path/layout features, no CVSS calculator, and no CVE/ExploitDB lookup.
+**Current gaps:** deeper `HomeClient` / persistence decomposition, executive/report audience automation beyond the current Chronicle workflow, external reporting handoff paths such as SysReptor, and deeper shell transports beyond reverse/webshell v1.
 
 **Product scope:** Helm's Paladin is desktop/laptop-first; tablet and mobile responsive work is intentionally out of scope.
 
@@ -44,15 +44,32 @@ Helm's Watch is a production-grade Next.js 16 CTF reconnaissance assistant with:
 
 All `Effort = S` roadmap items are now completed.
 
-### Next Wave Set (Release-First Track)
+Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE execution transport, session credential manager, CSRF middleware, structured JSON logging).
 
-> Selected strategy: **Release First**. Stabilize distribution and release operations first, then harden runtime consistency, then deliver higher-complexity operator intelligence and shell/artifact capabilities.
+### Next Wave Set (Post-Wave-12.5 Track)
+
+> Selected strategy: **Stabilize first, then expand the target model, then accelerate operator/reporting workflows**. The runtime, intelligence, shell/artifact, and hash-identification foundations are in place; the next sequence should reduce structural risk before broadening session scope and report surfaces.
+
+#### Wave 10.5 — Runtime Foundation
+
+**Status:** Implemented (2026-03-11)
+
+**Scope:** `EX.1`, `CTF.1`, `SEC.2`, `B.7`
+
+**Outcome:**
+- Replaced active-command polling as the primary live-output path with SSE, while keeping polling as a fallback.
+- Added a first-class session credential model for storage, update, export, and reporting flows.
+- Enforced CSRF checks on state-mutating authenticated routes.
+- Added opt-in structured JSON logging for local file logs and console aggregation.
 
 #### Wave 11 — Operator Intelligence Layer
+
+**Status:** Implemented (2026-03-11)
 
 **Scope:** `EX.2`, `EX.3`, `CTF.5`, `CTF.10`, `CTF.11`
 
 **Outcome:**
+- Build on top of live execution streams and stored credentials rather than timeline-only polling state.
 - Ingest Nmap XML into graph entities.
 - Render structured command output (JSON/XML) cleanly in terminal/timeline.
 - Suggest next steps from discovered services.
@@ -61,22 +78,169 @@ All `Effort = S` roadmap items are now completed.
 
 #### Wave 12 — Shell and Artifact Operations
 
-**Scope:** `EX.12`, `CTF.14` (`CTF.1` and `CTF.2` as optional sub-wave if capacity allows)
+**Status:** Implemented (2026-03-11)
+
+**Scope:** `EX.12`, `CTF.14`
 
 **Outcome:**
-- Multi-session shell hub (reverse shell, webshell, metasploit/meterpreter transport integration).
-- Transcript persistence across live shell sessions.
-- Artifact/loot manager linked to notes and report evidence.
+- Multi-session shell hub for reverse shells and webshells with live SSE updates, transcript persistence, and tabbed in-browser terminals.
+- Session artifact manager for operator uploads and transcript-saved evidence with inline preview and report insertion hooks.
+- Shell/artifact persistence now lives in dedicated repositories/services instead of extending the legacy monolith further.
+
+#### Wave 12.5 — Credential Crack Prep
+
+**Status:** Implemented (2026-03-11)
+
+**Scope:** `CTF.2`
+
+**Outcome:**
+- Credential manager can fingerprint common hash formats and persist the best guess when a credential has no `hashType`.
+- Operators can insert generated `john` and `hashcat` commands directly into the command box from the credential sidebar.
+- Docker runtime now includes `john` and `hashcat`, with wordlist-path fallback support for generated commands.
+
+#### Wave 13 — Stabilization and Decomposition
+
+**Status:** Implemented (2026-03-11)
+
+**Scope:** `G.7`, `G.2`, `UX.11`, `UX.3`
+
+**Outcome:**
+- Extracted timeline filter and notification logic out of the main client shell, with new helper modules and components instead of another inline toolbar/feedback block.
+- Introduced TypeScript for new helper modules and project config without forcing a repo-wide conversion.
+- Added responsive filter-toolbar collapse behavior below `1400px` and toast notifications for command completion, discovery refreshes, credentials, shells, and artifacts.
+- Stabilized local startup behavior by avoiding eager shell-hub probes before health flags load and by returning an empty wordlist browser state when the configured root does not exist.
+- Added supported local verification paths with `npm run dev:webpack`, `npm run prepare:local-runtime`, and `npm run start:local-runtime`, plus generated-output ignores for ESLint/Docker/git hygiene.
+- Verified the staged standalone runtime with Playwright smoke coverage for page load, compact timeline filters, and shell-view rendering, and verified Docker build/runtime health with bundled `john`, `hashcat`, and `searchsploit` availability.
+
+#### Wave 14 — Multi-Target Recon Core
+
+**Status:** Implemented (2026-03-11)
+
+**Scope:** `CTF.8`, `GR.12`, `GR.18`
+
+**Outcome:**
+- Let a single session track multiple hosts cleanly across timeline, graph, credentials, shells, artifacts, and reports.
+- Add hierarchical graph layout and attack-path highlighting so multi-host sessions stay intelligible.
+- Make multi-target state the base layer for later orchestration and platform integrations.
+
+**Implemented:**
+- Added a normalized `session_targets` registry with primary-target backfill from legacy `sessions.target`.
+- Threaded `targetId` through command execution, timeline events, credentials, shell sessions, artifacts, and JSON exports.
+- Added `/api/sessions/targets` plus header/session-modal target controls so operators can add, select, promote, and delete targets without leaving the app.
+- Hydrated graph nodes and edges with target affinity derived from their source timeline events so older sessions can participate in target-aware views without manual repair.
+- Added target-scoped graph filtering, target-oriented layout mode, and attack-path highlighting so operators can isolate one host or follow likely exploitation paths through a larger session graph.
+
+#### Wave 15 — Assisted Operator Flow
+
+**Status:** Implemented (2026-03-11)
+
+**Scope:** `CTF.6`, `A.4`, `UX.5`, `GR.8`
+
+**Outcome:**
+- Add fuzzy command suggestions and a command palette so operators can act on discovered context faster.
+- Expand the service-suggestion model into a broader follow-up pipeline that stays advisory by default.
+- Add graph context actions to tighten graph-to-command and graph-to-timeline workflows.
+
+**Implemented:**
+- Added target-aware ranking across advisory service suggestions, recent command history, and toolbox templates so the command box can surface inline `Tab` completions instead of requiring sidebar browsing.
+- Added a `Ctrl/Cmd+K` command palette with ranked command previews across service suggestions, recent commands, and static toolbox templates.
+- Added graph node context actions that let operators search the timeline from a node or insert related follow-up commands directly from selected hosts, services, and CVE nodes.
+- Kept the full operator flow advisory-only: suggestions insert commands into the input box, but nothing auto-executes.
+
+#### Wave 16 — Reporting Intelligence Core
+
+**Status:** Implemented (2026-03-11)
+
+**Scope:** `R.2`, `R.8`, `R.9`, `R.11`, `R.4`
+
+**Outcome:**
+- Add MITRE ATT&CK tagging, CVSS calculator/badges, report filtering, finding dedup/relationships, and risk-matrix output.
+- Use the structured evidence introduced in Waves 11-15 to make reports more defensible and easier to slice by audience.
+
+**Implemented:**
+- Added a shared `finding-intelligence` layer that derives ATT&CK techniques, CVSS severity, likelihood-driven risk scoring, duplicate relationships, and related-finding links from persisted findings and evidence.
+- Extended findings storage and APIs with manual `likelihood`, `cvssScore`, and `cvssVector` fields while keeping ATT&CK, deduplication, and relationship tracking derived from one normalized pipeline.
+- Updated report generation and all export paths to honor report filters (`minimumSeverity`, `tag`, `techniqueId`, `includeDuplicates`) and to emit scope summaries, risk matrices, ATT&CK coverage, and richer finding detail blocks consistently across Markdown, HTML, DOCX, PDF, and JSON.
+- Expanded the in-app report modal and findings editor with report-filter controls plus CVSS/likelihood/risk/ATT&CK metadata so operators can drive the same reporting model without leaving the app.
+
+#### Wave 17 — Executive and Comparative Reporting
+
+**Status:** Implemented (2026-03-11)
+
+**Scope:** `R.1`, `R.5`, `R.6`, `R.10`, `D.1`
+
+**Outcome:**
+- Add executive-summary generation, remediation suggestions, before/after comparison reports, read-only share links, and a custom report template builder.
+- Move reporting from operator-only export generation to a more distributable output model.
+
+**Implemented:**
+- Added executive-summary generation with deterministic fallback plus optional Anthropic/OpenAI/Gemini assistance on top of the existing reporting filters and findings-intelligence pipeline.
+- Added per-finding remediation suggestion generation with safe fallback guidance so remediation text can be filled from the report workflow without leaving the findings editor.
+- Added before/after session comparison reporting that classifies findings as new, remediated, changed, or persisted and renders a reusable delta report.
+- Added reusable report-template persistence with placeholder substitution so operators can save the current Chronicle layout and reapply it to later sessions.
+- Added read-only share snapshots for generated reports via unique public `/share/[token]` URLs plus authenticated share management and revocation from the report modal.
+
+#### Wave 18 — Coach and Platform Expansion
+
+**Status:** Implemented (2026-03-12)
+
+**Scope:** `E.1`, `E.2`, `CTF.7`
+
+**Outcome:**
+- Added coach difficulty levels, context modes, bounded prompt assembly, and in-memory cache headers for long-running sessions.
+- Added optional HTB / THM / CTFd platform linkage via session metadata, plus remote metadata sync and linked flag submit/validation flows where supported.
+
+**Ecosystem linkage:**
+- Track a downstream reporting bridge to [SysReptor](https://docs.sysreptor.com/) after Wave 18 stabilization so Helm's Watch can hand off structured Chronicle/report output into a dedicated reporting platform when operators need full report-lifecycle workflows.
+- Primary reference targets:
+  - [SysReptor documentation](https://docs.sysreptor.com/)
+  - [Hack The Box Reporting with SysReptor](https://docs.sysreptor.com/htb-reporting-with-sysreptor/)
+
+#### Wave 19 — Experimental AI Extensions
+
+**Status:** Planned
+
+**Scope:** `E.3`, `E.8`, `E.9`
+
+**Outcome:**
+- Defer offline coach mode, auto-writeup enhancement, and adversarial challenge mode into an explicitly experimental wave.
+- Keep these features behind flags/provider checks so they do not destabilize the core operator workflow.
+
+#### Structural Refactor Track
+
+**Scope:** split `app/HomeClient.js` by domain and decompose `app/lib/db.js` into narrower repositories/services before Wave 12 shell/artifact work.
+
+**Outcome:**
+- Frontend work targets extracted execution/timeline, reporting/findings, graph, coach, and sidebar modules instead of growing the wrapper page.
+- Persistence work targets session/timeline, findings/reporting, graph, flags, AI usage, credentials, and future shell/artifact access layers.
 
 #### Expected Public Interface Progression
 
-- Wave 11: additive API/UI behavior for parsing, enrichment, and graph/event rendering.
-- Wave 12: new shell/artifact API groups and additive session data models.
+- Wave 10.5: additive SSE transport, credential CRUD/export/reporting data, CSRF bootstrap/validation, and structured logging mode.
+- Wave 11: additive API/UI behavior for parsing, enrichment, and graph/event rendering on top of the streaming/credential foundation.
+- Wave 12: new shell/artifact API groups and additive session data models after module boundaries are stabilized.
+- Wave 12.5: additive credential hash-identification API/UI behavior on top of the credential manager and shell/artifact runtime.
+- Wave 13: primarily internal decomposition plus additive UX affordances that improve testability and operator feedback.
+- Wave 14: additive target-registry and multi-host relationships across existing session models and graph views, including scoped graph filtering and attack-path emphasis.
+- Wave 15: additive operator suggestion surfaces and graph actions that remain advisory by default.
+- Wave 16: additive report metadata, filtering, scoring, and deduplication on top of the current export formats.
+- Wave 17: additive sharing, comparison, and reusable template/report-generation surfaces.
+- Wave 18: additive coach behavior, optional CTF platform/session integration paths, and the planning anchor for downstream report-platform linkage such as SysReptor.
+- Wave 19: experimental AI-only additions behind explicit runtime flags.
 
 #### Success Criteria
 
+- Wave 10.5: live command output appears without primary polling lag, credentials persist/export cleanly, mutating routes reject missing CSRF tokens, and logs can emit JSON.
 - Wave 11: Nmap XML and CVE evidence automatically appear in graph and report context.
-- Wave 12: concurrent shell sessions are usable with reliable transcripts and artifact linkage.
+- Wave 12: concurrent shell sessions are usable with reliable transcripts, artifact linkage, and report insertions.
+- Wave 12.5: stored hashes can be fingerprinted quickly, and generated cracking commands match the tools available in the runtime image.
+- Wave 13: extracted UI/persistence modules reduce change risk, and the operator gets responsive filters plus clear transient feedback for long-running actions.
+- Wave 14: one session can represent multiple related targets without cross-target confusion in graph, credentials, shells, or exports, and the graph can pivot cleanly between all-target and focused-target views.
+- Wave 15: next-step guidance is faster to reach, target-aware, and still operator-controlled rather than auto-executing.
+- Wave 16: reports carry ATT&CK/CVSS/dedup/filter semantics consistently across Markdown, PDF, HTML, JSON, and DOCX.
+- Wave 17: reports can be compared, shared read-only, and generated from reusable templates.
+- Wave 18: implemented coach difficulty/context scaling plus optional HTB / THM / CTFd linkage, while preserving the roadmap linkage toward SysReptor-based downstream reporting workflows.
+- Wave 19: experimental AI features remain isolated from the core execution, evidence, and reporting paths.
 
 ### UX
 
@@ -113,22 +277,21 @@ All currently tracked GitHub / CI-CD items are completed through Wave 9.
 | R.9 | Report filtering: generate subset by severity, date range, or tag | Med | M |
 | R.10 | Before/after session comparison report (delta: new/remediated/changed findings) | Med | M |
 | R.11 | Finding deduplication + relationship tracking (`relatedFindingIds`) | Med | M |
+| R.15 | SysReptor bridge — hand off Chronicle/report output into SysReptor workflows using its reporting platform and certification-oriented templates | Med | H |
 
 ### Execution Engine (NEW)
 
 | ID | Item | Impact | Effort |
 |----|------|--------|--------|
-| EX.1 | Real-time output streaming via SSE (Server-Sent Events) | High | H |
 | EX.2 | Nmap XML auto-parser (`-oX` output → graph host/service nodes) | High | M |
 | EX.3 | Structured output detection (auto-pretty-print JSON/XML in terminal) | Med | M |
-| EX.12 | Interactive shell session hub — attach webshells, reverse shells, and Metasploit/Meterpreter transports with multiple live tabs and transcript persistence | High | H |
+| EX.12 | Interactive shell session hub — v1 ships reverse shells and webshells with multiple live tabs and transcript persistence; deeper transports stay deferred | High | H |
 
 ### CTF-Specific Features (NEW)
 
 | ID | Item | Impact | Effort |
 |----|------|--------|--------|
-| CTF.1 | Credential manager (store username/password/hash per session, link to nodes) | High | M |
-| CTF.2 | Hash identification workflow (hashid → john/hashcat command generator) | High | M |
+| CTF.2 | Hash identification workflow (hashid → john/hashcat command generator) | Implemented | M |
 | CTF.5 | Service enumeration checklists (HTTP found → auto-suggest gobuster, nikto…) | High | M |
 | CTF.6 | Automated follow-up pipeline (IP discovered → auto-suggest next commands) | High | H |
 | CTF.7 | Platform integrations: HTB / THM / CTFd API (flag submit, machine info) | Med | H |
@@ -141,20 +304,16 @@ All currently tracked GitHub / CI-CD items are completed through Wave 9.
 
 | ID | Item | Impact | Effort |
 |----|------|--------|--------|
-| G.2 | TypeScript gradual conversion (start with `lib/` modules) | Med | H |
-| G.7 | Frontend state refactor: 30+ `useState` → `useReducer` in `page.js` | Med | H |
+| G.2 | TypeScript gradual conversion for new or extracted modules first (streaming, credentials, shell transport) | Med | H |
+| G.7 | Frontend state refactor: split `app/HomeClient.js` into domain modules/reducers/hooks | Med | H |
 
 ### Security
 
-| ID | Item | Impact | Effort |
-|----|------|--------|--------|
-| SEC.2 | CSRF token for state-mutating POST endpoints | Med | M |
+All currently tracked security items are completed through Wave 10.5.
 
 ### Ops / Infrastructure
 
-| ID | Item | Impact | Effort |
-|----|------|--------|--------|
-| B.7 | Structured JSON logging mode (`LOG_FORMAT=json` env var) | Med | M |
+All currently tracked ops/infrastructure items are completed through Wave 10.5.
 
 ### AI Coach
 
@@ -290,7 +449,7 @@ All currently tracked GitHub / CI-CD items are completed through Wave 9.
 - OPS.1 `HEALTHCHECK` instruction in `Dockerfile`
 - OPS.2 Resource limits in `docker-compose.yml` (`mem_limit`, `cpus`)
 
-### Medium Items (20/20 Done)
+### Medium Items (23/23 Done)
 
 - A.6 Drag-and-drop report block reordering
 - A.10 Timeline keyboard shortcuts (↑↓ history, Ctrl+F search)
@@ -312,10 +471,14 @@ All currently tracked GitHub / CI-CD items are completed through Wave 9.
 - G.5 Error handling consistency across all endpoints
 - G.6 API response schema validation with zod
 - G.10 OpenAPI/Swagger docs at `/api/docs`
+- B.7 Structured JSON logging mode (`LOG_FORMAT=json`)
+- CTF.1 Credential manager (store username/password/hash per session, link to nodes)
+- SEC.2 CSRF token for state-mutating POST/PATCH/DELETE endpoints
 
-### Hard Items (1/1 Done)
+### Hard Items (2/2 Done)
 
 - D.2 AI auto-finding extraction + severity tagging (findings table + `/api/findings`)
+- EX.1 Real-time output streaming via SSE (Server-Sent Events)
 
 ### New Features Added This Sprint
 
@@ -329,6 +492,9 @@ All currently tracked GitHub / CI-CD items are completed through Wave 9.
 - Findings tag editing and deterministic auto-tagging endpoint
 - SearchSploit runtime support in Docker with toolbox/cheatsheet integration
 - Wordlist browser and local flag tracking workflows in the sidebar
+- SSE execution stream transport with live timeline updates and polling fallback
+- Session credential manager with export/report integration
+- CSRF bootstrap and validation flow for mutating authenticated routes
 - Report block drag-and-drop reordering (HTML5 native DnD)
 - Output diff view (LCS-based unified diff modal)
 - Multi-model AI coach comparison (parallel `Promise.allSettled`)

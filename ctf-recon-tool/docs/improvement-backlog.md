@@ -14,12 +14,97 @@ format: knowledge-sync compatible
 
 ## Roadmap Wave Sync
 
-### Next Wave Set — Release-First Track
+### Next Wave Set — Waves 13-19 Planned
 **Status:** Active (2026-03-11)
 
-- **Wave 11 — Operator Intelligence Layer:** `EX.2`, `EX.3`, `CTF.5`, `CTF.10`, `CTF.11`.
-- **Wave 12 — Shell and Artifact Operations:** `EX.12`, `CTF.14` with optional sub-wave `CTF.1`/`CTF.2`.
-- Strategy rationale: release/distribution reliability first, runtime hardening second, operator intelligence third, highest-risk shell/artifact expansion last.
+- **Wave 10.5 — Runtime Foundation:** Implemented with `EX.1`, `CTF.1`, `SEC.2`, `B.7`.
+- **Wave 11 — Operator Intelligence Layer:** Implemented with `EX.2`, `EX.3`, `CTF.5`, `CTF.10`, `CTF.11`.
+- **Wave 12 — Shell and Artifact Operations:** Implemented with `EX.12`, `CTF.14`.
+- **Wave 12.5 — Credential Crack Prep:** Implemented with `CTF.2`.
+- **Wave 13 — Stabilization and Decomposition:** Implemented with `G.7`, `G.2`, `UX.11`, `UX.3`.
+- **Wave 14 — Multi-Target Recon Core:** Implemented with `CTF.8`, `GR.12`, `GR.18`.
+- **Wave 15 — Assisted Operator Flow:** Implemented with `CTF.6`, `A.4`, `UX.5`, `GR.8`.
+- **Wave 16 — Reporting Intelligence Core:** Planned with `R.2`, `R.8`, `R.9`, `R.11`, `R.4`.
+- **Wave 17 — Executive and Comparative Reporting:** Implemented with `R.1`, `R.5`, `R.6`, `R.10`, `D.1`.
+- **Wave 18 — Coach and Platform Expansion:** Implemented with `E.1`, `E.2`, `CTF.7`.
+- **Wave 19 — Experimental AI Extensions:** Planned with `E.3`, `E.8`, `E.9`.
+- Strategy rationale: the runtime, intelligence, shell/artifact, and hash-identification foundations now exist; the next sequence should reduce structural risk first, then expand target scope, then deepen operator/reporting workflows.
+
+### Wave 12 — Shell and Artifact Operations
+**Status:** Implemented (2026-03-11)
+
+- `EX.12` Added a shell hub with reverse-shell listeners, webshell command execution, tabbed terminal UX, transcript persistence, and shell SSE fan-out.
+- `CTF.14` Added session-scoped artifact storage for operator uploads and transcript-saved evidence, with preview/download APIs and report insertion hooks.
+- Follow-on scope stays deferred for a later wave: Meterpreter transports and automated remote file-pull.
+
+### Wave 12.5 — Credential Crack Prep
+**Status:** Implemented (2026-03-11)
+
+- `CTF.2` Added a credential hash-identification workflow that fingerprints common hashes, stores the best guess on credentials, and generates `john` / `hashcat` commands matched to available runtime tooling.
+
+### Wave 13 — Stabilization and Decomposition
+**Status:** Implemented (2026-03-11)
+
+- `G.7`, `G.2` now cover extracted timeline filter/notification helpers and UI modules, plus the initial TypeScript project configuration and type packages needed for future gradual conversion.
+- `UX.11`, `UX.3` now cover a compact timeline filter dropdown under `1400px` and toast feedback for command completion, discovery refreshes, credentials, shells, and artifacts.
+- Startup stabilization also landed here: local production boot no longer probes disabled shell APIs eagerly, and a missing `CTF_WORDLIST_DIR` now renders as an empty browser state instead of a 404.
+- Local verification now has supported commands: `npm run dev:webpack`, `npm run prepare:local-runtime`, and `npm run start:local-runtime`.
+- Verification close-out is complete: Playwright smoke confirmed standalone page load plus compact filter and shell-view rendering, and Docker build/runtime checks confirmed `/api/health` plus bundled `john`, `hashcat`, and `searchsploit`.
+
+### Wave 14 — Multi-Target Recon Core
+**Status:** Implemented (2026-03-11)
+
+- `CTF.8` introduces a proper multi-host session model spanning timeline, graph, credentials, shells, artifacts, and exports.
+- `GR.12`, `GR.18` add the graph controls needed to keep multi-target sessions understandable at a glance.
+- `session_targets` now backfills from legacy sessions, `targetId` is persisted across execution/credential/shell/artifact flows, and operators can manage active targets from the app header.
+- The graph now hydrates target affinity from source timeline events, supports active-target scoping, offers a target-oriented layout mode, and highlights likely attack paths through the session graph.
+
+### Wave 15 — Assisted Operator Flow
+**Status:** Implemented (2026-03-11)
+
+- `CTF.6` broadens advisory follow-up automation once the app can reason about more than one target in a session.
+- `A.4`, `UX.5`, `GR.8` reduce execution friction with fuzzy suggestions, a command palette, and graph context actions.
+- The command box now offers inline `Tab` autocomplete across advisory service suggestions, recent commands, and toolbox templates, with active-target-aware ranking.
+- `Ctrl/Cmd+K` now opens a command palette that previews and inserts ranked operator commands without auto-executing them.
+- Discovery graph nodes now expose context actions for timeline search and related follow-up commands, including service-derived actions and CVE exploit-research shortcuts.
+
+### Wave 16 — Reporting Intelligence Core
+**Status:** Implemented (2026-03-11)
+
+- `R.2`, `R.8`, `R.9`, `R.11`, `R.4` make reports richer, more structured, and easier to filter or score consistently across formats.
+- Reports and exports now share one findings-intelligence layer for ATT&CK tagging, CVSS/risk derivation, dedup/relationship tracking, and filter-aware output generation.
+- The report modal now exposes filter controls and richer finding metadata editing so operators can shape the same reporting scope they export.
+
+### Wave 17 — Executive and Comparative Reporting
+**Status:** Implemented (2026-03-11)
+
+- `R.1` adds executive-summary generation with deterministic fallback plus optional provider-backed drafting from the current filtered findings/timeline scope.
+- `R.6` adds remediation suggestion generation that can populate finding remediation text from the report workflow without mutating evidence or auto-publishing anything.
+- `R.10` adds before/after comparison reports across sessions with classified new/remediated/changed/persisted finding deltas.
+- `D.1` adds reusable report-template persistence with placeholder substitution so the Chronicle editor doubles as a template builder.
+- `R.5` adds public read-only share links backed by stored report snapshots plus authenticated create/list/revoke controls from the report modal.
+
+### Wave 18 — Coach and Platform Expansion
+**Status:** Implemented (2026-03-12)
+
+- `E.1`, `E.2`, `CTF.7` now ship coach difficulty controls, bounded context modes, in-memory response caching, and optional HTB / THM / CTFd platform linkage with metadata + flag workflows.
+- This wave is also the roadmap anchor for a downstream SysReptor handoff path once coach/platform metadata is stable enough to map cleanly into an external reporting system.
+- Reference links:
+  - SysReptor docs: https://docs.sysreptor.com/
+  - HTB reporting with SysReptor: https://docs.sysreptor.com/htb-reporting-with-sysreptor/
+
+### Wave 19 — Experimental AI Extensions
+**Status:** Planned
+
+- `E.3`, `E.8`, `E.9` stay explicitly experimental so offline/auto-authoring/simulation ideas do not destabilize the primary operator workflow.
+
+### Wave 10.5 — Runtime Foundation
+**Status:** Implemented (2026-03-11)
+
+- `EX.1` Added SSE execution streaming for stdout/stderr/progress/state/completion events with timeline polling fallback.
+- `CTF.1` Added a first-class session credential store with CRUD APIs, sidebar management, and report/export integration.
+- `SEC.2` Added CSRF bootstrap + validation for authenticated mutating routes.
+- `B.7` Added structured JSON logging mode through `LOG_FORMAT=json`.
 
 ### Wave 10 — Runtime Quality and API Consistency
 **Status:** Implemented (2026-03-11)
@@ -104,56 +189,56 @@ format: knowledge-sync compatible
 ### A.2 — Collapsible Timeline with Auto-Expand Recent
 **What:** Toggle to collapse/expand all events; auto-expand newest N events.
 **Why:** Long sessions become unwieldy.
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`
 **Difficulty:** Easy | **Impact:** Medium
 **Status:** Implemented (2026-03-09). Added `Collapse All` / `Expand All`, persisted `ui.timelineCollapsed`, per-event `Show/Hide`, and auto-expand of newest 5 events while collapsed.
 
 ### A.3 — Dark Mode Toggle Persistence
 **What:** Save dark/light preference in localStorage; apply via CSS variables.
-**Files:** `app/page.js`, `app/globals.css`
+**Files:** `app/HomeClient.js`, `app/globals.css`
 **Difficulty:** Easy | **Impact:** Low
 
 ### A.4 — Real-time Fuzzy Command Suggestions
 **What:** Fuzzy-match command history + cheatsheet; show inline preview on Tab.
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`, new `app/hooks/` suggestions module
 **Difficulty:** Medium | **Impact:** Medium
 
 ### A.5 — Inline Event Filtering by Status/Tag
 **What:** Quick-filter buttons above timeline (all/success/failed/running).
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`
 **Difficulty:** Easy | **Impact:** Medium
 **Note:** Filter state persistence to localStorage is already implemented.
 
 ### A.6 — Drag-and-Drop Report Block Reordering
 **What:** Manually reorder/delete report sections in the writeup editor.
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`, extracted reporting UI modules
 **Difficulty:** Medium | **Impact:** Low-Med
 
 ### A.7 — Copy-to-Clipboard Button Per Event
 **What:** Per-event copy button on output; allow copying filtered output.
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`
 **Difficulty:** Easy | **Impact:** Low
 **Status:** Implemented (copy button on command output, 2026-03-08).
 
 ### A.8 — Screenshot Metadata Inline Edit (Popover)
 **What:** Quick edit screenshot name/tag via popover instead of modal.
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`, extracted sidebar/media modules
 **Difficulty:** Easy | **Impact:** Low
 
 ### A.9 — Customizable Sidebar Tool Categories
 **What:** Allow users to hide/show/reorder SUGGESTIONS categories; persist to localStorage.
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`, extracted sidebar modules
 **Difficulty:** Easy | **Impact:** Low-Med
 
 ### A.10 — Timeline Keyboard Shortcuts
 **What:** Arrow keys to scroll, Ctrl+F to focus filter, J/K vim navigation.
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`, focused timeline hook/module
 **Difficulty:** Medium | **Impact:** Low
 
 ### A.11 — Project Version Tracking Footer
 **What:** Show app version and git commit short SHA in a fixed bottom footer.
 **Why:** Improves release traceability during rapid UI/feature iterations.
-**Files:** `next.config.mjs`, `app/layout.js`, `app/globals.css`, `app/page.js`
+**Files:** `next.config.mjs`, `app/layout.js`, `app/globals.css`, `app/HomeClient.js`
 **Difficulty:** Easy | **Impact:** Low
 **Status:** Implemented (2026-03-09). Footer shows `Helm's Watch • vX.Y.Z (abcdef1)`.
 
@@ -201,6 +286,7 @@ format: knowledge-sync compatible
 **What:** JSON logging mode (opt-in via env var) for log aggregation.
 **Files:** `app/lib/logger.js`
 **Difficulty:** Medium | **Impact:** Medium
+**Status:** Implemented (2026-03-11). `LOG_FORMAT=json` now emits structured console/file logs while preserving local JSONL persistence in `data/app.log`.
 
 ### B.8 — Database Backup/Export API
 **What:** `/api/admin/backup` to download SQLite DB as `.db` or `.sql`.
@@ -224,48 +310,48 @@ format: knowledge-sync compatible
 
 ### C.1 — Command Timeout UI + Cancel Button
 **What:** Display countdown timer during execution; allow user to cancel.
-**Files:** `app/page.js`, `app/api/execute/route.js`
+**Files:** `app/HomeClient.js`, `app/api/execute/route.js`, execution stream hooks
 **Difficulty:** Medium | **Impact:** High
 **Note:** Elapsed timer display is implemented (2026-03-08); kill button still pending.
 
 ### C.2 — Command Templates / Macros
 **What:** Save frequently-used patterns with placeholders (e.g., `nmap -A {target}`).
-**Files:** `app/page.js`, `app/lib/cheatsheet.js`
+**Files:** `app/HomeClient.js`, `app/lib/cheatsheet.js`
 **Difficulty:** Easy | **Impact:** Medium
 
 ### C.3 — Session Comparison Mode
 **What:** Two sessions side-by-side; highlight diff in commands/findings.
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`, extracted comparison view modules
 **Difficulty:** Hard | **Impact:** Low-Med
 
 ### C.4 — Session Tagging + Full-Text Search
 **What:** User-defined tags, custom fields, cross-session full-text search.
-**Files:** `app/lib/db.js`, `app/api/sessions/route.js`, `app/page.js`
+**Files:** `app/lib/db.js`, `app/api/sessions/route.js`, `app/HomeClient.js`
 **Difficulty:** Medium | **Impact:** Medium
 
 ### C.5 — Live Collaboration (WebSocket)
 **What:** Multiple users in same session with live updates; basic conflict resolution.
-**Files:** New WebSocket server, `app/page.js`
+**Files:** New WebSocket server, `app/HomeClient.js`, extracted session state hooks
 **Difficulty:** Hard | **Impact:** Medium
 
 ### C.6 — Command History Fuzzy Search
 **What:** Regex/fuzzy search on command text and output in history sidebar.
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`, extracted sidebar/history modules
 **Difficulty:** Easy | **Impact:** Low-Med
 
 ### C.7 — Bulk Screenshot Operations
 **What:** Select multiple screenshots; batch-tag, delete, or rename.
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`, extracted sidebar/media modules
 **Difficulty:** Easy | **Impact:** Low
 
 ### C.8 — Output Diff View
 **What:** Side-by-side diff when two similar commands produce different output.
-**Files:** `app/page.js`
+**Files:** `app/HomeClient.js`, extracted comparison/reporting modules
 **Difficulty:** Medium | **Impact:** Low-Med
 
 ### C.9 — Global Search Across Sessions
 **What:** Search commands, notes, flags across all sessions.
-**Files:** `app/api/search/route.js`, `app/lib/db.js`, `app/page.js`
+**Files:** `app/api/search/route.js`, `app/lib/db.js`, `app/HomeClient.js`
 **Difficulty:** Medium | **Impact:** Medium
 
 ### C.10 — Scheduled Command Execution
@@ -273,21 +359,35 @@ format: knowledge-sync compatible
 **Files:** New scheduler, `app/api/schedule/route.js`
 **Difficulty:** Hard | **Impact:** Low-Med
 
+### EX.1 — Real-Time Output Streaming via SSE
+**What:** Replace active-command polling as the primary live-output transport with SSE events for stdout/stderr, progress, queue state, and completion while keeping polling fallback.
+**Files:** `app/lib/execute-service.js`, `app/lib/execution-stream.js`, `app/api/execute/stream/route.js`, `app/hooks/useExecutionStream.js`, `app/lib/timeline-stream.js`, `app/HomeClient.js`
+**Difficulty:** Hard | **Impact:** High
+**Status:** Implemented (2026-03-11). Active command output now streams over SSE, timeline cards update live, and polling falls back when the stream disconnects.
+
 ### GR.19 — Auto-Refresh Graph After Successful Commands
 **What:** Re-run graph derivation/persistence automatically whenever a command finishes successfully so the GRAPH view stays current without manual refresh.
-**Files:** `app/lib/graph-derive.js`, `app/api/execute/route.js` or `app/lib/execute-service.js`, `app/api/graph/route.js`, `app/page.js`
+**Files:** `app/lib/graph-derive.js`, `app/api/execute/route.js` or `app/lib/execute-service.js`, `app/api/graph/route.js`, `app/HomeClient.js`
 **Difficulty:** Medium | **Impact:** High
 **Status:** Implemented (2026-03-10). Successful command finalization now persists graph deltas server-side, `graph_state` is the source of truth, and the graph UI refetches persisted state instead of deriving a second client-only graph.
 
+### CTF.1 — Credential Manager
+**What:** Store usernames, passwords, hashes, notes, and optional node links per session so credential verification, blast radius, reporting, and later shell work share one source of truth.
+**Files:** `app/lib/db.js`, `app/api/credentials/route.js`, `app/components/sidebar/CredentialsPanel.js`, `app/HomeClient.js`, `app/lib/export-utils.js`, `app/lib/report-formats.js`
+**Difficulty:** Medium | **Impact:** High
+**Status:** Implemented (2026-03-11). Credentials now persist in SQLite, render in the sidebar, and flow through JSON export plus report generation.
+
 ### EX.12 — Interactive Shell Session Hub
-**What:** Bridge live shells into Helm's Watch so operators can manage reverse shells, webshells, and Metasploit/Meterpreter sessions from the workspace with multiple concurrent tabs and transcript logging.
-**Files:** New shell/session broker service, `app/api/shell/`, terminal UI in `app/page.js`/`HomeClient.js`, Docker/compose runtime docs
+**What:** Bridge live shells into Helm's Watch so operators can manage reverse shells and webshells from the workspace with multiple concurrent tabs, transcript logging, and SSE-backed session state.
+**Files:** `app/lib/shell-repository.js`, `app/lib/shell-runtime.js`, `app/lib/shell-stream.js`, `app/api/shell/`, `app/components/shells/`, `app/hooks/useShellHub.js`, `app/HomeClient.js`
 **Difficulty:** Hard | **Impact:** High
+**Status:** Implemented (2026-03-11). Reverse-shell listeners, webshell command routing, transcript persistence, shell SSE, and the tabbed shell workspace are now live. Meterpreter remains deferred.
 
 ### CTF.14 — Session Artifact / Loot Manager
 **What:** Save documents and files collected from shell sessions (config dumps, loot, proofs) as session-scoped artifacts that can be previewed, downloaded, linked to notes, and referenced in reports.
-**Files:** `app/lib/db.js`, new artifact routes under `app/api/`, session/report UI
+**Files:** `app/lib/artifact-repository.js`, `app/lib/artifact-utils.js`, new artifact routes under `app/api/`, `app/components/sidebar/ArtifactsPanel.js`, `app/hooks/useArtifacts.js`, `app/HomeClient.js`
 **Difficulty:** Medium | **Impact:** High
+**Status:** Implemented (2026-03-11). Uploaded files and transcript-saved evidence now persist per session with preview/download APIs and insert-only report linkage.
 
 ---
 
@@ -295,12 +395,12 @@ format: knowledge-sync compatible
 
 ### D.1 — Custom Report Template Builder
 **What:** UI to create/edit markdown templates with sections and `{{placeholders}}`.
-**Files:** `app/page.js`, `app/lib/report-formats.js`
+**Files:** `app/HomeClient.js`, extracted reporting modules, `app/lib/report-formats.js`
 **Difficulty:** Hard | **Impact:** Medium
 
 ### D.2 — AI Auto-Finding Extraction + Severity Tagging
 **What:** AI-assisted detection of findings from output; tag Critical/High/Medium/Low.
-**Files:** `app/api/findings/route.js`, `app/api/findings/extract/route.js`, `app/lib/db.js`, `app/page.js`, `app/lib/report-formats.js`
+**Files:** `app/api/findings/route.js`, `app/api/findings/extract/route.js`, `app/lib/db.js`, `app/HomeClient.js`, `app/lib/report-formats.js`
 **Difficulty:** Hard | **Impact:** High
 **Status:** Implemented (2026-03-09). Added dedicated `findings` table + `/api/findings` CRUD and manual `POST /api/findings/extract` proposal workflow with severity tagging and evidence links; integrated findings into report generation and export bundle JSON.
 
@@ -312,7 +412,7 @@ format: knowledge-sync compatible
 
 ### D.4 — Proof-of-Concept Step Recorder
 **What:** Guided UI to record finding proof (screenshot + command + output, structured).
-**Files:** `app/page.js`, `app/lib/db.js`, `app/api/poc/route.js`, `app/lib/report-formats.js`, `app/api/report/route.js`, `app/api/export/markdown/route.js`
+**Files:** `app/HomeClient.js`, extracted reporting/sidebar modules, `app/lib/db.js`, `app/api/poc/route.js`, `app/lib/report-formats.js`, `app/api/report/route.js`, `app/api/export/markdown/route.js`
 **Difficulty:** Medium | **Impact:** Medium
 **Status:** Implemented (2026-03-09). Added dedicated `poc_steps` table + `/api/poc` CRUD/reorder API, timeline `Add to PoC`/`In PoC` UX, report modal PoC editor, and PoC section injection for `technical-walkthrough` and `pentest`.
 
@@ -340,7 +440,7 @@ format: knowledge-sync compatible
 
 ### D.9 — CVSS Score Integration
 **What:** Link to CVSS calculator; store severity ratings in findings.
-**Files:** `app/page.js`, `app/lib/db.js`
+**Files:** `app/HomeClient.js`, `app/lib/db.js`
 **Difficulty:** Medium | **Impact:** Low-Med
 
 ### D.10 — Report Format Presets
@@ -348,13 +448,20 @@ format: knowledge-sync compatible
 **Files:** `app/lib/report-formats.js`
 **Difficulty:** Easy | **Impact:** Medium
 
+### R.15 — SysReptor Bridge
+**What:** Export or hand off Chronicle/report output into SysReptor so operators can continue inside a dedicated reporting platform after evidence collection and first-pass writeup work in Helm's Watch.
+**Why:** SysReptor is a strong downstream fit for certification- and client-facing reporting, especially for HTB-style workflows and structured report designs.
+**References:** https://docs.sysreptor.com/ · https://docs.sysreptor.com/htb-reporting-with-sysreptor/
+**Files:** `app/lib/export-utils.js`, `app/api/export/*`, future `app/api/report/sysreptor/*`
+**Difficulty:** Hard | **Impact:** Medium
+
 ---
 
 ## E. AI / Coach Integration
 
 ### E.1 — Coach Skill Difficulty Levels
 **What:** Beginner/intermediate/expert modes; adjust language and hint depth.
-**Files:** `app/api/coach/route.js`, `app/page.js`
+**Files:** `app/api/coach/route.js`, `app/HomeClient.js`, extracted coach modules
 **Difficulty:** Medium | **Impact:** Medium
 
 ### E.2 — Coach Caching + Context Limit Management
@@ -369,7 +476,7 @@ format: knowledge-sync compatible
 
 ### E.4 — Coach Feedback Loop
 **What:** Thumbs up/down on suggestions; persist to improve skill prompts.
-**Files:** `app/page.js`, `app/lib/db.js`
+**Files:** `app/HomeClient.js`, extracted coach modules, `app/lib/db.js`
 **Difficulty:** Medium | **Impact:** Low-Med
 
 ### E.5 — Coach Command Validation
@@ -379,7 +486,7 @@ format: knowledge-sync compatible
 
 ### E.6 — Multi-Model Coach Comparison
 **What:** Run coach query on multiple providers in parallel; show side-by-side.
-**Files:** `app/api/coach/route.js`, `app/page.js`
+**Files:** `app/api/coach/route.js`, `app/HomeClient.js`, extracted coach modules
 **Difficulty:** Medium | **Impact:** Low-Med
 
 ### E.7 — Coach Confidence Scoring
@@ -399,7 +506,7 @@ format: knowledge-sync compatible
 
 ### E.10 — API Cost Tracking
 **What:** Log and display estimated cost of AI API calls per session.
-**Files:** `app/lib/db.js`, `app/lib/ai-cost.js`, `app/api/coach/route.js`, `app/api/writeup/enhance/route.js`, `app/api/ai/usage/route.js`, `app/page.js`
+**Files:** `app/lib/db.js`, `app/lib/ai-cost.js`, `app/api/coach/route.js`, `app/api/writeup/enhance/route.js`, `app/api/ai/usage/route.js`, `app/HomeClient.js`
 **Difficulty:** Easy | **Impact:** Low
 **Status:** Implemented (2026-03-09). Added `ai_usage` table + summary endpoint and UI session usage badge.
 
@@ -410,6 +517,12 @@ format: knowledge-sync compatible
 ### F.1 — Missing `createSession` Import (RESOLVED)
 **What:** `app/api/sessions/route.js` — `createSession` was referenced without import.
 **Status:** Fixed — import confirmed present (2026-03-08).
+
+### SEC.2 — CSRF Protection for Mutating Routes
+**What:** Require a CSRF token for authenticated state-mutating routes so browser-originated writes cannot rely on API token leakage alone.
+**Files:** `app/lib/csrf.js`, `app/api/auth/csrf/route.js`, `app/lib/api-route.js`, authenticated `app/api/**/route.js`
+**Difficulty:** Medium | **Impact:** Medium
+**Status:** Implemented (2026-03-11). Mutating authenticated routes now require both the API token and a CSRF token/cookie pair.
 
 ### F.2 — Command Injection Hardening
 **What:** Further harden shell command escaping; validate structure before execution.
@@ -444,7 +557,7 @@ format: knowledge-sync compatible
 
 ### F.8 — Note HTML Sanitization (XSS)
 **What:** Escape HTML in note content before rendering in reports.
-**Files:** `app/lib/report-gen.js`, `app/page.js`
+**Files:** `app/lib/report-gen.js`, `app/HomeClient.js`
 **Difficulty:** Easy | **Impact:** Low-Med
 
 ### F.9 — PDF Export XSS Protection
@@ -478,7 +591,7 @@ format: knowledge-sync compatible
 
 ### G.4 — Constants Consolidation
 **What:** Move `SUGGESTIONS`, `DIFFICULTY_COLORS`, etc. to a config file.
-**Files:** `app/lib/constants.js` (new), `app/page.js`
+**Files:** `app/lib/constants.js` (new), `app/HomeClient.js`
 **Difficulty:** Easy | **Impact:** Low
 
 ### G.5 — Error Handling Consistency
@@ -493,12 +606,12 @@ format: knowledge-sync compatible
 
 ### G.7 — Frontend State Management Refactor
 **What:** Move 30+ `useState` calls to Context API or Zustand.
-**Files:** `app/page.js`, new context files
+**Files:** `app/HomeClient.js`, new `app/components/` and `app/hooks/` modules, local reducer/context files
 **Difficulty:** Hard | **Impact:** Medium
 
 ### G.8 — CSS Module Organization
 **What:** Break inline JS styles and `globals.css` into component-level CSS modules.
-**Files:** `app/page.js`, `app/globals.css`
+**Files:** `app/HomeClient.js`, extracted component modules, `app/globals.css`
 **Difficulty:** Easy | **Impact:** Low
 
 ### G.9 — Dependency Audit + Updates
@@ -563,3 +676,4 @@ format: knowledge-sync compatible
 | 2026-03-10 | Wave 8 deferred Small item completed — `R.13` responsive HTML export CSS media-query support for smaller screens |
 | 2026-03-11 | Wave 9 release delivery backbone completed — `GH.3`, `GH.9`, `GH.13`, `B.1` implemented with stable semver GHCR publishing, changelog-enforced GitHub releases, MkDocs Pages deployment, and multi-stage standalone Docker runtime |
 | 2026-03-11 | Wave 10 runtime/API consistency completed — `EX.6`, `CQ.3`, `G.1 (Phase 2)` delivered with bounded command queueing (`MAX_CONCURRENT_COMMANDS`), shared API middleware rollout, and expanded execute/security test coverage |
+| 2026-03-11 | Wave 10.5 runtime foundation completed — `EX.1`, `CTF.1`, `SEC.2`, `B.7` delivered with SSE execution streaming, session credential management, CSRF enforcement, and structured JSON logging |

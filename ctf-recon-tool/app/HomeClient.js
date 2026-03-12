@@ -1,11 +1,49 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
+import CommandPalette from '@/components/feedback/CommandPalette';
+import ToastViewport from '@/components/feedback/ToastViewport';
+import ArtifactsPanel from '@/components/sidebar/ArtifactsPanel';
+import CredentialsPanel from '@/components/sidebar/CredentialsPanel';
+import ShellHub from '@/components/shells/ShellHub';
+import ServiceSuggestionsPanel from '@/components/sidebar/ServiceSuggestionsPanel';
+import CommandEventCard from '@/components/timeline/CommandEventCard';
+import TimelineFilterBar from '@/components/timeline/TimelineFilterBar';
+import { useApiClient } from '@/hooks/useApiClient';
+import { useArtifacts } from '@/hooks/useArtifacts';
+import { useExecutionStream } from '@/hooks/useExecutionStream';
+import { useShellHub } from '@/hooks/useShellHub';
+import { useToastQueue } from '@/hooks/useToastQueue';
 import { CHEATSHEET } from '@/lib/cheatsheet';
 import { SUGGESTIONS, DIFFICULTY_COLORS, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_RAIL_WIDTH, SUGGESTED_TAGS } from '@/lib/constants';
+import {
+  buildAttackCoverage,
+  buildRiskMatrix,
+  cvssSeverityLabel,
+  DEFAULT_REPORT_FILTERS,
+  enrichFindings,
+  FINDING_LIKELIHOODS,
+  filterFindings,
+  normalizeFindingCvssScore,
+  normalizeFindingLikelihood,
+  normalizeReportFilters,
+} from '@/lib/finding-intelligence';
+import { buildCommandToast, buildGraphRefreshToast } from '@/lib/notifications';
+import {
+  buildOperatorSuggestions,
+  findInlineOperatorSuggestion,
+  rankOperatorSuggestions,
+} from '@/lib/operator-suggestions';
+import { applyTemplatePlaceholders, buildReportTemplateContext } from '@/lib/report-template-utils';
 import { escapeMarkdownInline, normalizePlainText } from '@/lib/text-sanitize';
+import {
+  DEFAULT_TIMELINE_FILTERS,
+  extractTimelineTags,
+  filterTimelineEvents,
+} from '@/lib/timeline-filters';
+import { applyExecutionStreamPayload } from '@/lib/timeline-stream';
 import {
   formatTimelineDateTime,
   formatTimelineTime,
@@ -13,7 +51,6 @@ import {
   parseTimelineMutationResponse,
   sanitizeTimelineEvents,
 } from '@/lib/timeline-client';
-import { OUTPUT_PAGE_LINES, OUTPUT_PREVIEW_LINES, paginateOutput } from '@/lib/output-pagination';
 import { buildReportAutosaveKey, chooseReportDraftSource, parseAutosavePayload } from '@/lib/report-autosave';
 import { getTimelineScrollState, shouldFollowTimeline } from '@/lib/timeline-scroll';
 
@@ -27,6 +64,75 @@ function loadFavorites() {
 
 function makeBlockId(prefix = 'blk') {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function parseTagsList(value) {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getSessionTargets(session) {
+  if (Array.isArray(session?.targets) && session.targets.length > 0) {
+    return session.targets;
+  }
+  if (session?.target) {
+    return [{
+      id: '',
+      label: session.target,
+      target: session.target,
+      kind: 'host',
+      notes: '',
+      isPrimary: true,
+    }];
+  }
+  return [];
+}
+
+function getPrimarySessionTargetValue(session) {
+  const targets = getSessionTargets(session);
+  return session?.primaryTarget || targets.find((item) => item.isPrimary) || targets[0] || null;
+}
+
+function readCoachResponseMeta(headers) {
+  return {
+    cache: String(headers?.get('x-coach-cache') || ''),
+    contextMode: String(headers?.get('x-coach-context-mode') || ''),
+    coachLevel: String(headers?.get('x-coach-level') || ''),
+    includedEvents: Number(headers?.get('x-coach-events') || 0),
+    omittedEvents: Number(headers?.get('x-coach-omitted-events') || 0),
+  };
+}
+
+function formatPlatformTypeLabel(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'htb') return 'Hack The Box';
+  if (normalized === 'thm') return 'TryHackMe';
+  if (normalized === 'ctfd') return 'CTFd';
+  return normalized ? normalized.toUpperCase() : 'Platform';
+}
+
+function formatSessionTargetOption(target) {
+  if (!target) return 'No target';
+  const label = String(target.label || target.target || 'Target').trim();
+  const value = String(target.target || '').trim();
+  if (!value || value === label) return label;
+  return `${label} · ${value}`;
+}
+
+function groupCredentialVerifications(entries = []) {
+  return (Array.isArray(entries) ? entries : []).reduce((acc, entry) => {
+    const key = Number(entry?.credentialId);
+    if (!Number.isFinite(key) || key <= 0) return acc;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(entry);
+    return acc;
+  }, {});
 }
 
 function newSectionBlock(title = 'Section', content = '') {
@@ -174,6 +280,18 @@ function markdownToReportBlocks(markdown) {
     blocks.push(newSectionBlock(pendingTitle || 'Walkthrough', source));
   }
   return blocks;
+}
+
+function reportFormatLabel(format) {
+  const labels = {
+    'lab-report': 'Lab Report',
+    'executive-summary': 'Executive Summary',
+    'technical-walkthrough': 'Technical Walkthrough',
+    'ctf-solution': 'CTF Solution',
+    'bug-bounty': 'Bug Bounty',
+    pentest: 'Pentest Report',
+  };
+  return labels[String(format || 'technical-walkthrough')] || String(format || 'technical-walkthrough');
 }
 
 const TIMELINE_AUTO_EXPAND_COUNT = 5;
@@ -350,46 +468,102 @@ function buildPocSectionMarkdown(sessionId, pocSteps = []) {
   return md.trim();
 }
 
-function buildFindingsSectionMarkdown(findings = []) {
-  const normalized = (Array.isArray(findings) ? findings : [])
-    .filter((finding) => finding?.title)
-    .map((finding) => ({
-      title: String(finding.title || '').trim(),
-      severity: normalizeFindingSeverity(finding.severity),
-      description: String(finding.description || '').trim(),
-      impact: String(finding.impact || '').trim(),
-      remediation: String(finding.remediation || '').trim(),
-      tags: Array.isArray(finding.tags) ? finding.tags : [],
-      evidenceEvents: Array.isArray(finding.evidenceEvents) ? finding.evidenceEvents : [],
-      evidenceEventIds: Array.isArray(finding.evidenceEventIds) ? finding.evidenceEventIds : [],
-    }));
+function buildFindingsSectionMarkdown(findings = [], reportFilters = DEFAULT_REPORT_FILTERS) {
+  const normalizedFilters = normalizeReportFilters(reportFilters);
+  const allFindings = enrichFindings(Array.isArray(findings) ? findings : []);
+  const normalized = filterFindings(allFindings, normalizedFilters)
+    .filter((finding) => finding?.title);
 
   let md = `## Findings\n\n`;
   if (normalized.length === 0) {
     md += `> _Document each finding with severity, description, and evidence references._\n\n`;
-    md += `| # | Finding | Severity | Evidence |\n| --- | --- | --- | --- |\n`;
-    md += `| 1 | _Fill in_ | Critical / High / Medium / Low | _ref_ |\n`;
+    md += `| # | Finding | Severity | Risk | Evidence |\n| --- | --- | --- | --- | --- |\n`;
+    md += `| 1 | _Fill in_ | Critical / High / Medium / Low | _Fill in_ | _ref_ |\n`;
     return md.trim();
   }
 
   const severitySummary = { critical: 0, high: 0, medium: 0, low: 0 };
-  normalized.forEach((finding) => { severitySummary[finding.severity] += 1; });
-  md = `## Severity Summary\n\n| Severity | Count |\n| --- | --- |\n| Critical | ${severitySummary.critical} |\n| High | ${severitySummary.high} |\n| Medium | ${severitySummary.medium} |\n| Low | ${severitySummary.low} |\n| Total | ${normalized.length} |\n\n${md}`;
+  normalized.forEach((finding) => {
+    severitySummary[normalizeFindingSeverity(finding.severity)] += 1;
+  });
+  const riskMatrix = buildRiskMatrix(normalized);
+  const attackCoverage = buildAttackCoverage(normalized);
+  const hasScopedSubset = normalized.length !== allFindings.length;
 
-  md += `| # | Finding | Severity | Evidence |\n| --- | --- | --- | --- |\n`;
+  let scopeMarkdown = '';
+  if (hasScopedSubset || normalizedFilters.minimumSeverity !== 'all' || normalizedFilters.tag || normalizedFilters.techniqueId || normalizedFilters.includeDuplicates) {
+    const entries = [];
+    if (normalizedFilters.minimumSeverity !== 'all') entries.push(`- Minimum severity: ${normalizedFilters.minimumSeverity.toUpperCase()}`);
+    if (normalizedFilters.tag) entries.push(`- Tag filter: \`${safeMarkdownLabel(normalizedFilters.tag)}\``);
+    if (normalizedFilters.techniqueId) entries.push(`- ATT&CK filter: \`${safeMarkdownLabel(normalizedFilters.techniqueId)}\``);
+    entries.push(`- Duplicate handling: ${normalizedFilters.includeDuplicates ? 'include related duplicates' : 'primary findings only'}`);
+    entries.push(`- Included findings: ${normalized.length}/${allFindings.length}`);
+    scopeMarkdown = `## Report Scope\n\n${entries.join('\n')}\n\n`;
+  }
+
+  let riskMarkdown = '';
+  const totalRiskCells = ['high', 'medium', 'low'].reduce((acc, likelihood) => (
+    acc + ['critical', 'high', 'medium', 'low'].reduce((count, severity) => count + Number(riskMatrix?.[likelihood]?.[severity] || 0), 0)
+  ), 0);
+  if (totalRiskCells > 0) {
+    riskMarkdown = [
+      '## Risk Matrix',
+      '',
+      '| Likelihood \\ Impact | Low | Medium | High | Critical |',
+      '| --- | --- | --- | --- | --- |',
+      `| High | ${riskMatrix.high.low} | ${riskMatrix.high.medium} | ${riskMatrix.high.high} | ${riskMatrix.high.critical} |`,
+      `| Medium | ${riskMatrix.medium.low} | ${riskMatrix.medium.medium} | ${riskMatrix.medium.high} | ${riskMatrix.medium.critical} |`,
+      `| Low | ${riskMatrix.low.low} | ${riskMatrix.low.medium} | ${riskMatrix.low.high} | ${riskMatrix.low.critical} |`,
+      '',
+    ].join('\n');
+  }
+
+  let attackCoverageMarkdown = '';
+  if (attackCoverage.length > 0) {
+    attackCoverageMarkdown = `## ATT&CK Coverage\n\n| Technique | Tactic | Findings |\n| --- | --- | --- |\n`;
+    attackCoverage.forEach((technique) => {
+      attackCoverageMarkdown += `| ${safeMarkdownLabel(`${technique.id} — ${technique.name}`)} | ${safeMarkdownLabel(technique.tactic)} | ${technique.count} |\n`;
+    });
+    attackCoverageMarkdown += '\n';
+  }
+
+  md = `${scopeMarkdown}## Severity Summary\n\n| Severity | Count |\n| --- | --- |\n| Critical | ${severitySummary.critical} |\n| High | ${severitySummary.high} |\n| Medium | ${severitySummary.medium} |\n| Low | ${severitySummary.low} |\n| Total | ${normalized.length} |\n\n${riskMarkdown}${attackCoverageMarkdown}${md}`;
+
+  md += `| # | Finding | Severity | Risk | CVSS | Evidence |\n| --- | --- | --- | --- | --- | --- |\n`;
   normalized.forEach((finding, idx) => {
     const evidenceCount = (finding.evidenceEvents?.length || 0) + (finding.evidenceEventIds?.length || 0);
-    const severityLabel = finding.severity.charAt(0).toUpperCase() + finding.severity.slice(1);
-    md += `| ${idx + 1} | ${finding.title} | ${severityLabel} | ${evidenceCount > 0 ? `${evidenceCount} item(s)` : '—'} |\n`;
+    const severityLabel = findingSeverityLabel(finding.severity);
+    const cvss = finding.cvssScore === null || finding.cvssScore === undefined
+      ? '—'
+      : `${Number(finding.cvssScore).toFixed(1)} (${cvssSeverityLabel(finding.cvssScore)})`;
+    md += `| ${idx + 1} | ${finding.title} | ${severityLabel} | ${String(finding.riskLevel || 'medium').toUpperCase()} | ${cvss} | ${evidenceCount > 0 ? `${evidenceCount} item(s)` : '—'} |\n`;
   });
   md += `\n`;
 
   normalized.forEach((finding, idx) => {
-    const severityLabel = finding.severity.charAt(0).toUpperCase() + finding.severity.slice(1);
+    const severityLabel = findingSeverityLabel(finding.severity);
     md += `### ${idx + 1}. ${finding.title}\n\n`;
     md += `**Severity:** ${severityLabel}\n\n`;
+    md += `**Likelihood:** ${String(finding.likelihood || 'medium').toUpperCase()}\n\n`;
+    md += `**Risk:** ${String(finding.riskLevel || 'medium').toUpperCase()}\n\n`;
+    if (finding.cvssScore !== null && finding.cvssScore !== undefined) {
+      md += `**CVSS:** ${Number(finding.cvssScore).toFixed(1)} (${cvssSeverityLabel(finding.cvssScore)})`;
+      if (finding.cvssVector) {
+        md += ` — \`${safeMarkdownLabel(finding.cvssVector)}\``;
+      }
+      md += `\n\n`;
+    }
+    if (Array.isArray(finding.attackTechniques) && finding.attackTechniques.length > 0) {
+      md += `**MITRE ATT&CK:** ${finding.attackTechniques.map((technique) => `${safeMarkdownLabel(technique.id)} (${safeMarkdownLabel(technique.name)})`).join(', ')}\n\n`;
+    }
     if (finding.tags.length > 0) {
       md += `**Tags:** ${finding.tags.map((tag) => `\`${safeMarkdownLabel(tag)}\``).join(', ')}\n\n`;
+    }
+    if (finding.duplicateOf) {
+      md += `**Deduplication:** Duplicate of finding #${finding.duplicateOf}\n\n`;
+    }
+    if (Array.isArray(finding.relatedFindingIds) && finding.relatedFindingIds.length > 0) {
+      md += `**Related Findings:** ${finding.relatedFindingIds.map((id) => `#${id}`).join(', ')}\n\n`;
     }
     md += `**Description:** ${finding.description || '_Not specified_'}\n\n`;
     md += `**Impact:** ${finding.impact || '_Not specified_'}\n\n`;
@@ -410,6 +584,24 @@ function buildFindingsSectionMarkdown(findings = []) {
   return md.trim();
 }
 
+function findingSeverityLabel(severity) {
+  const value = String(severity || 'medium').toLowerCase();
+  if (value === 'critical') return 'Critical';
+  if (value === 'high') return 'High';
+  if (value === 'low') return 'Low';
+  return 'Medium';
+}
+
+function buildReportFilterQuery(reportFilters = DEFAULT_REPORT_FILTERS) {
+  const normalized = normalizeReportFilters(reportFilters);
+  const params = new URLSearchParams();
+  if (normalized.minimumSeverity !== 'all') params.set('minimumSeverity', normalized.minimumSeverity);
+  if (normalized.tag) params.set('tag', normalized.tag);
+  if (normalized.techniqueId) params.set('techniqueId', normalized.techniqueId);
+  if (normalized.includeDuplicates) params.set('includeDuplicates', 'true');
+  return params.toString();
+}
+
 export default function Home() {
   // Core state
   const [timeline, setTimeline] = useState([]);
@@ -419,21 +611,31 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [sessions, setSessions] = useState([{ id: 'default', name: 'Default Session' }]);
   const [currentSession, setCurrentSession] = useState('default');
+  const [activeTargetId, setActiveTargetId] = useState('');
 
   // Session modal state
   const [showNewSessionModal, setShowNewSessionModal] = useState(false);
+  const [showTargetsModal, setShowTargetsModal] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [commandPaletteQuery, setCommandPaletteQuery] = useState('');
   const [newSessionName, setNewSessionName] = useState('');
+  const [newSessionTargetLabel, setNewSessionTargetLabel] = useState('');
   const [newSessionTarget, setNewSessionTarget] = useState('');
   const [newSessionDifficulty, setNewSessionDifficulty] = useState('medium');
   const [newSessionObjective, setNewSessionObjective] = useState('');
+  const [targetDraftLabel, setTargetDraftLabel] = useState('');
+  const [targetDraftValue, setTargetDraftValue] = useState('');
+  const [targetDraftKind, setTargetDraftKind] = useState('host');
+  const [targetDraftNotes, setTargetDraftNotes] = useState('');
+  const [targetsBusy, setTargetsBusy] = useState(false);
 
   // Sidebar state
   const [expandedCats, setExpandedCats] = useState([]);
   const [hiddenCats, setHiddenCats] = useState(() => new Set());
   const [showCatManager, setShowCatManager] = useState(false);
   const [toolboxSearch, setToolboxSearch] = useState('');
-  const [sidebarTab, setSidebarTab] = useState('tools'); // 'tools' | 'flags' | 'history'
+  const [sidebarTab, setSidebarTab] = useState('tools'); // 'tools' | 'creds' | 'flags' | 'history' | 'artifacts'
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false);
@@ -443,7 +645,7 @@ export default function Home() {
   const [collapsedTools, setCollapsedTools] = useState(() => new Set(CHEATSHEET.map((_, i) => i)));
   const [cmdHistory, setCmdHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
-  const [mainView, setMainView] = useState('terminal'); // 'terminal' | 'graph'
+  const [mainView, setMainView] = useState('terminal'); // 'terminal' | 'graph' | 'shells'
   const [wordlistState, setWordlistState] = useState({ root: '', currentPath: '', parentPath: null, entries: [] });
   const [wordlistBusy, setWordlistBusy] = useState(false);
   const [flags, setFlags] = useState([]);
@@ -465,16 +667,30 @@ export default function Home() {
   const [coachResult, setCoachResult] = useState('');
   const [isCoaching, setIsCoaching] = useState(false);
   const [coachSkill, setCoachSkill] = useState('enum-target');
+  const [coachLevel, setCoachLevel] = useState('intermediate');
+  const [coachContextMode, setCoachContextMode] = useState('balanced');
+  const [coachMeta, setCoachMeta] = useState({ cache: '', contextMode: 'balanced', coachLevel: 'intermediate', includedEvents: 0, omittedEvents: 0 });
   // E.6 — Multi-model compare mode
   const [coachCompareMode, setCoachCompareMode] = useState(false);
   const [coachCompareResults, setCoachCompareResults] = useState([]);
   const [coachCompareTab, setCoachCompareTab] = useState(0);
 
+  // Platform integration state
+  const [platformLinkInfo, setPlatformLinkInfo] = useState({ link: null, capabilities: {} });
+  const [platformLinkBusy, setPlatformLinkBusy] = useState(false);
+  const [platformPanelExpanded, setPlatformPanelExpanded] = useState(false);
+  const [platformTypeDraft, setPlatformTypeDraft] = useState('htb');
+  const [platformRemoteIdDraft, setPlatformRemoteIdDraft] = useState('');
+  const [platformLabelDraft, setPlatformLabelDraft] = useState('');
+  const [platformChallengeIdDraft, setPlatformChallengeIdDraft] = useState('');
+  const [flagPlatformBusy, setFlagPlatformBusy] = useState({});
+
   // Timeline filter state — persisted to localStorage
-  const [filterType, setFilterType] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [filterKeyword, setFilterKeyword] = useState('');
-  const [filterTag, setFilterTag] = useState('');
+  const [filterType, setFilterType] = useState(DEFAULT_TIMELINE_FILTERS.type);
+  const [filterStatus, setFilterStatus] = useState(DEFAULT_TIMELINE_FILTERS.status);
+  const [filterKeyword, setFilterKeyword] = useState(DEFAULT_TIMELINE_FILTERS.keyword);
+  const [filterTag, setFilterTag] = useState(DEFAULT_TIMELINE_FILTERS.tag);
+  const [timelineFilterPanelOpen, setTimelineFilterPanelOpen] = useState(false);
 
   // Connection / sync status
   const [lastSyncTime, setLastSyncTime] = useState(null);
@@ -510,12 +726,34 @@ export default function Home() {
   const [reportDraft, setReportDraft] = useState('');
   const [reportBlocks, setReportBlocks] = useState([newSectionBlock('Walkthrough', '')]);
   const [selectedReportBlocks, setSelectedReportBlocks] = useState([]);
+  const [reportTemplates, setReportTemplates] = useState([]);
+  const [selectedReportTemplateId, setSelectedReportTemplateId] = useState('');
+  const [reportTemplateName, setReportTemplateName] = useState('');
+  const [reportTemplateDescription, setReportTemplateDescription] = useState('');
+  const [reportTemplatesLoading, setReportTemplatesLoading] = useState(false);
+  const [reportTemplateBusy, setReportTemplateBusy] = useState(false);
+  const [reportShares, setReportShares] = useState([]);
+  const [reportSharesLoading, setReportSharesLoading] = useState(false);
+  const [reportShareBusy, setReportShareBusy] = useState(false);
+  const [compareAgainstSessionId, setCompareAgainstSessionId] = useState('');
+  const [reportCompareBusy, setReportCompareBusy] = useState(false);
+  const [executiveSummaryBusy, setExecutiveSummaryBusy] = useState(false);
+  const [findingRemediationBusy, setFindingRemediationBusy] = useState({});
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportRestoreNotice, setReportRestoreNotice] = useState('');
   const [reportFormat, setReportFormat] = useState('technical-walkthrough');
+  const [reportFilters, setReportFilters] = useState(DEFAULT_REPORT_FILTERS);
   const [pdfStyle, setPdfStyle] = useState('terminal-dark');
   const [pocSteps, setPocSteps] = useState([]);
   const [findings, setFindings] = useState([]);
+  const [credentials, setCredentials] = useState([]);
+  const [credentialVerifications, setCredentialVerifications] = useState({});
+  const [credentialVerificationBusy, setCredentialVerificationBusy] = useState({});
+  const [credentialHashAnalysis, setCredentialHashAnalysis] = useState({});
+  const [credentialHashBusy, setCredentialHashBusy] = useState({});
+  const [serviceSuggestions, setServiceSuggestions] = useState([]);
+  const [serviceSuggestionsLoading, setServiceSuggestionsLoading] = useState(false);
+  const [serviceSuggestionsError, setServiceSuggestionsError] = useState('');
   const [findingProposals, setFindingProposals] = useState([]);
   const [isExtractingFindings, setIsExtractingFindings] = useState(false);
   const [pocBusyEventId, setPocBusyEventId] = useState(null);
@@ -543,6 +781,7 @@ export default function Home() {
   // C.8 — Output diff view
   const [compareEventIds, setCompareEventIds] = useState(new Set());
   const [showDiffModal, setShowDiffModal] = useState(false);
+  const [graphRefreshToken, setGraphRefreshToken] = useState(0);
 
   const bottomRef = useRef(null);
   const timelineFeedRef = useRef(null);
@@ -550,18 +789,66 @@ export default function Home() {
   const inputRef = useRef(null);
   const resizeStateRef = useRef({ startX: 0, startWidth: SIDEBAR_DEFAULT_WIDTH });
   const timelineSeenIdsRef = useRef(new Set());
+  const commandToastStatusRef = useRef(new Map());
+  const graphToastRef = useRef({ reason: '', at: 0 });
+  const shellErrorToastRef = useRef('');
+  const artifactErrorToastRef = useRef('');
   const filterKeywordRef = useRef(null);
   const reportAutosaveSignatureRef = useRef('');
+  const { apiFetch, ensureCsrfToken } = useApiClient();
+  const { toasts, pushToast, dismissToast } = useToastQueue();
+  const shellHubEnabled = healthData?.features?.shellHubEnabled === true;
+  const shellHub = useShellHub({
+    sessionId: currentSession,
+    targetId: activeTargetId || null,
+    apiFetch,
+    enabled: shellHubEnabled,
+  });
+  const artifactsState = useArtifacts({
+    sessionId: currentSession,
+    targetId: activeTargetId || null,
+    apiFetch,
+    enabled: true,
+  });
+  const {
+    shellSessions,
+    activeShell,
+    activeShellId,
+    transcriptsByShell,
+    unreadByShell,
+    loading: shellLoading,
+    creating: shellCreating,
+    busyByShell: shellBusyByShell,
+    error: shellError,
+    streamStatus: shellStreamStatus,
+    selectShell,
+    createShellSession,
+    sendInput: sendShellInput,
+    resizeSession: resizeShellSession,
+    disconnectSession: disconnectShellSession,
+    clearLocalTabState: clearLocalShellTabState,
+  } = shellHub;
+  const {
+    artifacts,
+    selectedArtifactId,
+    selectedArtifact,
+    loading: artifactsLoading,
+    uploading: artifactsUploading,
+    error: artifactsError,
+    selectArtifact,
+    uploadArtifact,
+    createArtifactFromTranscript,
+    deleteArtifact: deleteArtifactById,
+  } = artifactsState;
 
-  const apiFetch = useCallback((url, options = {}) => {
-    const headers = new Headers(options.headers || {});
-    try {
-      const apiToken = localStorage.getItem('appApiToken') || '';
-      if (apiToken) headers.set('x-api-token', apiToken);
-    } catch (_) {
-      // localStorage not available (SSR) or blocked
-    }
-    return fetch(url, { ...options, headers });
+  const openCommandPalette = useCallback((seed = '') => {
+    setCommandPaletteQuery(String(seed || '').trim());
+    setShowCommandPalette(true);
+  }, []);
+
+  const closeCommandPalette = useCallback(() => {
+    setShowCommandPalette(false);
+    setCommandPaletteQuery('');
   }, []);
 
   const syncTimelineScrollFlags = useCallback(() => {
@@ -607,6 +894,18 @@ export default function Home() {
     } catch (e) { console.error('Failed to fetch sessions', e); }
   }, [apiFetch]);
 
+  useEffect(() => {
+    const session = sessions.find((item) => item.id === currentSession);
+    const targets = getSessionTargets(session);
+    if (targets.length === 0) {
+      if (activeTargetId) setActiveTargetId('');
+      return;
+    }
+    if (activeTargetId && targets.some((item) => item.id === activeTargetId)) return;
+    const nextTarget = getPrimarySessionTargetValue(session);
+    setActiveTargetId(nextTarget?.id || '');
+  }, [activeTargetId, currentSession, sessions]);
+
   const fetchTimeline = useCallback(async () => {
     try {
       const res = await apiFetch(`/api/timeline?sessionId=${currentSession}`);
@@ -646,6 +945,40 @@ export default function Home() {
     }
   }, [currentSession, apiFetch]);
 
+  const fetchReportTemplates = useCallback(async () => {
+    try {
+      setReportTemplatesLoading(true);
+      const res = await apiFetch(`/api/report/templates?sessionId=${currentSession}&format=${encodeURIComponent(reportFormat)}`);
+      if (!res.ok) {
+        setReportTemplates([]);
+        return;
+      }
+      const data = await res.json();
+      setReportTemplates(Array.isArray(data?.templates) ? data.templates : []);
+    } catch (_) {
+      setReportTemplates([]);
+    } finally {
+      setReportTemplatesLoading(false);
+    }
+  }, [apiFetch, currentSession, reportFormat]);
+
+  const fetchReportShares = useCallback(async () => {
+    try {
+      setReportSharesLoading(true);
+      const res = await apiFetch(`/api/writeup/share?sessionId=${currentSession}`);
+      if (!res.ok) {
+        setReportShares([]);
+        return;
+      }
+      const data = await res.json();
+      setReportShares(Array.isArray(data?.shares) ? data.shares : []);
+    } catch (_) {
+      setReportShares([]);
+    } finally {
+      setReportSharesLoading(false);
+    }
+  }, [apiFetch, currentSession]);
+
   const fetchPocSteps = useCallback(async () => {
     try {
       const res = await apiFetch(`/api/poc?sessionId=${currentSession}`);
@@ -674,6 +1007,55 @@ export default function Home() {
     }
   }, [currentSession, apiFetch]);
 
+  const fetchCredentials = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/api/credentials?sessionId=${currentSession}`);
+      if (!res.ok) {
+        setCredentials([]);
+        return;
+      }
+      const data = await res.json();
+      setCredentials(Array.isArray(data) ? data : []);
+    } catch (_) {
+      setCredentials([]);
+    }
+  }, [currentSession, apiFetch]);
+
+  const fetchCredentialVerifications = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/api/credentials/verify?sessionId=${currentSession}`);
+      if (!res.ok) {
+        setCredentialVerifications({});
+        return;
+      }
+      const data = await res.json();
+      setCredentialVerifications(groupCredentialVerifications(data?.verifications));
+    } catch (_) {
+      setCredentialVerifications({});
+    }
+  }, [currentSession, apiFetch]);
+
+  const fetchServiceSuggestions = useCallback(async () => {
+    try {
+      setServiceSuggestionsLoading(true);
+      setServiceSuggestionsError('');
+      const res = await apiFetch(`/api/suggestions/services?sessionId=${currentSession}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setServiceSuggestions([]);
+        setServiceSuggestionsError(data?.error || 'Failed to load service suggestions.');
+        return;
+      }
+      const data = await res.json();
+      setServiceSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
+    } catch (_) {
+      setServiceSuggestions([]);
+      setServiceSuggestionsError('Failed to load service suggestions.');
+    } finally {
+      setServiceSuggestionsLoading(false);
+    }
+  }, [currentSession, apiFetch]);
+
   const fetchFlags = useCallback(async () => {
     try {
       const res = await apiFetch(`/api/flags?sessionId=${currentSession}`);
@@ -685,6 +1067,23 @@ export default function Home() {
       setFlags(Array.isArray(data) ? data : []);
     } catch (_) {
       setFlags([]);
+    }
+  }, [currentSession, apiFetch]);
+
+  const fetchPlatformLink = useCallback(async () => {
+    try {
+      const res = await apiFetch(`/api/platform/session-link?sessionId=${currentSession}`);
+      if (!res.ok) {
+        setPlatformLinkInfo({ link: null, capabilities: {} });
+        return;
+      }
+      const data = await res.json();
+      setPlatformLinkInfo({
+        link: data?.link || null,
+        capabilities: data?.capabilities || {},
+      });
+    } catch (_) {
+      setPlatformLinkInfo({ link: null, capabilities: {} });
     }
   }, [currentSession, apiFetch]);
 
@@ -711,24 +1110,201 @@ export default function Home() {
     }
   }, [apiFetch]);
 
+  const clearTimelineFilters = useCallback(() => {
+    setFilterType(DEFAULT_TIMELINE_FILTERS.type);
+    setFilterStatus(DEFAULT_TIMELINE_FILTERS.status);
+    setFilterKeyword(DEFAULT_TIMELINE_FILTERS.keyword);
+    setFilterTag(DEFAULT_TIMELINE_FILTERS.tag);
+  }, []);
+
+  const updateTimelineFilters = useCallback((patch = {}) => {
+    if (patch.type !== undefined) setFilterType(patch.type);
+    if (patch.status !== undefined) setFilterStatus(patch.status);
+    if (patch.keyword !== undefined) setFilterKeyword(patch.keyword);
+    if (patch.tag !== undefined) setFilterTag(patch.tag);
+  }, []);
+
+  const handleDeleteSelectedScreenshots = useCallback(async () => {
+    if (selectedScreenshots.size === 0) return;
+    if (!confirm(`Delete ${selectedScreenshots.size} screenshot(s)?`)) return;
+    for (const id of selectedScreenshots) {
+      await apiFetch(`/api/timeline?sessionId=${currentSession}&id=${id}`, { method: 'DELETE' });
+    }
+    setTimeline((prev) => prev.filter((event) => !selectedScreenshots.has(event.id)));
+    setSelectedScreenshots(new Set());
+    pushToast({
+      tone: 'success',
+      title: 'Screenshots deleted',
+      message: `${selectedScreenshots.size} screenshot(s) removed from the timeline.`,
+      durationMs: 2600,
+    });
+  }, [apiFetch, currentSession, pushToast, selectedScreenshots]);
+
+  const handleExecutionStreamEvent = useCallback((payload) => {
+    if (!payload || typeof payload !== 'object') return;
+    if (payload.type === 'graph-refresh') {
+      setGraphRefreshToken((prev) => prev + 1);
+      setLastSyncTime(Date.now());
+      setConnectionStatus('connected');
+      void fetchServiceSuggestions();
+      const reason = String(payload.reason || '');
+      const previous = graphToastRef.current;
+      const now = Date.now();
+      if (previous.reason !== reason || now - previous.at > 3000) {
+        pushToast(buildGraphRefreshToast(reason));
+        graphToastRef.current = { reason, at: now };
+      }
+      return;
+    }
+    setTimeline((prev) => applyExecutionStreamPayload(prev, payload));
+    setLastSyncTime(Date.now());
+    setConnectionStatus('connected');
+
+    if (payload.type === 'state') {
+      const status = String(payload.event?.status || '').toLowerCase();
+      const tags = parseTagsList(payload.event?.tags);
+      const eventId = String(payload.event?.id || '');
+      if (eventId && ['success', 'failed', 'timeout', 'cancelled'].includes(status)) {
+        const previousStatus = commandToastStatusRef.current.get(eventId);
+        if (previousStatus !== status) {
+          const toast = buildCommandToast(payload.event);
+          if (toast) {
+            pushToast(toast);
+          }
+          commandToastStatusRef.current.set(eventId, status);
+        }
+      }
+      if (['success', 'failed', 'timeout', 'cancelled'].includes(status)) {
+        void fetchCommandHistory();
+        if (tags.some((tag) => String(tag || '').startsWith('credential:')) || tags.includes('credential-verification')) {
+          void fetchCredentialVerifications();
+          void fetchCredentials();
+        }
+      }
+    }
+  }, [fetchCommandHistory, fetchCredentialVerifications, fetchCredentials, fetchServiceSuggestions, pushToast]);
+
+  const executionStreamStatus = useExecutionStream({
+    sessionId: currentSession,
+    enabled: true,
+    onEvent: handleExecutionStreamEvent,
+  });
+
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
   useEffect(() => { fetchAiUsage(); }, [fetchAiUsage]);
   useEffect(() => { fetchPocSteps(); }, [fetchPocSteps]);
   useEffect(() => { fetchFindings(); }, [fetchFindings]);
+  useEffect(() => { fetchCredentials(); }, [fetchCredentials]);
+  useEffect(() => { fetchCredentialVerifications(); }, [fetchCredentialVerifications]);
+  useEffect(() => { fetchServiceSuggestions(); }, [fetchServiceSuggestions]);
   useEffect(() => { fetchFlags(); }, [fetchFlags]);
+  useEffect(() => { fetchPlatformLink(); }, [fetchPlatformLink]);
   useEffect(() => { fetchWordlists(''); }, [fetchWordlists, currentSession]);
+  useEffect(() => { void ensureCsrfToken(); }, [ensureCsrfToken]);
+  useEffect(() => {
+    if (!showReportModal) return;
+    void fetchReportTemplates();
+    void fetchReportShares();
+  }, [fetchReportShares, fetchReportTemplates, reportFormat, showReportModal]);
+
+  useEffect(() => {
+    const template = reportTemplates.find((entry) => entry.id === selectedReportTemplateId);
+    if (!template) return;
+    setReportTemplateName(template.name || '');
+    setReportTemplateDescription(template.description || '');
+  }, [reportTemplates, selectedReportTemplateId]);
+
+  useEffect(() => {
+    const linkedPlatform = platformLinkInfo.link || null;
+    if (!linkedPlatform) {
+      setPlatformTypeDraft('htb');
+      setPlatformRemoteIdDraft('');
+      setPlatformLabelDraft('');
+      setPlatformChallengeIdDraft('');
+      return;
+    }
+    setPlatformTypeDraft(linkedPlatform.type || 'htb');
+    if (linkedPlatform.type === 'htb') {
+      setPlatformRemoteIdDraft(linkedPlatform.remoteContext?.eventId || linkedPlatform.remoteId || '');
+      setPlatformChallengeIdDraft(linkedPlatform.remoteContext?.challengeId || '');
+    } else if (linkedPlatform.type === 'ctfd') {
+      setPlatformRemoteIdDraft(linkedPlatform.remoteContext?.challengeId || linkedPlatform.remoteId || '');
+      setPlatformChallengeIdDraft('');
+    } else {
+      setPlatformRemoteIdDraft(linkedPlatform.remoteContext?.roomCode || linkedPlatform.remoteId || '');
+      setPlatformChallengeIdDraft('');
+    }
+    setPlatformLabelDraft(linkedPlatform.label || '');
+  }, [currentSession, platformLinkInfo.link]);
+
+  useEffect(() => {
+    if (!shellError) {
+      shellErrorToastRef.current = '';
+      return;
+    }
+    if (shellErrorToastRef.current === shellError) return;
+    shellErrorToastRef.current = shellError;
+    pushToast({
+      tone: 'error',
+      title: 'Shell hub error',
+      message: shellError,
+      durationMs: 5200,
+    });
+  }, [pushToast, shellError]);
+
+  useEffect(() => {
+    if (!artifactsError) {
+      artifactErrorToastRef.current = '';
+      return;
+    }
+    if (artifactErrorToastRef.current === artifactsError) return;
+    artifactErrorToastRef.current = artifactsError;
+    pushToast({
+      tone: 'error',
+      title: 'Artifact error',
+      message: artifactsError,
+      durationMs: 5200,
+    });
+  }, [artifactsError, pushToast]);
 
   useEffect(() => {
     fetchTimeline();
-    const interval = setInterval(fetchTimeline, 3000);
+    const pollMs = executionStreamStatus === 'connected' ? 30000 : 3000;
+    const interval = setInterval(fetchTimeline, pollMs);
     return () => clearInterval(interval);
-  }, [fetchTimeline]);
+  }, [executionStreamStatus, fetchTimeline]);
+
+  useEffect(() => {
+    if (executionStreamStatus === 'connected') {
+      setConnectionStatus('connected');
+      setLastSyncTime(Date.now());
+      return;
+    }
+    if (executionStreamStatus === 'connecting') {
+      setConnectionStatus('connecting');
+      return;
+    }
+    if (executionStreamStatus === 'disconnected') {
+      setConnectionStatus('disconnected');
+    }
+  }, [executionStreamStatus]);
+
+  useEffect(() => {
+    if (!shellHubEnabled && mainView === 'shells') {
+      setMainView('terminal');
+    }
+  }, [mainView, shellHubEnabled]);
 
   useEffect(() => {
     timelineSeenIdsRef.current = new Set();
     setExpandedTimelineEvents(new Set());
     setPocSteps([]);
     setFindings([]);
+    setCredentials([]);
+    setCredentialVerifications({});
+    setCredentialVerificationBusy({});
+    setServiceSuggestions([]);
+    setServiceSuggestionsError('');
     setFindingProposals([]);
     setSelectedScreenshots(new Set());
     setTimelineFollowEnabled(true);
@@ -737,6 +1313,16 @@ export default function Home() {
     setFlagValue('');
     setFlagStatus('captured');
     setFlagNotes('');
+    setGraphRefreshToken(0);
+    setReportFilters(DEFAULT_REPORT_FILTERS);
+    setReportTemplates([]);
+    setSelectedReportTemplateId('');
+    setReportTemplateName('');
+    setReportTemplateDescription('');
+    setReportShares([]);
+    setCompareAgainstSessionId('');
+    setShowCommandPalette(false);
+    setCommandPaletteQuery('');
   }, [currentSession]);
 
   useEffect(() => {
@@ -749,6 +1335,13 @@ export default function Home() {
       setTimeline(sanitized);
     }
   }, [timeline]);
+
+  useEffect(() => {
+    if (compareAgainstSessionId && comparisonSessionOptions.some((session) => session.id === compareAgainstSessionId)) {
+      return;
+    }
+    setCompareAgainstSessionId(comparisonSessionOptions[0]?.id || '');
+  }, [compareAgainstSessionId, comparisonSessionOptions]);
 
   const fetchHealth = useCallback(async () => {
     try {
@@ -807,14 +1400,14 @@ export default function Home() {
       setViewportWidth(window.innerWidth);
       setHiddenCats(new Set(JSON.parse(localStorage.getItem('ui.hiddenCats') || '[]')));
       setFavorites(loadFavorites());
-      setFilterType(localStorage.getItem('filter.type') || 'all');
-      setFilterStatus(localStorage.getItem('filter.status') || 'all');
-      setFilterKeyword(localStorage.getItem('filter.keyword') || '');
-      setFilterTag(localStorage.getItem('filter.tag') || '');
+      setFilterType(localStorage.getItem('filter.type') || DEFAULT_TIMELINE_FILTERS.type);
+      setFilterStatus(localStorage.getItem('filter.status') || DEFAULT_TIMELINE_FILTERS.status);
+      setFilterKeyword(localStorage.getItem('filter.keyword') || DEFAULT_TIMELINE_FILTERS.keyword);
+      setFilterTag(localStorage.getItem('filter.tag') || DEFAULT_TIMELINE_FILTERS.tag);
       setAnalystName(localStorage.getItem('report.analystName') || '');
       setApiKeys(JSON.parse(localStorage.getItem('aiApiKeys') || '{}'));
       const storedMainView = localStorage.getItem('ui.mainView');
-      setMainView(storedMainView === 'graph' ? 'graph' : 'terminal');
+      setMainView(['graph', 'shells'].includes(storedMainView) ? storedMainView : 'terminal');
       const storedTimer = JSON.parse(localStorage.getItem(`session.timer.${currentSession}`) || 'null');
       setSessionTimer(storedTimer && typeof storedTimer === 'object'
         ? {
@@ -830,6 +1423,20 @@ export default function Home() {
       setPrefsHydrated(true);
     }
   }, [currentSession]);
+
+  useEffect(() => {
+    setCredentialHashAnalysis({});
+    setCredentialHashBusy({});
+    setTimelineFilterPanelOpen(false);
+    commandToastStatusRef.current.clear();
+    graphToastRef.current = { reason: '', at: 0 };
+  }, [currentSession]);
+
+  useEffect(() => {
+    if (viewportWidth >= 1400) {
+      setTimelineFilterPanelOpen(false);
+    }
+  }, [viewportWidth]);
 
   useEffect(() => {
     setTodayLabel(new Date().toLocaleDateString());
@@ -906,7 +1513,8 @@ export default function Home() {
       showVersionHistory ||
       showDiffModal ||
       showDbModal ||
-      showShortcutsModal;
+      showShortcutsModal ||
+      showCommandPalette;
 
     const isInputFocused = () => {
       const el = document.activeElement;
@@ -923,31 +1531,51 @@ export default function Home() {
         return;
       }
 
-      // Ctrl/Cmd+F → focus search filter
-      if ((e.ctrlKey || e.metaKey) && key === 'f') {
+      if ((e.ctrlKey || e.metaKey) && key === 'k' && !isModalOverlayOpen) {
         e.preventDefault();
-        filterKeywordRef.current?.focus();
+        openCommandPalette(inputType === 'command' ? inputVal : '');
+        return;
+      }
+
+      // Ctrl/Cmd+F → focus search filter
+      if ((e.ctrlKey || e.metaKey) && key === 'f' && !isModalOverlayOpen) {
+        e.preventDefault();
+        if (viewportWidth < 1400) {
+          setTimelineFilterPanelOpen(true);
+          requestAnimationFrame(() => {
+            filterKeywordRef.current?.focus();
+          });
+        } else {
+          filterKeywordRef.current?.focus();
+        }
         return;
       }
 
       // Escape → close shortcut modal first, otherwise clear filters and blur
       if (e.key === 'Escape') {
+        if (showCommandPalette) {
+          e.preventDefault();
+          closeCommandPalette();
+          return;
+        }
         if (showShortcutsModal) {
           e.preventDefault();
           setShowShortcutsModal(false);
           return;
         }
-        setFilterType('all');
-        setFilterStatus('all');
-        setFilterKeyword('');
-        setFilterTag('');
+        clearTimelineFilters();
+        setTimelineFilterPanelOpen(false);
         document.activeElement?.blur();
         return;
       }
 
       if (!focusedInput && !isModalOverlayOpen && key === 'g') {
         e.preventDefault();
-        setMainView((prev) => (prev === 'graph' ? 'terminal' : 'graph'));
+        const views = shellHubEnabled ? ['terminal', 'graph', 'shells'] : ['terminal', 'graph'];
+        setMainView((prev) => {
+          const currentIdx = views.indexOf(prev);
+          return views[(currentIdx + 1) % views.length];
+        });
         return;
       }
 
@@ -961,7 +1589,7 @@ export default function Home() {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [showNewSessionModal, showReportModal, showVersionHistory, showDiffModal, showDbModal, showShortcutsModal]);
+  }, [showNewSessionModal, showReportModal, showVersionHistory, showDiffModal, showDbModal, showShortcutsModal, showCommandPalette, shellHubEnabled, viewportWidth, clearTimelineFilters, closeCommandPalette, inputType, inputVal, openCommandPalette]);
 
   useEffect(() => {
     if (viewportWidth < 1200) {
@@ -990,12 +1618,18 @@ export default function Home() {
 
     try {
       if (inputType === 'command') {
-        const sessionTarget = sessions.find(s => s.id === currentSession)?.target || '';
+        const sessionTarget = activeSessionTarget?.target || currentSessionData?.target || '';
         const resolvedCmd = sessionTarget ? val.replace(/\{TARGET\}/gi, sessionTarget) : val;
         const res = await apiFetch('/api/execute', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: resolvedCmd, sessionId: currentSession, tags, timeout: cmdTimeout * 1000 })
+          body: JSON.stringify({
+            command: resolvedCmd,
+            sessionId: currentSession,
+            targetId: activeSessionTarget?.id || null,
+            tags,
+            timeout: cmdTimeout * 1000,
+          })
         });
         const result = await parseTimelineMutationResponse(res, 'Failed to start command process.');
         if (!result.ok) {
@@ -1012,7 +1646,13 @@ export default function Home() {
         const res = await apiFetch('/api/timeline', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId: currentSession, type: 'note', content: noteContent, tags })
+          body: JSON.stringify({
+            sessionId: currentSession,
+            targetId: activeSessionTarget?.id || null,
+            type: 'note',
+            content: noteContent,
+            tags,
+          })
         });
         const result = await parseTimelineMutationResponse(res, 'Failed to add note.');
         if (!result.ok) {
@@ -1037,7 +1677,11 @@ export default function Home() {
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'ArrowUp') {
+    if (e.key === 'Tab' && inputType === 'command' && inlineCommandSuggestion?.command) {
+      e.preventDefault();
+      setInputVal(inlineCommandSuggestion.command);
+      setHistoryIdx(-1);
+    } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       const next = Math.min(historyIdx + 1, inputHistory.length - 1);
       setHistoryIdx(next);
@@ -1065,6 +1709,7 @@ export default function Home() {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('sessionId', currentSession);
+    if (activeSessionTarget?.id) formData.append('targetId', activeSessionTarget.id);
     formData.append('name', file.name);
     try {
       setIsLoading(true);
@@ -1090,12 +1735,27 @@ export default function Home() {
       const res = await apiFetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, name, target: newSessionTarget, difficulty: newSessionDifficulty, objective: newSessionObjective })
+        body: JSON.stringify({
+          id,
+          name,
+          target: newSessionTarget,
+          targets: newSessionTarget
+            ? [{
+                label: newSessionTargetLabel || newSessionTarget,
+                target: newSessionTarget,
+                kind: 'host',
+                isPrimary: true,
+              }]
+            : [],
+          difficulty: newSessionDifficulty,
+          objective: newSessionObjective,
+        })
       });
       const newSess = await res.json();
       setSessions(prev => [newSess, ...prev]);
       setCurrentSession(newSess.id);
-      setNewSessionName(''); setNewSessionTarget(''); setNewSessionObjective('');
+      setActiveTargetId(newSess.primaryTargetId || newSess.primaryTarget?.id || '');
+      setNewSessionName(''); setNewSessionTargetLabel(''); setNewSessionTarget(''); setNewSessionObjective('');
       setShowNewSessionModal(false);
     } catch (error) { console.error('Failed to create session', error); }
     finally { setIsLoading(false); }
@@ -1112,6 +1772,117 @@ export default function Home() {
     } catch (error) { console.error('Failed to delete session', error); }
     finally { setIsLoading(false); }
   };
+
+  const updateCurrentSessionTargetsLocal = useCallback((targets) => {
+    setSessions((prev) => prev.map((session) => {
+      if (session.id !== currentSession) return session;
+      const nextTargets = Array.isArray(targets) ? targets : [];
+      const nextPrimary = nextTargets.find((item) => item.isPrimary) || nextTargets[0] || null;
+      return {
+        ...session,
+        targets: nextTargets,
+        primaryTargetId: nextPrimary?.id || null,
+        primaryTarget: nextPrimary,
+        target: nextPrimary?.target || '',
+      };
+    }));
+  }, [currentSession]);
+
+  const createSessionTargetEntry = useCallback(async () => {
+    if (!targetDraftValue.trim()) return;
+    try {
+      setTargetsBusy(true);
+      const res = await apiFetch('/api/sessions/targets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          label: targetDraftLabel.trim() || targetDraftValue.trim(),
+          target: targetDraftValue.trim(),
+          kind: targetDraftKind,
+          notes: targetDraftNotes,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to add target');
+        return;
+      }
+      updateCurrentSessionTargetsLocal(data.targets);
+      if (data?.target?.id) setActiveTargetId(data.target.id);
+      setTargetDraftLabel('');
+      setTargetDraftValue('');
+      setTargetDraftKind('host');
+      setTargetDraftNotes('');
+      pushToast({
+        tone: 'success',
+        title: 'Target added',
+        message: data?.target?.target || 'New target added to this session.',
+        durationMs: 2600,
+      });
+    } catch (error) {
+      console.error('Failed to add session target', error);
+    } finally {
+      setTargetsBusy(false);
+    }
+  }, [apiFetch, currentSession, pushToast, targetDraftKind, targetDraftLabel, targetDraftNotes, targetDraftValue, updateCurrentSessionTargetsLocal]);
+
+  const setPrimarySessionTargetEntry = useCallback(async (targetId) => {
+    if (!targetId) return;
+    try {
+      setTargetsBusy(true);
+      const res = await apiFetch('/api/sessions/targets', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          targetId,
+          isPrimary: true,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to set primary target');
+        return;
+      }
+      updateCurrentSessionTargetsLocal(data.targets);
+      setActiveTargetId(targetId);
+    } catch (error) {
+      console.error('Failed to set primary target', error);
+    } finally {
+      setTargetsBusy(false);
+    }
+  }, [apiFetch, currentSession, updateCurrentSessionTargetsLocal]);
+
+  const removeSessionTargetEntry = useCallback(async (targetId) => {
+    if (!targetId || !confirm('Delete this target? Existing records will remain but lose the explicit target link.')) return;
+    try {
+      setTargetsBusy(true);
+      const res = await apiFetch(`/api/sessions/targets?sessionId=${encodeURIComponent(currentSession)}&targetId=${encodeURIComponent(targetId)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to delete target');
+        return;
+      }
+      updateCurrentSessionTargetsLocal(data.targets);
+      if (activeTargetId === targetId) {
+        const nextPrimary = (data.targets || []).find((item) => item.isPrimary) || data.targets?.[0] || null;
+        setActiveTargetId(nextPrimary?.id || '');
+      }
+      pushToast({
+        tone: 'warning',
+        title: 'Target deleted',
+        message: 'Target removed from the session.',
+        durationMs: 2400,
+      });
+    } catch (error) {
+      console.error('Failed to delete target', error);
+    } finally {
+      setTargetsBusy(false);
+    }
+  }, [activeTargetId, apiFetch, currentSession, pushToast, updateCurrentSessionTargetsLocal]);
 
   const deleteEvent = async (id) => {
     if (!confirm('Delete this event? This cannot be undone.')) return;
@@ -1320,6 +2091,7 @@ export default function Home() {
           sessionId: currentSession,
           title: `Finding ${findings.length + 1}`,
           severity: 'medium',
+          likelihood: 'medium',
           description: '',
           impact: '',
           remediation: '',
@@ -1353,6 +2125,47 @@ export default function Home() {
       if (data?.finding) upsertFindingLocal(data.finding);
     } catch (error) {
       console.error('Failed to update finding', error);
+    }
+  };
+
+  const suggestFindingRemediation = async (findingId) => {
+    if (!findingId) return;
+    setFindingRemediationBusy((prev) => ({ ...prev, [findingId]: true }));
+    try {
+      const res = await apiFetch('/api/report/remediation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          findingIds: [findingId],
+          provider: aiProvider,
+          apiKey: apiKeys[aiProvider] || '',
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to generate remediation');
+        return;
+      }
+      const suggestion = Array.isArray(data?.suggestions) ? data.suggestions[0] : null;
+      if (!suggestion?.remediation) return;
+      updateFindingLocal(findingId, 'remediation', suggestion.remediation);
+      await persistFindingUpdate(findingId, { remediation: suggestion.remediation });
+      pushToast({
+        tone: data.source === 'ai' ? 'success' : 'info',
+        title: 'Remediation suggestion ready',
+        message: suggestion.title || 'Finding remediation updated.',
+        durationMs: 2800,
+      });
+    } catch (error) {
+      console.error('Failed to suggest remediation', error);
+    } finally {
+      setFindingRemediationBusy((prev) => {
+        const next = { ...prev };
+        delete next[findingId];
+        return next;
+      });
+      fetchAiUsage();
     }
   };
 
@@ -1484,6 +2297,10 @@ export default function Home() {
 
   // ── Report handlers ───────────────────────────────────────────────────────
 
+  const updateReportFiltersState = useCallback((patch = {}) => {
+    setReportFilters((prev) => normalizeReportFilters({ ...prev, ...patch }));
+  }, []);
+
   const applyReportBlocks = useCallback((nextBlocks) => {
     const normalized = Array.isArray(nextBlocks) && nextBlocks.length > 0
       ? nextBlocks
@@ -1534,15 +2351,15 @@ export default function Home() {
       }
     }
 
-    if (findings.length > 0 && !/^##\s+Findings\b/im.test(nextMarkdown)) {
-      const findingsSection = buildFindingsSectionMarkdown(findings);
+    if (reportScopedFindings.length > 0 && !/^##\s+Findings\b/im.test(nextMarkdown)) {
+      const findingsSection = buildFindingsSectionMarkdown(findings, normalizedReportFilters);
       if (findingsSection) {
         nextMarkdown = nextMarkdown ? `${nextMarkdown}\n\n${findingsSection}` : findingsSection;
       }
     }
 
     return nextMarkdown;
-  }, [reportBlocks, reportFormat, pocSteps, findings, currentSession]);
+  }, [reportBlocks, reportFormat, pocSteps, reportScopedFindings.length, findings, currentSession, normalizedReportFilters]);
 
   const addReportBlock = (blockType = 'section') => {
     let newBlock = newSectionBlock('New Section', '');
@@ -1571,6 +2388,25 @@ export default function Home() {
     [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
     applyReportBlocks(next);
   };
+
+  const insertArtifactIntoReport = useCallback((artifact) => {
+    if (!artifact?.id) return;
+    const artifactUrl = artifact.downloadPath || `/api/artifacts/${encodeURIComponent(currentSession)}/${encodeURIComponent(artifact.id)}`;
+    const title = artifact.filename || `Artifact ${artifact.id}`;
+    const notes = artifact.notes || '';
+    let newBlock;
+    if (artifact.previewKind === 'image') {
+      newBlock = newImageBlock(`Artifact: ${title}`, artifactUrl, title, notes, '');
+    } else if (artifact.previewKind === 'text') {
+      const content = [`Artifact file: [${title}](${artifactUrl})`, '', '```text', artifact.previewText || '', '```', notes].filter(Boolean).join('\n');
+      newBlock = newSectionBlock(`Artifact: ${title}`, content);
+    } else {
+      const content = [`Artifact file: [${title}](${artifactUrl})`, notes].filter(Boolean).join('\n\n');
+      newBlock = newSectionBlock(`Artifact: ${title}`, content);
+    }
+    applyReportBlocks([...reportBlocks, newBlock]);
+    setShowReportModal(true);
+  }, [applyReportBlocks, currentSession, reportBlocks]);
 
   const generateReport = async (fmt = reportFormat, { forceRegenerate = false } = {}) => {
     const safeAnalyst = (analystName || '').trim() || 'Unknown';
@@ -1606,7 +2442,9 @@ export default function Home() {
         }
         setReportRestoreNotice(draftChoice.notice);
       } else {
-        const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent(safeAnalyst)}`);
+        const filterQuery = buildReportFilterQuery(reportFilters);
+        const reportUrl = `/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent(safeAnalyst)}${filterQuery ? `&${filterQuery}` : ''}`;
+        const res = await apiFetch(reportUrl);
         const data = await res.json();
         if (!forceRegenerate && localDraft?.blocks?.length) {
           applyReportBlocks(localDraft.blocks);
@@ -1637,7 +2475,9 @@ export default function Home() {
           setReportRestoreNotice('Recovered newer local draft.');
           return;
         }
-        const res = await apiFetch(`/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent((analystName || '').trim() || 'Unknown')}`);
+        const filterQuery = buildReportFilterQuery(reportFilters);
+        const reportUrl = `/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent((analystName || '').trim() || 'Unknown')}${filterQuery ? `&${filterQuery}` : ''}`;
+        const res = await apiFetch(reportUrl);
         const data = await res.json();
         if (data.report) {
           const generatedBlocks = markdownToReportBlocks(data.report);
@@ -1673,6 +2513,238 @@ export default function Home() {
       alert('Write-up saved!');
     } catch (error) { console.error('Failed to save report', error); }
     finally { setIsLoading(false); }
+  };
+
+  const saveReportTemplate = async () => {
+    const templateName = reportTemplateName.trim() || `${currentSessionData?.name || currentSession} ${reportFormatLabel(reportFormat)}`;
+    try {
+      setReportTemplateBusy(true);
+      const markdown = getReportMarkdownWithPoc(reportBlocks);
+      const payload = {
+        sessionId: currentSession,
+        name: templateName,
+        description: reportTemplateDescription.trim(),
+        format: reportFormat,
+        content: markdown,
+        contentJson: reportBlocks,
+      };
+      const url = '/api/report/templates';
+      const method = selectedReportTemplateId ? 'PATCH' : 'POST';
+      const res = await apiFetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(selectedReportTemplateId ? { id: selectedReportTemplateId, ...payload } : payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to save template');
+        return;
+      }
+      const savedTemplate = data?.template;
+      if (savedTemplate?.id) {
+        setSelectedReportTemplateId(savedTemplate.id);
+        setReportTemplateName(savedTemplate.name || '');
+        setReportTemplateDescription(savedTemplate.description || '');
+      }
+      await fetchReportTemplates();
+      pushToast({
+        tone: 'success',
+        title: 'Template saved',
+        message: templateName,
+        durationMs: 2600,
+      });
+    } catch (error) {
+      console.error('Failed to save report template', error);
+    } finally {
+      setReportTemplateBusy(false);
+    }
+  };
+
+  const applySelectedReportTemplate = () => {
+    const template = reportTemplates.find((entry) => entry.id === selectedReportTemplateId);
+    if (!template) return;
+    const sourceBlocks = Array.isArray(template.contentJson) && template.contentJson.length > 0
+      ? template.contentJson
+      : markdownToReportBlocks(template.content || '');
+    const hydratedBlocks = applyTemplatePlaceholders(sourceBlocks, buildReportTemplateContext({
+      session: currentSessionData,
+      analystName: (analystName || '').trim() || 'Unknown',
+      format: reportFormat,
+      formatLabel: reportFormatLabel(reportFormat),
+      generatedAt: new Date(),
+      findings: enrichedFindings,
+      reportFindings: reportScopedFindings,
+    }));
+    applyReportBlocks(hydratedBlocks);
+    setReportRestoreNotice(`Applied template: ${template.name}`);
+    setSelectedReportBlocks([]);
+  };
+
+  const deleteSelectedReportTemplate = async () => {
+    if (!selectedReportTemplateId || !confirm('Delete this report template?')) return;
+    try {
+      setReportTemplateBusy(true);
+      const res = await apiFetch(`/api/report/templates?id=${encodeURIComponent(selectedReportTemplateId)}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to delete template');
+        return;
+      }
+      setSelectedReportTemplateId('');
+      setReportTemplateName('');
+      setReportTemplateDescription('');
+      await fetchReportTemplates();
+      pushToast({
+        tone: 'warning',
+        title: 'Template deleted',
+        message: 'The saved report template was removed.',
+        durationMs: 2400,
+      });
+    } catch (error) {
+      console.error('Failed to delete report template', error);
+    } finally {
+      setReportTemplateBusy(false);
+    }
+  };
+
+  const insertExecutiveSummary = async () => {
+    try {
+      setExecutiveSummaryBusy(true);
+      const res = await apiFetch('/api/report/executive-summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          provider: aiProvider,
+          apiKey: apiKeys[aiProvider] || '',
+          reportFilters: normalizedReportFilters,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.summary) {
+        alert(data.error || 'Failed to generate executive summary');
+        return;
+      }
+      const summaryBlocks = markdownToReportBlocks(data.summary);
+      const remainingBlocks = reportBlocks.filter((block) => String(block.title || '').trim().toLowerCase() !== 'executive summary');
+      applyReportBlocks([...summaryBlocks, ...remainingBlocks]);
+      setSelectedReportBlocks([]);
+      pushToast({
+        tone: data.source === 'ai' ? 'success' : 'info',
+        title: 'Executive summary ready',
+        message: data.source === 'ai' ? 'Inserted AI-assisted executive summary.' : 'Inserted deterministic executive summary.',
+        durationMs: 3200,
+      });
+    } catch (error) {
+      console.error('Failed to generate executive summary', error);
+    } finally {
+      setExecutiveSummaryBusy(false);
+      fetchAiUsage();
+    }
+  };
+
+  const loadComparisonReport = async () => {
+    if (!compareAgainstSessionId) return;
+    try {
+      setReportCompareBusy(true);
+      const query = new URLSearchParams({
+        beforeSessionId: compareAgainstSessionId,
+        afterSessionId: currentSession,
+        analystName: (analystName || '').trim() || 'Unknown',
+        minimumSeverity: normalizedReportFilters.minimumSeverity,
+        tag: normalizedReportFilters.tag || '',
+        techniqueId: normalizedReportFilters.techniqueId || '',
+        includeDuplicates: normalizedReportFilters.includeDuplicates ? 'true' : 'false',
+      });
+      const res = await apiFetch(`/api/report/compare?${query.toString()}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.report) {
+        alert(data.error || 'Failed to generate comparison report');
+        return;
+      }
+      const comparisonBlocks = markdownToReportBlocks(data.report);
+      applyReportBlocks(comparisonBlocks);
+      setSelectedReportBlocks([]);
+      setReportRestoreNotice(`Loaded comparison report against ${sessions.find((session) => session.id === compareAgainstSessionId)?.name || compareAgainstSessionId}.`);
+    } catch (error) {
+      console.error('Failed to load comparison report', error);
+    } finally {
+      setReportCompareBusy(false);
+    }
+  };
+
+  const createReportShare = async () => {
+    try {
+      setReportShareBusy(true);
+      const markdown = getReportMarkdownWithPoc(reportBlocks);
+      const meta = {
+        sessionName: currentSessionData?.name || currentSession,
+        target: currentSessionData?.target || '',
+        difficulty: currentSessionData?.difficulty || '',
+        objective: currentSessionData?.objective || '',
+      };
+      const res = await apiFetch('/api/writeup/share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          title: `${currentSessionData?.name || currentSession} ${reportFormatLabel(reportFormat)}`,
+          format: reportFormat,
+          analystName: (analystName || '').trim() || 'Unknown',
+          reportMarkdown: markdown,
+          reportContentJson: reportBlocks,
+          reportFilters: normalizedReportFilters,
+          meta,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.share) {
+        alert(data.error || 'Failed to create share link');
+        return;
+      }
+      await fetchReportShares();
+      if (data.share.shareUrl) {
+        await navigator.clipboard.writeText(data.share.shareUrl).catch(() => {});
+      }
+      pushToast({
+        tone: 'success',
+        title: 'Share link created',
+        message: 'Copied the read-only report URL to the clipboard.',
+        durationMs: 3200,
+      });
+    } catch (error) {
+      console.error('Failed to create report share', error);
+    } finally {
+      setReportShareBusy(false);
+    }
+  };
+
+  const revokeReportShare = async (shareId) => {
+    if (!shareId || !confirm('Revoke this share link?')) return;
+    try {
+      setReportShareBusy(true);
+      const res = await apiFetch('/api/writeup/share', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, id: shareId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to revoke share');
+        return;
+      }
+      await fetchReportShares();
+      pushToast({
+        tone: 'warning',
+        title: 'Share link revoked',
+        message: 'The public report URL has been disabled.',
+        durationMs: 2600,
+      });
+    } catch (error) {
+      console.error('Failed to revoke report share', error);
+    } finally {
+      setReportShareBusy(false);
+    }
   };
 
   const enhanceReport = async () => {
@@ -1763,24 +2835,42 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [showReportModal, prefsHydrated, currentSession, reportFormat, reportBlocks]);
 
-  const runCoach = async () => {
+  const runCoach = async ({ bypassCache = false } = {}) => {
     setIsCoaching(true);
     setCoachResult('');
     setCoachCompareResults([]);
     setShowCoachPanel(true);
+    setCoachMeta((prev) => ({
+      ...prev,
+      cache: bypassCache ? 'bypass' : '',
+      coachLevel,
+      contextMode: coachContextMode,
+      includedEvents: 0,
+      omittedEvents: 0,
+    }));
     try {
       // E.6 — Compare mode: non-streaming, all providers in parallel
       if (coachCompareMode) {
         const res = await apiFetch('/api/coach', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId: currentSession, provider: aiProvider, apiKey: apiKeys[aiProvider] || '', skill: coachSkill, compare: true }),
+          body: JSON.stringify({
+            sessionId: currentSession,
+            provider: aiProvider,
+            apiKey: apiKeys[aiProvider] || '',
+            skill: coachSkill,
+            compare: true,
+            coachLevel,
+            contextMode: coachContextMode,
+            bypassCache,
+          }),
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           setCoachResult(`Error: ${err.error || 'Coach unavailable.'}`);
           return;
         }
+        setCoachMeta(readCoachResponseMeta(res.headers));
         const { responses } = await res.json();
         setCoachCompareResults(responses || []);
         setCoachCompareTab(0);
@@ -1791,13 +2881,22 @@ export default function Home() {
       const res = await apiFetch('/api/coach', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: currentSession, provider: aiProvider, apiKey: apiKeys[aiProvider] || '', skill: coachSkill }),
+        body: JSON.stringify({
+          sessionId: currentSession,
+          provider: aiProvider,
+          apiKey: apiKeys[aiProvider] || '',
+          skill: coachSkill,
+          coachLevel,
+          contextMode: coachContextMode,
+          bypassCache,
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         setCoachResult(`Error: ${err.error || 'Coach unavailable. Check your API key.'}`);
         return;
       }
+      setCoachMeta(readCoachResponseMeta(res.headers));
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let result = '';
@@ -1850,6 +2949,7 @@ export default function Home() {
           format: reportFormat,
           analystName: analystName.trim() || 'Unknown',
           inlineImages,
+          reportFilters: normalizedReportFilters,
         }),
       });
       if (!res.ok) {
@@ -1906,6 +3006,7 @@ export default function Home() {
           format: reportFormat,
           analystName: analystName.trim() || 'Unknown',
           inlineImages,
+          reportFilters: normalizedReportFilters,
         }),
       });
       if (!res.ok) {
@@ -1936,6 +3037,7 @@ export default function Home() {
           format: reportFormat,
           analystName: analystName.trim() || 'Unknown',
           inlineImages,
+          reportFilters: normalizedReportFilters,
         }),
       });
       if (!res.ok) {
@@ -1967,6 +3069,7 @@ export default function Home() {
           analystName: analystName.trim() || 'Unknown',
           inlineImages,
           includeAppendix,
+          reportFilters: normalizedReportFilters,
         }),
       });
       if (!res.ok) {
@@ -2084,7 +3187,7 @@ export default function Home() {
   };
 
   const appendFlag = (flag) => {
-    const sessionTarget = sessions.find(s => s.id === currentSession)?.target || '';
+    const sessionTarget = activeSessionTarget?.target || currentSessionData?.target || '';
     const resolved = sessionTarget ? flag.replace(/\{TARGET\}/gi, sessionTarget) : flag;
     setInputType('command');
     setInputVal(prev => prev.includes(resolved) ? prev : `${prev} ${resolved}`.trim());
@@ -2105,6 +3208,403 @@ export default function Home() {
       return next;
     });
   };
+
+  const createCredentialEntry = async (payload) => {
+    try {
+      const res = await apiFetch('/api/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, targetId: activeSessionTarget?.id || null, ...payload }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to save credential');
+        return;
+      }
+      if (data?.credential) {
+        setCredentials((prev) => [data.credential, ...prev.filter((item) => item.id !== data.credential.id)]);
+        void fetchCredentialVerifications();
+        pushToast({
+          tone: 'success',
+          title: 'Credential saved',
+          message: data.credential.label || data.credential.username || data.credential.hashType || 'New credential added to the session.',
+          durationMs: 2600,
+        });
+        if (data.credential.hash && !data.credential.hashType) {
+          void identifyCredentialHash(data.credential.id);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to create credential', error);
+    }
+  };
+
+  const persistCredentialUpdate = async (id, patch) => {
+    try {
+      const res = await apiFetch('/api/credentials', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, id, ...patch }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to update credential');
+        return;
+      }
+      if (data?.credential) {
+        setCredentials((prev) => prev.map((item) => item.id === data.credential.id ? data.credential : item));
+        void fetchCredentialVerifications();
+        pushToast({
+          tone: 'info',
+          title: 'Credential updated',
+          message: data.credential.label || data.credential.username || 'Credential changes were saved.',
+          durationMs: 2400,
+        });
+        setCredentialHashAnalysis((prev) => {
+          const next = { ...prev };
+          if (patch?.hash !== undefined || patch?.hashType !== undefined) {
+            delete next[id];
+          }
+          return next;
+        });
+      }
+    } catch (error) {
+      console.error('Failed to update credential', error);
+    }
+  };
+
+  const removeCredentialEntry = async (id) => {
+    if (!confirm('Delete this credential?')) return;
+    try {
+      const res = await apiFetch(`/api/credentials?sessionId=${currentSession}&id=${id}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to delete credential');
+        return;
+      }
+      setCredentials((prev) => prev.filter((item) => item.id !== id));
+      setCredentialVerifications((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setCredentialHashAnalysis((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setCredentialHashBusy((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      pushToast({
+        tone: 'warning',
+        title: 'Credential deleted',
+        message: 'The credential was removed from this session.',
+        durationMs: 2200,
+      });
+    } catch (error) {
+      console.error('Failed to delete credential', error);
+    }
+  };
+
+  const insertSuggestedCommand = useCallback((command) => {
+    if (!command) return;
+    setInputType('command');
+    setInputVal(command);
+    setMainView('terminal');
+    setSidebarTab('tools');
+    inputRef.current?.focus();
+  }, []);
+
+  const focusTimelineForTerm = useCallback((term) => {
+    const query = String(term || '').trim();
+    if (!query) return;
+    setMainView('terminal');
+    setFilterKeyword(query);
+    if (viewportWidth < 1400) {
+      setTimelineFilterPanelOpen(true);
+    }
+    requestAnimationFrame(() => {
+      filterKeywordRef.current?.focus();
+    });
+  }, [viewportWidth]);
+
+  const handleSelectPaletteEntry = useCallback((entry) => {
+    if (!entry?.command) return;
+    insertSuggestedCommand(entry.command);
+    closeCommandPalette();
+  }, [closeCommandPalette, insertSuggestedCommand]);
+
+  const identifyCredentialHash = useCallback(async (credentialId) => {
+    if (!credentialId) return null;
+    setCredentialHashBusy((prev) => ({ ...prev, [credentialId]: true }));
+    try {
+      const res = await apiFetch('/api/credentials/hash-identify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, credentialId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to identify hash');
+        return null;
+      }
+      if (data?.credential) {
+        setCredentials((prev) => prev.map((item) => (
+          item.id === data.credential.id ? data.credential : item
+        )));
+      }
+      if (data?.analysis) {
+        setCredentialHashAnalysis((prev) => ({
+          ...prev,
+          [credentialId]: data.analysis,
+        }));
+        pushToast({
+          tone: data.analysis.bestCandidate ? 'info' : 'warning',
+          title: data.analysis.bestCandidate ? 'Hash identified' : 'Hash not identified',
+          message: data.analysis.summary || 'Hash analysis completed.',
+          durationMs: data.analysis.bestCandidate ? 3600 : 4600,
+        });
+      }
+      return data?.analysis || null;
+    } catch (error) {
+      console.error('Failed to identify hash', error);
+      return null;
+    } finally {
+      setCredentialHashBusy((prev) => {
+        const next = { ...prev };
+        delete next[credentialId];
+        return next;
+      });
+    }
+  }, [apiFetch, currentSession, pushToast]);
+
+  const handleCreateTranscriptArtifact = useCallback(async (payload) => {
+    try {
+      const artifact = await createArtifactFromTranscript(payload);
+      if (artifact?.id) {
+        setSidebarTab('artifacts');
+        pushToast({
+          tone: 'success',
+          title: 'Artifact saved',
+          message: artifact.filename || artifact.kind || 'Transcript output saved as an artifact.',
+          durationMs: 2800,
+        });
+      }
+      return artifact;
+    } catch (error) {
+      alert(error?.message || 'Failed to save transcript artifact');
+      return null;
+    }
+  }, [createArtifactFromTranscript, pushToast]);
+
+  const handleArtifactUpload = useCallback(async (payload) => {
+    const artifact = await uploadArtifact(payload);
+    if (artifact?.id) {
+      setSidebarTab('artifacts');
+      pushToast({
+        tone: 'success',
+        title: 'Artifact uploaded',
+        message: artifact.filename || 'Uploaded file added to the session.',
+        durationMs: 2800,
+      });
+    }
+    return artifact;
+  }, [pushToast, uploadArtifact]);
+
+  const handleArtifactDelete = useCallback(async (artifactId) => {
+    if (!artifactId || !confirm('Delete this artifact?')) return;
+    try {
+      await deleteArtifactById(artifactId);
+      pushToast({
+        tone: 'warning',
+        title: 'Artifact deleted',
+        message: 'The artifact was removed from the session.',
+        durationMs: 2200,
+      });
+    } catch (error) {
+      alert(error?.message || 'Failed to delete artifact');
+    }
+  }, [deleteArtifactById, pushToast]);
+
+  const handleCreateShellSession = useCallback(async (payload) => {
+    const shellSession = await createShellSession(payload);
+    if (shellSession?.id) {
+      setMainView('shells');
+      pushToast({
+        tone: 'success',
+        title: 'Shell session created',
+        message: shellSession.label || shellSession.type || 'Shell session is ready.',
+        durationMs: 2600,
+      });
+    }
+    return shellSession;
+  }, [createShellSession, pushToast]);
+
+  const handleDisconnectShellSession = useCallback(async (shellSessionId) => {
+    const result = await disconnectShellSession(shellSessionId);
+    if (result?.shellSession?.id) {
+      pushToast({
+        tone: 'warning',
+        title: 'Shell session closed',
+        message: result.shellSession.label || result.shellSession.type || 'Shell session disconnected.',
+        durationMs: 2600,
+      });
+    }
+    return result;
+  }, [disconnectShellSession, pushToast]);
+
+  const triggerCredentialVerification = useCallback(async (credentialId, mode = 'single') => {
+    if (!credentialId) return;
+    setCredentialVerificationBusy((prev) => ({ ...prev, [credentialId]: mode }));
+    try {
+      const res = await apiFetch('/api/credentials/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, credentialId, mode }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to verify credential');
+        return;
+      }
+      setCredentials((prev) => prev.map((item) => (
+        item.id === data?.credential?.id ? data.credential : item
+      )));
+      setCredentialVerifications((prev) => {
+        const grouped = groupCredentialVerifications(data?.history);
+        return {
+          ...prev,
+          [credentialId]: grouped[credentialId] || [],
+        };
+      });
+      pushToast({
+        tone: Array.isArray(data?.results) && data.results.some((item) => item?.matched)
+          ? 'success'
+          : 'info',
+        title: mode === 'blast-radius' ? 'Blast radius complete' : 'Verification complete',
+        message: Array.isArray(data?.results) && data.results.length > 0
+          ? `${data.results.length} result(s) recorded for this credential.`
+          : 'Verification finished with no persisted results.',
+        durationMs: 3200,
+      });
+    } catch (error) {
+      console.error('Failed to verify credential', error);
+    } finally {
+      setCredentialVerificationBusy((prev) => {
+        const next = { ...prev };
+        delete next[credentialId];
+        return next;
+      });
+    }
+  }, [apiFetch, currentSession, pushToast]);
+
+  const linkPlatformSession = useCallback(async () => {
+    setPlatformLinkBusy(true);
+    try {
+      const platformType = platformTypeDraft;
+      const trimmedRemoteId = platformRemoteIdDraft.trim();
+      const trimmedLabel = platformLabelDraft.trim();
+      const trimmedChallengeId = platformChallengeIdDraft.trim();
+      const context = {};
+      if (platformType === 'htb' && trimmedChallengeId) {
+        context.challengeId = trimmedChallengeId;
+      }
+
+      const res = await apiFetch('/api/platform/session-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          platformType,
+          remoteId: trimmedRemoteId || undefined,
+          label: trimmedLabel || undefined,
+          context,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to sync platform link.');
+        return;
+      }
+
+      if (data?.session?.id) {
+        setSessions((prev) => prev.map((entry) => entry.id === data.session.id ? data.session : entry));
+      }
+      setPlatformLinkInfo({
+        link: data?.link || null,
+        capabilities: data?.capabilities || {},
+      });
+      pushToast({
+        tone: 'success',
+        title: 'Platform linked',
+        message: data?.link?.label
+          ? `${formatPlatformTypeLabel(data.link.type)} synced for ${data.link.label}.`
+          : 'Session platform metadata was refreshed.',
+        durationMs: 3200,
+      });
+    } catch (error) {
+      console.error('Failed to link platform session', error);
+    } finally {
+      setPlatformLinkBusy(false);
+    }
+  }, [
+    apiFetch,
+    currentSession,
+    platformChallengeIdDraft,
+    platformLabelDraft,
+    platformRemoteIdDraft,
+    platformTypeDraft,
+    pushToast,
+  ]);
+
+  const submitFlagToPlatform = useCallback(async (flagId) => {
+    if (!flagId) return;
+    setFlagPlatformBusy((prev) => ({ ...prev, [flagId]: true }));
+    try {
+      const res = await apiFetch('/api/platform/submit-flag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: currentSession, flagId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to submit flag to platform.');
+        return;
+      }
+      if (data?.flag?.id) {
+        setFlags((prev) => prev.map((entry) => entry.id === data.flag.id ? data.flag : entry));
+      }
+      if (data?.link) {
+        setSessions((prev) => prev.map((entry) => (
+          entry.id === currentSession
+            ? { ...entry, metadata: { ...(entry.metadata || {}), platform: data.link } }
+            : entry
+        )));
+        setPlatformLinkInfo((prev) => ({ ...prev, link: data.link || prev.link }));
+      }
+      pushToast({
+        tone: data?.result?.status === 'accepted'
+          ? 'success'
+          : data?.result?.status === 'rejected'
+            ? 'warning'
+            : 'info',
+        title: data?.result?.mode === 'validation' ? 'Flag validated' : 'Flag submitted',
+        message: data?.result?.summary || 'Platform action completed.',
+        durationMs: 3600,
+      });
+    } catch (error) {
+      console.error('Failed to submit flag to platform', error);
+    } finally {
+      setFlagPlatformBusy((prev) => {
+        const next = { ...prev };
+        delete next[flagId];
+        return next;
+      });
+    }
+  }, [apiFetch, currentSession, pushToast]);
 
   const createFlagEntry = async () => {
     if (!flagValue.trim()) return;
@@ -2283,27 +3783,78 @@ export default function Home() {
 
   const commandExecutionEnabled = healthData?.features?.commandExecutionEnabled !== false;
   const currentSessionData = sessions.find(s => s.id === currentSession);
+  const linkedPlatform = platformLinkInfo.link || currentSessionData?.metadata?.platform || null;
+  const platformCapabilities = platformLinkInfo.capabilities || {};
+  const activePlatformCapability = linkedPlatform?.type ? platformCapabilities[linkedPlatform.type] : null;
+  const currentSessionTargets = getSessionTargets(currentSessionData);
+  const primarySessionTarget = getPrimarySessionTargetValue(currentSessionData);
+  const activeSessionTarget = currentSessionTargets.find((target) => target.id === activeTargetId)
+    || primarySessionTarget
+    || null;
   const sessionTimerLabel = formatTimerDuration(sessionTimer.elapsedMs);
-
-  const allTimelineTags = [...new Set(timeline.flatMap(e => {
-    try { return JSON.parse(e.tags || '[]'); } catch { return []; }
-  }))].sort();
-
-  const filteredTimeline = timeline.filter(event => {
-    if (filterType !== 'all' && event.type !== filterType) return false;
-    if (filterStatus !== 'all' && event.status !== filterStatus) return false;
-    if (filterTag) {
-      const evTags = (() => { try { return JSON.parse(event.tags || '[]'); } catch { return []; } })();
-      if (!evTags.includes(filterTag)) return false;
-    }
-    if (filterKeyword) {
-      const kw = filterKeyword.toLowerCase();
-      return (event.command || '').toLowerCase().includes(kw) ||
-             (event.content || '').toLowerCase().includes(kw) ||
-             (event.output || '').toLowerCase().includes(kw);
-    }
-    return true;
-  });
+  const timelineFilters = {
+    type: filterType,
+    status: filterStatus,
+    keyword: filterKeyword,
+    tag: filterTag,
+  };
+  const compactTimelineFilters = viewportWidth < 1400;
+  const allTimelineTags = extractTimelineTags(timeline);
+  const filteredTimeline = filterTimelineEvents(timeline, timelineFilters);
+  const activeTargetValue = activeSessionTarget?.target?.trim()
+    || currentSessionData?.target?.trim()
+    || '';
+  const enrichedFindings = useMemo(() => enrichFindings(findings), [findings]);
+  const normalizedReportFilters = useMemo(() => normalizeReportFilters(reportFilters), [reportFilters]);
+  const reportScopedFindings = useMemo(
+    () => filterFindings(findings, normalizedReportFilters),
+    [findings, normalizedReportFilters]
+  );
+  const reportTechniqueOptions = useMemo(() => {
+    const byId = new Map();
+    enrichedFindings.forEach((finding) => {
+      (Array.isArray(finding.attackTechniques) ? finding.attackTechniques : []).forEach((technique) => {
+        if (!technique?.id || byId.has(technique.id)) return;
+        byId.set(technique.id, technique);
+      });
+    });
+    return [...byId.values()].sort((left, right) => String(left.id).localeCompare(String(right.id)));
+  }, [enrichedFindings]);
+  const comparisonSessionOptions = useMemo(
+    () => sessions.filter((session) => session.id !== currentSession),
+    [currentSession, sessions]
+  );
+  const displayedServiceSuggestions = useMemo(() => {
+    const items = Array.isArray(serviceSuggestions) ? [...serviceSuggestions] : [];
+    return items.sort((left, right) => {
+      const leftActive = activeTargetId && Array.isArray(left?.targetIds) && left.targetIds.includes(activeTargetId) ? 1 : 0;
+      const rightActive = activeTargetId && Array.isArray(right?.targetIds) && right.targetIds.includes(activeTargetId) ? 1 : 0;
+      return rightActive - leftActive
+        || Number(right?.confidence || 0) - Number(left?.confidence || 0)
+        || String(left?.title || '').localeCompare(String(right?.title || ''));
+    });
+  }, [activeTargetId, serviceSuggestions]);
+  const operatorSuggestionEntries = useMemo(() => buildOperatorSuggestions({
+    staticSuggestions: SUGGESTIONS,
+    serviceSuggestions: displayedServiceSuggestions,
+    historyCommands: inputHistory,
+    context: {
+      activeTargetId: activeTargetId || null,
+      target: activeTargetValue || null,
+      lhost: 'tun0-ip',
+      lport: '4444',
+    },
+  }), [activeTargetId, activeTargetValue, displayedServiceSuggestions, inputHistory]);
+  const commandPaletteEntries = useMemo(() => rankOperatorSuggestions(
+    operatorSuggestionEntries,
+    commandPaletteQuery,
+    { limit: 18, activeTargetId: activeTargetId || null }
+  ), [activeTargetId, commandPaletteQuery, operatorSuggestionEntries]);
+  const inlineCommandSuggestion = useMemo(() => (
+    inputType === 'command'
+      ? findInlineOperatorSuggestion(operatorSuggestionEntries, inputVal, { activeTargetId: activeTargetId || null })
+      : null
+  ), [activeTargetId, inputType, inputVal, operatorSuggestionEntries]);
 
   const reportScreenshotOptions = timeline
     .filter(e => e.type === 'screenshot' && e.filename)
@@ -2370,7 +3921,10 @@ export default function Home() {
     if (favorites.has(f.flag)) favFlagItems.push({ ...f, tool: tool.tool, cat: cat.name });
   })));
 
-  const headerTarget = currentSessionData?.target?.trim() || 'not set';
+  const headerTarget = activeSessionTarget?.target?.trim()
+    || primarySessionTarget?.target?.trim()
+    || currentSessionData?.target?.trim()
+    || 'not set';
   const headerDifficulty = (currentSessionData?.difficulty || 'unknown').toUpperCase();
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -2391,6 +3945,20 @@ export default function Home() {
               style={{ flex: '1 1 140px', maxWidth: '240px' }}>
               {sessions.map((s, idx) => <option key={`${s.id}-${idx}`} value={s.id}>{s.name}</option>)}
             </select>
+            {currentSessionTargets.length > 0 && (
+              <select
+                value={activeSessionTarget?.id || ''}
+                onChange={(e) => setActiveTargetId(e.target.value)}
+                style={{ flex: '0 1 230px', maxWidth: '230px' }}
+                title={activeSessionTarget?.target || 'Select active target'}
+              >
+                {currentSessionTargets.map((target) => (
+                  <option key={target.id || target.target} value={target.id || ''}>
+                    {formatSessionTargetOption(target)}
+                  </option>
+                ))}
+              </select>
+            )}
             {currentSessionData?.difficulty && (
               <span className="mono" style={{ fontSize: '0.7rem', padding: '2px 7px', borderRadius: '4px', whiteSpace: 'nowrap', background: DIFFICULTY_COLORS[currentSessionData.difficulty] + '22', color: DIFFICULTY_COLORS[currentSessionData.difficulty], border: `1px solid ${DIFFICULTY_COLORS[currentSessionData.difficulty]}44` }}>
                 {currentSessionData.difficulty.toUpperCase()}
@@ -2404,7 +3972,8 @@ export default function Home() {
 
           {/* Action buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
-<button className="btn-secondary btn-compact" onClick={() => setShowNewSessionModal(true)} title="New Session">+</button>
+            <button className="btn-secondary btn-compact" onClick={() => setShowNewSessionModal(true)} title="New Session">+</button>
+            <button className="btn-secondary btn-compact" onClick={() => setShowTargetsModal(true)} title="Manage Targets">Targets</button>
             {currentSession !== 'default' && (
               <button className="btn-compact" onClick={deleteSession} title="Delete Session"
                 style={{ color: 'var(--accent-danger, #f85149)', border: '1px solid var(--accent-danger, #f85149)', borderRadius: '6px', background: 'transparent' }}>✕</button>
@@ -2482,6 +4051,89 @@ export default function Home() {
         </div>
       )}
 
+      <div className="glass-panel objective-bar" style={{ display: 'grid', gap: '0.55rem', marginTop: currentSessionData?.objective ? '0.55rem' : '0.85rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+            <span style={{ color: 'var(--accent-secondary)' }}>Platform:</span>{' '}
+            {linkedPlatform
+              ? `${formatPlatformTypeLabel(linkedPlatform.type)} · ${linkedPlatform.label || linkedPlatform.remoteLabel || linkedPlatform.remoteId}`
+              : 'Not linked'}
+            {linkedPlatform?.syncedAt ? ` · synced ${new Date(linkedPlatform.syncedAt).toLocaleString()}` : ''}
+          </div>
+          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+            {activePlatformCapability && (
+              <span className="mono" style={{ fontSize: '0.7rem', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(88,166,255,0.28)', color: 'var(--accent-secondary)', background: 'rgba(88,166,255,0.08)' }}>
+                {activePlatformCapability.flagMode === 'validation' ? 'flag validation' : activePlatformCapability?.flagSubmit ? 'flag submit' : 'metadata only'}
+              </span>
+            )}
+            <button className="btn-secondary btn-compact" onClick={() => setPlatformPanelExpanded((prev) => !prev)}>
+              {platformPanelExpanded ? 'Hide Link' : 'Link Platform'}
+            </button>
+            <button className="btn-secondary btn-compact" onClick={() => void linkPlatformSession()} disabled={platformLinkBusy}>
+              {platformLinkBusy ? 'Syncing…' : linkedPlatform ? 'Refresh Link' : 'Sync'}
+            </button>
+          </div>
+        </div>
+        {linkedPlatform?.lastFlagSubmission?.summary && (
+          <div className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+            Last flag result: {linkedPlatform.lastFlagSubmission.summary}
+          </div>
+        )}
+        {platformPanelExpanded && (
+          <div style={{ display: 'grid', gap: '0.55rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr 1fr', gap: '0.55rem' }}>
+              <select value={platformTypeDraft} onChange={(e) => setPlatformTypeDraft(e.target.value)} style={{ fontSize: '0.76rem', padding: '4px 8px' }}>
+                <option value="htb">Hack The Box</option>
+                <option value="thm">TryHackMe</option>
+                <option value="ctfd">CTFd</option>
+              </select>
+              <input
+                type="text"
+                value={platformRemoteIdDraft}
+                onChange={(e) => setPlatformRemoteIdDraft(e.target.value)}
+                placeholder={platformTypeDraft === 'htb' ? 'HTB Event ID' : platformTypeDraft === 'thm' ? 'THM Room Code' : 'CTFd Challenge ID'}
+              />
+              <input
+                type="text"
+                value={platformLabelDraft}
+                onChange={(e) => setPlatformLabelDraft(e.target.value)}
+                placeholder="Optional local label"
+              />
+            </div>
+            {platformTypeDraft === 'htb' && (
+              <input
+                type="text"
+                value={platformChallengeIdDraft}
+                onChange={(e) => setPlatformChallengeIdDraft(e.target.value)}
+                placeholder="Optional HTB Challenge ID (required for flag submit)"
+              />
+            )}
+            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+              {['htb', 'thm', 'ctfd'].map((platformKey) => {
+                const capability = platformCapabilities?.[platformKey];
+                return (
+                  <span key={platformKey} className="mono" style={{
+                    fontSize: '0.68rem',
+                    padding: '2px 7px',
+                    borderRadius: '999px',
+                    border: `1px solid ${capability?.configured ? 'rgba(63,185,80,0.28)' : 'rgba(248,81,73,0.28)'}`,
+                    color: capability?.configured ? '#3fb950' : '#f85149',
+                    background: capability?.configured ? 'rgba(63,185,80,0.08)' : 'rgba(248,81,73,0.08)',
+                  }}>
+                    {formatPlatformTypeLabel(platformKey)} {capability?.configured ? 'ready' : 'not configured'}
+                  </span>
+                );
+              })}
+            </div>
+            {platformCapabilities?.[platformTypeDraft]?.reason && !platformCapabilities?.[platformTypeDraft]?.configured && (
+              <div className="mono" style={{ fontSize: '0.7rem', color: '#f85149' }}>
+                {platformCapabilities[platformTypeDraft].reason}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* ── New Session Modal ─────────────────────────────────────────────── */}
       {showNewSessionModal && (
         <div className="overlay">
@@ -2490,6 +4142,9 @@ export default function Home() {
             <p className="mono" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Challenge Name *</p>
             <input type="text" value={newSessionName} onChange={(e) => setNewSessionName(e.target.value)}
               placeholder="e.g. Mangler-HTB" autoFocus style={{ marginBottom: '0.75rem' }} />
+            <p className="mono" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Target Label</p>
+            <input type="text" value={newSessionTargetLabel} onChange={(e) => setNewSessionTargetLabel(e.target.value)}
+              placeholder="e.g. External Host" style={{ marginBottom: '0.75rem' }} />
             <p className="mono" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Target IP / URL</p>
             <input type="text" value={newSessionTarget} onChange={(e) => setNewSessionTarget(e.target.value)}
               placeholder="e.g. 10.10.11.42" style={{ marginBottom: '0.75rem' }} />
@@ -2522,12 +4177,97 @@ export default function Home() {
               <button className="btn-secondary" onClick={() => setShowShortcutsModal(false)}>Close</button>
             </div>
             <div className="mono shortcuts-grid">
+              <span>Ctrl/Cmd + K</span><span>Open command palette</span>
               <span>Ctrl/Cmd + F</span><span>Focus timeline search</span>
               <span>Esc</span><span>Clear filters / close shortcuts</span>
               <span>J / K</span><span>Scroll timeline down/up</span>
               <span>G</span><span>Toggle terminal and graph view</span>
               <span>?</span><span>Open shortcuts reference</span>
+              <span>Tab</span><span>Accept top command suggestion</span>
               <span>↑ / ↓</span><span>Command input history</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCommandPalette && (
+        <CommandPalette
+          open={showCommandPalette}
+          query={commandPaletteQuery}
+          entries={commandPaletteEntries}
+          onClose={closeCommandPalette}
+          onQueryChange={setCommandPaletteQuery}
+          onSelect={handleSelectPaletteEntry}
+        />
+      )}
+
+      {showTargetsModal && (
+        <div className="overlay" onClick={() => setShowTargetsModal(false)}>
+          <div className="modal glass-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '760px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
+              <h3>Session Targets</h3>
+              <button className="btn-secondary" onClick={() => setShowTargetsModal(false)}>Close</button>
+            </div>
+            <div className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+              Active target drives <code>{'{TARGET}'}</code> substitution and becomes the default link for new commands, notes, credentials, shells, and artifacts.
+            </div>
+            <div style={{ display: 'grid', gap: '0.6rem', marginBottom: '1rem' }}>
+              {currentSessionTargets.length === 0 && (
+                <div className="mono" style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                  No explicit targets saved for this session yet.
+                </div>
+              )}
+              {currentSessionTargets.map((target) => (
+                <div key={target.id || target.target} style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '0.65rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div>
+                      <div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-main)' }}>
+                        {target.label || target.target}
+                      </div>
+                      <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                        {target.target} · {(target.kind || 'host').toUpperCase()}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                      <button className="btn-secondary" onClick={() => setActiveTargetId(target.id || '')} style={{ fontSize: '0.72rem', padding: '4px 9px' }}>
+                        {activeSessionTarget?.id === target.id ? 'Active' : 'Use'}
+                      </button>
+                      <button className="btn-secondary" onClick={() => void setPrimarySessionTargetEntry(target.id)} style={{ fontSize: '0.72rem', padding: '4px 9px' }} disabled={targetsBusy || target.isPrimary}>
+                        {target.isPrimary ? 'Primary' : 'Set Primary'}
+                      </button>
+                      <button className="btn-secondary" onClick={() => void removeSessionTargetEntry(target.id)} style={{ fontSize: '0.72rem', padding: '4px 9px', color: 'var(--accent-danger)', borderColor: 'rgba(248,81,73,0.35)' }} disabled={targetsBusy}>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                  {target.notes && (
+                    <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.4rem', whiteSpace: 'pre-wrap' }}>
+                      {target.notes}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.9rem' }}>
+              <h4 style={{ marginBottom: '0.55rem' }}>Add Target</h4>
+              <div style={{ display: 'grid', gap: '0.55rem' }}>
+                <input type="text" value={targetDraftLabel} onChange={(e) => setTargetDraftLabel(e.target.value)} placeholder="Label (e.g. Internal CIDR)" />
+                <input type="text" value={targetDraftValue} onChange={(e) => setTargetDraftValue(e.target.value)} placeholder="Target value (host, URL, CIDR)" />
+                <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: '0.55rem' }}>
+                  <select value={targetDraftKind} onChange={(e) => setTargetDraftKind(e.target.value)}>
+                    <option value="host">Host</option>
+                    <option value="url">URL</option>
+                    <option value="cidr">CIDR</option>
+                    <option value="host-port">Host:Port</option>
+                  </select>
+                  <input type="text" value={targetDraftNotes} onChange={(e) => setTargetDraftNotes(e.target.value)} placeholder="Notes (optional)" />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button className="btn-primary" onClick={() => void createSessionTargetEntry()} disabled={targetsBusy || !targetDraftValue.trim()}>
+                    {targetsBusy ? 'Saving…' : 'Add Target'}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -2599,6 +4339,181 @@ export default function Home() {
                   {v.charAt(0).toUpperCase() + v.slice(1)}
                 </label>
               ))}
+            </div>
+
+            <div style={{ display: 'grid', gap: '0.55rem', marginBottom: '0.65rem', padding: '0.7rem', borderRadius: '8px', border: '1px solid rgba(88,166,255,0.18)', background: 'rgba(88,166,255,0.06)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <span className="mono" style={{ fontSize: '0.76rem', color: 'var(--accent-secondary)' }}>
+                  Report Filters
+                </span>
+                <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  {reportScopedFindings.length}/{enrichedFindings.length} findings included
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '150px minmax(180px, 1fr) minmax(220px, 1fr) auto', gap: '0.5rem', alignItems: 'center' }}>
+                <select
+                  value={normalizedReportFilters.minimumSeverity}
+                  onChange={(e) => updateReportFiltersState({ minimumSeverity: e.target.value })}
+                  style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                >
+                  <option value="all">All severities</option>
+                  {FINDING_SEVERITIES.map((severity) => (
+                    <option key={severity} value={severity}>{severity.toUpperCase()}+</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={normalizedReportFilters.tag}
+                  onChange={(e) => updateReportFiltersState({ tag: e.target.value })}
+                  placeholder="Filter by tag"
+                  className="mono"
+                  style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                />
+                <select
+                  value={normalizedReportFilters.techniqueId}
+                  onChange={(e) => updateReportFiltersState({ techniqueId: e.target.value })}
+                  style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                >
+                  <option value="">All ATT&CK techniques</option>
+                  {reportTechniqueOptions.map((technique) => (
+                    <option key={technique.id} value={technique.id}>
+                      {technique.id} · {technique.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn-secondary mono"
+                  style={{ fontSize: '0.74rem', padding: '4px 9px' }}
+                  onClick={() => setReportFilters(DEFAULT_REPORT_FILTERS)}
+                >
+                  Reset
+                </button>
+              </div>
+              <label className="mono" style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                <input
+                  type="checkbox"
+                  checked={normalizedReportFilters.includeDuplicates}
+                  onChange={(e) => updateReportFiltersState({ includeDuplicates: e.target.checked })}
+                  style={{ accentColor: 'var(--accent-secondary)' }}
+                />
+                Include duplicate findings in generated reports
+              </label>
+            </div>
+
+            <div style={{ display: 'grid', gap: '0.65rem', marginBottom: '0.75rem', padding: '0.8rem', borderRadius: '8px', border: '1px solid rgba(63,185,80,0.18)', background: 'rgba(63,185,80,0.05)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span className="mono" style={{ fontSize: '0.76rem', color: '#3fb950' }}>Wave 17 Reporting Tools</span>
+                <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  Templates, comparison, executive summary, and public shares
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1.2fr) minmax(220px, 1fr) minmax(220px, 1fr)', gap: '0.75rem' }}>
+                <div style={{ display: 'grid', gap: '0.45rem' }}>
+                  <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Template Builder</span>
+                  <select
+                    value={selectedReportTemplateId}
+                    onChange={(e) => setSelectedReportTemplateId(e.target.value)}
+                    style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                  >
+                    <option value="">{reportTemplatesLoading ? 'Loading templates…' : 'Select saved template'}</option>
+                    {reportTemplates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={reportTemplateName}
+                    onChange={(e) => setReportTemplateName(e.target.value)}
+                    placeholder="Template name"
+                    className="mono"
+                    style={{ fontSize: '0.76rem', padding: '4px 8px' }}
+                  />
+                  <input
+                    type="text"
+                    value={reportTemplateDescription}
+                    onChange={(e) => setReportTemplateDescription(e.target.value)}
+                    placeholder="Template description"
+                    className="mono"
+                    style={{ fontSize: '0.76rem', padding: '4px 8px' }}
+                  />
+                  <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                    <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '3px 8px' }} disabled={!selectedReportTemplateId} onClick={applySelectedReportTemplate}>
+                      Apply
+                    </button>
+                    <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--accent-secondary)', borderColor: 'var(--accent-secondary)' }} disabled={reportTemplateBusy} onClick={() => void saveReportTemplate()}>
+                      {reportTemplateBusy ? 'Saving…' : selectedReportTemplateId ? 'Update' : 'Save Current'}
+                    </button>
+                    <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--accent-danger)', borderColor: 'var(--accent-danger)' }} disabled={!selectedReportTemplateId || reportTemplateBusy} onClick={() => void deleteSelectedReportTemplate()}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gap: '0.45rem' }}>
+                  <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Comparison + Summary</span>
+                  <select
+                    value={compareAgainstSessionId}
+                    onChange={(e) => setCompareAgainstSessionId(e.target.value)}
+                    style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                  >
+                    <option value="">Compare current session against…</option>
+                    {comparisonSessionOptions.map((session) => (
+                      <option key={session.id} value={session.id}>
+                        {session.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                    <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '3px 8px' }} disabled={!compareAgainstSessionId || reportCompareBusy} onClick={() => void loadComparisonReport()}>
+                      {reportCompareBusy ? 'Comparing…' : 'Load Comparison'}
+                    </button>
+                    <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '3px 8px', color: '#3fb950', borderColor: 'rgba(63,185,80,0.5)' }} disabled={executiveSummaryBusy} onClick={() => void insertExecutiveSummary()}>
+                      {executiveSummaryBusy ? 'Writing…' : 'Insert Executive Summary'}
+                    </button>
+                  </div>
+                  <p className="mono" style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                    Comparison replaces the current editor with a before/after delta report. Executive summary prepends a scope-aware summary block to the current write-up.
+                  </p>
+                </div>
+
+                <div style={{ display: 'grid', gap: '0.45rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.35rem', alignItems: 'center' }}>
+                    <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Read-only Share Links</span>
+                    <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--accent-primary)', borderColor: 'var(--accent-primary)' }} disabled={reportShareBusy} onClick={() => void createReportShare()}>
+                      {reportShareBusy ? 'Sharing…' : 'Create Share Link'}
+                    </button>
+                  </div>
+                  <div style={{ display: 'grid', gap: '0.35rem', maxHeight: '148px', overflowY: 'auto' }}>
+                    {reportSharesLoading ? (
+                      <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Loading existing shares…</span>
+                    ) : reportShares.length === 0 ? (
+                      <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>No share links created for this session yet.</span>
+                    ) : reportShares.map((share) => (
+                      <div key={share.id} style={{ display: 'grid', gap: '0.3rem', padding: '0.45rem 0.55rem', borderRadius: '6px', border: '1px solid rgba(148,163,184,0.22)', background: 'rgba(1,4,9,0.28)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.35rem', alignItems: 'center' }}>
+                          <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-main)' }}>{share.title || 'Shared report'}</span>
+                          <span className="mono" style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{formatTimelineDateTime(share.createdAt)}</span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                          <button type="button" className="btn-secondary mono" style={{ fontSize: '0.68rem', padding: '2px 7px' }} onClick={() => navigator.clipboard.writeText(share.shareUrl || `${window.location.origin}${share.sharePath || ''}`).then(() => pushToast({ tone: 'success', title: 'Share link copied', message: share.shareUrl || share.sharePath || '', durationMs: 2200 })).catch(() => {})}>
+                            Copy URL
+                          </button>
+                          <button type="button" className="btn-secondary mono" style={{ fontSize: '0.68rem', padding: '2px 7px' }} onClick={() => window.open(share.sharePath || share.shareUrl, '_blank', 'noopener,noreferrer')}>
+                            Open
+                          </button>
+                          <button type="button" className="btn-secondary mono" style={{ fontSize: '0.68rem', padding: '2px 7px', color: 'var(--accent-danger)', borderColor: 'var(--accent-danger)' }} onClick={() => void revokeReportShare(share.id)}>
+                            Revoke
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="report-toolbar">
@@ -3008,7 +4923,7 @@ export default function Home() {
                 </div>
               )}
 
-              {findings.map((finding) => (
+              {enrichedFindings.map((finding) => (
                 <div key={finding.id} className="finding-card">
                   <div className="finding-card-header">
                     <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
@@ -3046,6 +4961,73 @@ export default function Home() {
                         <option key={severity} value={severity}>{severity.toUpperCase()}</option>
                       ))}
                     </select>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '140px 120px minmax(180px, 1fr)', gap: '0.45rem', alignItems: 'center' }}>
+                    <select
+                      value={normalizeFindingLikelihood(finding.likelihood)}
+                      onChange={(e) => {
+                        const likelihood = normalizeFindingLikelihood(e.target.value);
+                        updateFindingLocal(finding.id, 'likelihood', likelihood);
+                        persistFindingUpdate(finding.id, { likelihood });
+                      }}
+                      style={{ fontSize: '0.76rem', padding: '4px 8px' }}
+                    >
+                      {FINDING_LIKELIHOODS.map((likelihood) => (
+                        <option key={likelihood} value={likelihood}>{likelihood.toUpperCase()} likelihood</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min="0"
+                      max="10"
+                      step="0.1"
+                      value={finding.cvssScore ?? ''}
+                      onChange={(e) => updateFindingLocal(finding.id, 'cvssScore', e.target.value)}
+                      onBlur={(e) => persistFindingUpdate(finding.id, {
+                        cvssScore: e.target.value.trim() === '' ? null : normalizeFindingCvssScore(e.target.value),
+                      })}
+                      className="mono"
+                      placeholder="CVSS"
+                      style={{ fontSize: '0.76rem', padding: '4px 8px' }}
+                    />
+                    <input
+                      value={finding.cvssVector || ''}
+                      onChange={(e) => updateFindingLocal(finding.id, 'cvssVector', e.target.value)}
+                      onBlur={(e) => persistFindingUpdate(finding.id, { cvssVector: e.target.value.trim() || null })}
+                      className="mono"
+                      placeholder="CVSS vector (optional)"
+                      style={{ fontSize: '0.76rem', padding: '4px 8px' }}
+                    />
+                  </div>
+
+                  <div className="finding-chip-row">
+                    <span className="mono finding-chip" style={{ borderColor: 'rgba(88,166,255,0.35)', color: 'var(--accent-secondary)' }}>
+                      Risk {String(finding.riskLevel || 'medium').toUpperCase()}
+                    </span>
+                    <span className="mono finding-chip" style={{ borderColor: 'rgba(210,153,34,0.4)', color: '#d29922' }}>
+                      Likelihood {String(finding.likelihood || 'medium').toUpperCase()}
+                    </span>
+                    {finding.cvssScore !== null && finding.cvssScore !== undefined && (
+                      <span className="mono finding-chip" style={{ borderColor: 'rgba(248,81,73,0.35)', color: '#f0883e' }}>
+                        CVSS {Number(finding.cvssScore).toFixed(1)} {cvssSeverityLabel(finding.cvssScore)}
+                      </span>
+                    )}
+                    {finding.isDuplicate && finding.duplicateOf && (
+                      <span className="mono finding-chip finding-chip--missing">
+                        Duplicate of #{finding.duplicateOf}
+                      </span>
+                    )}
+                    {(finding.relatedFindingIds || []).map((relatedId) => (
+                      <span key={`rel-${finding.id}-${relatedId}`} className="mono finding-chip">
+                        Related #{relatedId}
+                      </span>
+                    ))}
+                    {(finding.attackTechniques || []).map((technique) => (
+                      <span key={`${finding.id}-${technique.id}`} className="mono finding-chip" title={technique.tactic}>
+                        {technique.id} · {technique.name}
+                      </span>
+                    ))}
                   </div>
 
                   <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -3118,14 +5100,28 @@ export default function Home() {
                     placeholder="Impact"
                     style={{ minHeight: '58px', resize: 'vertical', fontSize: '0.8rem', lineHeight: 1.45 }}
                   />
-                  <textarea
-                    value={finding.remediation || ''}
-                    onChange={(e) => updateFindingLocal(finding.id, 'remediation', e.target.value)}
-                    onBlur={(e) => persistFindingUpdate(finding.id, { remediation: e.target.value })}
-                    className="mono"
-                    placeholder="Remediation"
-                    style={{ minHeight: '58px', resize: 'vertical', fontSize: '0.8rem', lineHeight: 1.45 }}
-                  />
+                  <div style={{ display: 'grid', gap: '0.35rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Remediation</span>
+                      <button
+                        type="button"
+                        className="btn-secondary mono"
+                        style={{ fontSize: '0.7rem', padding: '2px 7px', color: 'var(--accent-secondary)', borderColor: 'var(--accent-secondary)' }}
+                        disabled={Boolean(findingRemediationBusy[finding.id])}
+                        onClick={() => void suggestFindingRemediation(finding.id)}
+                      >
+                        {findingRemediationBusy[finding.id] ? 'Suggesting…' : 'Suggest Remediation'}
+                      </button>
+                    </div>
+                    <textarea
+                      value={finding.remediation || ''}
+                      onChange={(e) => updateFindingLocal(finding.id, 'remediation', e.target.value)}
+                      onBlur={(e) => persistFindingUpdate(finding.id, { remediation: e.target.value })}
+                      className="mono"
+                      placeholder="Remediation"
+                      style={{ minHeight: '58px', resize: 'vertical', fontSize: '0.8rem', lineHeight: 1.45 }}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
@@ -3279,6 +5275,26 @@ export default function Home() {
                 <option value="stego">Stego</option>
                 <option value="analyze-file">Analyze File</option>
               </select>
+              <select
+                value={coachLevel}
+                onChange={(e) => setCoachLevel(e.target.value)}
+                style={{ fontSize: '0.72rem', padding: '2px 6px', maxWidth: '110px' }}
+                title="Coach difficulty"
+              >
+                <option value="beginner">Beginner</option>
+                <option value="intermediate">Intermediate</option>
+                <option value="expert">Expert</option>
+              </select>
+              <select
+                value={coachContextMode}
+                onChange={(e) => setCoachContextMode(e.target.value)}
+                style={{ fontSize: '0.72rem', padding: '2px 6px', maxWidth: '96px' }}
+                title="Coach context mode"
+              >
+                <option value="compact">Compact</option>
+                <option value="balanced">Balanced</option>
+                <option value="full">Full</option>
+              </select>
               <button
                 onClick={() => setCoachCompareMode(m => !m)}
                 className="btn-secondary"
@@ -3286,13 +5302,38 @@ export default function Home() {
                 title="Compare all configured AI providers">
                 Compare
               </button>
-              <button className="btn-secondary" onClick={runCoach} disabled={isCoaching} style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
+              <button className="btn-secondary" onClick={() => void runCoach({ bypassCache: true })} disabled={isCoaching} style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
                 {isCoaching ? 'Thinking...' : 'Refresh'}
               </button>
               <button onClick={() => setShowCoachPanel(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}>×</button>
             </div>
           </div>
           <div className="mono" style={{ padding: '0.75rem', overflowY: 'auto', flex: 1, fontSize: '0.78rem', lineHeight: 1.6, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '0.55rem' }}>
+              {coachMeta.cache && (
+                <span className="mono" style={{
+                  fontSize: '0.68rem',
+                  padding: '2px 7px',
+                  borderRadius: '999px',
+                  border: `1px solid ${coachMeta.cache === 'hit' ? 'rgba(63,185,80,0.3)' : coachMeta.cache === 'bypass' ? 'rgba(227,179,65,0.3)' : 'rgba(88,166,255,0.3)'}`,
+                  color: coachMeta.cache === 'hit' ? '#3fb950' : coachMeta.cache === 'bypass' ? '#e3b341' : 'var(--accent-secondary)',
+                  background: coachMeta.cache === 'hit' ? 'rgba(63,185,80,0.08)' : coachMeta.cache === 'bypass' ? 'rgba(227,179,65,0.08)' : 'rgba(88,166,255,0.08)',
+                }}>
+                  {coachMeta.cache.toUpperCase()}
+                </span>
+              )}
+              <span className="mono" style={{ fontSize: '0.68rem', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(88,166,255,0.3)', color: 'var(--accent-secondary)', background: 'rgba(88,166,255,0.08)' }}>
+                {String(coachMeta.coachLevel || coachLevel).toUpperCase()}
+              </span>
+              <span className="mono" style={{ fontSize: '0.68rem', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(255,255,255,0.18)', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.04)' }}>
+                {String(coachMeta.contextMode || coachContextMode).toUpperCase()} · {coachMeta.includedEvents || 0} evt
+              </span>
+              {Number(coachMeta.omittedEvents || 0) > 0 && (
+                <span className="mono" style={{ fontSize: '0.68rem', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(227,179,65,0.2)', color: '#e3b341', background: 'rgba(227,179,65,0.08)' }}>
+                  {coachMeta.omittedEvents} omitted
+                </span>
+              )}
+            </div>
             {/* E.6 — Compare mode tabbed view */}
             {coachCompareMode && (isCoaching || coachCompareResults.length > 0) && (() => {
               if (isCoaching) return <span style={{ color: 'var(--text-muted)' }}>Querying all models...</span>;
@@ -3429,16 +5470,39 @@ export default function Home() {
 
           <>
               <div className="tab-switcher mono" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
-                {[['tools', 'TOOLS'], ['flags', 'FLAGS'], ['history', 'HIST']].map(([tab, label]) => (
-                  <span key={tab} style={{ cursor: 'pointer', whiteSpace: 'nowrap', color: sidebarTab === tab ? 'var(--accent-primary)' : 'var(--text-muted)', fontSize: '0.82rem', letterSpacing: '0.5px' }}
-                    onClick={() => setSidebarTab(tab)}>
+                {[['tools', 'TOOLS'], ['creds', 'CREDS'], ['flags', 'FLAGS'], ['artifacts', 'ART'], ['history', 'HIST']].map(([tab, label]) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    className="mono"
+                    aria-pressed={sidebarTab === tab}
+                    onClick={() => setSidebarTab(tab)}
+                    style={{
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      color: sidebarTab === tab ? 'var(--accent-primary)' : 'var(--text-muted)',
+                      fontSize: '0.82rem',
+                      letterSpacing: '0.5px',
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                    }}
+                  >
                     [{label}]
-                  </span>
+                  </button>
                 ))}
               </div>
 
               {sidebarTab === 'tools' && (
                 <div className="suggestion-groups">
+                  <div style={{ marginBottom: '0.85rem' }}>
+                    <ServiceSuggestionsPanel
+                      suggestions={displayedServiceSuggestions}
+                      loading={serviceSuggestionsLoading}
+                      error={serviceSuggestionsError}
+                      onInsertCommand={insertSuggestedCommand}
+                    />
+                  </div>
                   <input
                     type="text"
                     placeholder="Search commands..."
@@ -3498,11 +5562,33 @@ export default function Home() {
                 </div>
               )}
 
+              {sidebarTab === 'creds' && (
+                <CredentialsPanel
+                  credentials={credentials}
+                  findings={findings}
+                  verificationsByCredential={credentialVerifications}
+                  verificationBusy={credentialVerificationBusy}
+                  hashAnalysisByCredential={credentialHashAnalysis}
+                  hashIdentificationBusy={credentialHashBusy}
+                  onCreate={createCredentialEntry}
+                  onUpdate={persistCredentialUpdate}
+                  onDelete={removeCredentialEntry}
+                  onVerify={triggerCredentialVerification}
+                  onIdentifyHash={identifyCredentialHash}
+                  onInsertCommand={insertSuggestedCommand}
+                />
+              )}
+
               {sidebarTab === 'flags' && (
                 <div className="cheatsheet-area animate-fade">
                   <div style={{ marginBottom: '1rem', border: '1px solid rgba(63,185,80,0.18)', borderRadius: '8px', padding: '0.6rem', background: 'rgba(15,32,22,0.38)' }}>
                     <div className="mono" style={{ color: '#3fb950', borderBottom: '1px solid rgba(63,185,80,0.2)', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
                       Flag Tracking
+                    </div>
+                    <div className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.55rem' }}>
+                      {linkedPlatform
+                        ? `Linked platform: ${formatPlatformTypeLabel(linkedPlatform.type)} · ${linkedPlatform.label || linkedPlatform.remoteId}`
+                        : 'No linked platform. Local flag capture still works without remote sync.'}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
                       <input
@@ -3551,6 +5637,31 @@ export default function Home() {
                               ))}
                             </select>
                             <button className="btn-secondary" onClick={() => removeFlagEntry(flag.id)} style={{ fontSize: '0.7rem', padding: '2px 7px', color: 'var(--accent-danger)', borderColor: 'var(--accent-danger)' }}>✕</button>
+                          </div>
+                          <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', alignItems: 'center', marginTop: '0.35rem' }}>
+                            <button
+                              className="btn-secondary"
+                              onClick={() => void submitFlagToPlatform(flag.id)}
+                              disabled={!linkedPlatform || Boolean(flagPlatformBusy[flag.id])}
+                              style={{
+                                fontSize: '0.7rem',
+                                padding: '2px 7px',
+                                color: linkedPlatform ? 'var(--accent-secondary)' : 'var(--text-muted)',
+                                borderColor: linkedPlatform ? 'var(--accent-secondary)' : 'var(--border-color)',
+                              }}
+                              title={linkedPlatform ? 'Submit or validate this flag against the linked platform.' : 'Link a platform first to enable remote flag actions.'}
+                            >
+                              {flagPlatformBusy[flag.id]
+                                ? 'Sending…'
+                                : linkedPlatform?.capabilities?.flagMode === 'validation'
+                                  ? 'Validate'
+                                  : 'Submit'}
+                            </button>
+                            {flag.metadata?.platform?.summary && (
+                              <span className="mono" style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                                {flag.metadata.platform.summary}
+                              </span>
+                            )}
                           </div>
                           <textarea
                             className="mono"
@@ -3662,6 +5773,21 @@ export default function Home() {
                 </div>
               )}
 
+              {sidebarTab === 'artifacts' && (
+                <ArtifactsPanel
+                  artifacts={artifacts}
+                  selectedArtifact={selectedArtifact}
+                  selectedArtifactId={selectedArtifactId}
+                  loading={artifactsLoading}
+                  uploading={artifactsUploading}
+                  error={artifactsError}
+                  onSelectArtifact={selectArtifact}
+                  onUploadArtifact={handleArtifactUpload}
+                  onDeleteArtifact={handleArtifactDelete}
+                  onInsertArtifactIntoReport={insertArtifactIntoReport}
+                />
+              )}
+
               {sidebarTab === 'history' && (
                 <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', overflowY: 'auto' }}>
                   <input
@@ -3718,7 +5844,7 @@ export default function Home() {
         <section className="timeline-container glass-panel">
           {/* ── Main view switcher ── */}
           <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.55rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.4rem' }}>
-            {[['terminal', '⌨ TERMINAL'], ['graph', '🗺 GRAPH']].map(([view, label]) => (
+            {[['terminal', '⌨ TERMINAL'], ['graph', '🗺 GRAPH'], ...((shellHubEnabled || shellSessions.length > 0) ? [['shells', '🧷 SHELLS']] : [])].map(([view, label]) => (
               <button key={view} className="mono" onClick={() => setMainView(view)}
                 style={{ fontSize: '0.82rem', padding: '3px 10px', borderRadius: '4px', border: `1px solid ${mainView === view ? 'var(--accent-primary)' : 'var(--border-color)'}`, color: mainView === view ? 'var(--accent-primary)' : 'var(--text-muted)', background: mainView === view ? 'rgba(57,211,83,0.08)' : 'transparent', cursor: 'pointer', letterSpacing: '0.5px' }}>
                 {label}
@@ -3727,106 +5853,30 @@ export default function Home() {
           </div>
 
           {mainView === 'terminal' && (<>
-          {/* Filter bar — single row */}
-          <div className="filter-toolbar">
-            <div className="filter-row">
-              {sidebarCollapsed && !isOverlaySidebar && (
-                <button className="btn-secondary mono sidebar-toggle-btn" onClick={toggleSidebarCollapse} title="Pin sidebar" style={{ marginRight: '0.25rem' }}>»</button>
-              )}
-              {['all', 'command', 'note', 'screenshot'].map(t => (
-                <button key={t} onClick={() => setFilterType(t)}
-                  className="mono"
-                  style={{ fontSize: '0.78rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: filterType === t ? 'var(--accent-primary)' : 'transparent', color: filterType === t ? '#000' : 'var(--text-muted)', cursor: 'pointer', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>
-                  {t === 'all' ? 'ALL' : t === 'command' ? 'CMD' : t === 'screenshot' ? 'SS' : t.toUpperCase()}
-                </button>
-              ))}
-              <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
-                style={{ fontSize: '0.78rem', padding: '3px 6px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px' }}>
-                <option value="all">Any status</option>
-                <option value="success">Success</option>
-                <option value="failed">Failed</option>
-                <option value="running">Running</option>
-              </select>
-              <select value={filterTag} onChange={(e) => setFilterTag(e.target.value)}
-                style={{ fontSize: '0.78rem', padding: '3px 6px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: '4px', maxWidth: '140px' }}>
-                <option value="">Any tag</option>
-                {allTimelineTags.map(t => <option key={t} value={t}>#{t}</option>)}
-              </select>
-              <input
-                ref={filterKeywordRef}
-                type="text" value={filterKeyword} onChange={(e) => setFilterKeyword(e.target.value)}
-                placeholder="Search... (Ctrl+F)" className="mono"
-                style={{ fontSize: '0.8rem', padding: '3px 8px', background: 'rgba(1,4,9,0.6)', border: '1px solid var(--border-color)', color: 'var(--text-main)', borderRadius: '4px', flex: '1 1 120px', outline: 'none', minWidth: '80px' }}
-              />
-              {(filterType !== 'all' || filterStatus !== 'all' || filterKeyword || filterTag) && (
-                <button onClick={() => { setFilterType('all'); setFilterStatus('all'); setFilterKeyword(''); setFilterTag(''); }}
-                  className="mono" style={{ fontSize: '0.78rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid rgba(248,81,73,0.4)', color: 'rgba(248,81,73,0.8)', background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                  ✕
-                </button>
-              )}
-              <button
-                onClick={collapseTimelineEvents}
-                className="mono btn-secondary"
-                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }}
-                title="Collapse timeline events"
-                disabled={timelineCollapsed}
-              >
-                Collapse All
-              </button>
-              <button
-                onClick={expandTimelineEvents}
-                className="mono btn-secondary"
-                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }}
-                title="Expand timeline events"
-                disabled={!timelineCollapsed}
-              >
-                Expand All
-              </button>
-              <button onClick={exportTimeline} className="mono btn-secondary"
-                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="Export timeline">
-                ↓
-              </button>
-              <button onClick={loadDbStats} className="mono btn-secondary"
-                style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="DB stats">
-                ⚙
-              </button>
-              {compareEventIds.size === 2 && (
-                <>
-                  <button
-                    onClick={() => setShowDiffModal(true)}
-                    className="mono"
-                    style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap', borderRadius: '4px', border: '1px solid rgba(88,166,255,0.5)', color: 'var(--accent-secondary)', background: 'transparent', cursor: 'pointer' }}
-                    title="Compare selected command outputs">
-                    Diff →
-                  </button>
-                  <button onClick={() => setCompareEventIds(new Set())} className="mono btn-secondary"
-                    style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }} title="Clear diff selection">✕</button>
-                </>
-              )}
-              {selectedScreenshots.size > 0 && (
-                <>
-                  <span className="mono" style={{ fontSize: '0.76rem', padding: '3px 8px', whiteSpace: 'nowrap', borderRadius: '999px', border: '1px solid rgba(63,185,80,0.4)', color: '#3fb950', background: 'rgba(63,185,80,0.1)' }}>
-                    {selectedScreenshots.size} selected
-                  </span>
-                  <button
-                    onClick={async () => {
-                      if (!confirm(`Delete ${selectedScreenshots.size} screenshot(s)?`)) return;
-                      for (const id of selectedScreenshots) {
-                        await apiFetch(`/api/timeline?sessionId=${currentSession}&id=${id}`, { method: 'DELETE' });
-                      }
-                      setTimeline(prev => prev.filter(e => !selectedScreenshots.has(e.id)));
-                      setSelectedScreenshots(new Set());
-                    }}
-                    className="mono"
-                    style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap', borderRadius: '4px', border: '1px solid var(--accent-danger)', color: 'var(--accent-danger)', background: 'transparent', cursor: 'pointer' }}>
-                    🗑 {selectedScreenshots.size}
-                  </button>
-                  <button onClick={() => setSelectedScreenshots(new Set())} className="mono btn-secondary"
-                    style={{ fontSize: '0.78rem', padding: '3px 8px', whiteSpace: 'nowrap' }}>✕</button>
-                </>
-              )}
-            </div>
-          </div>
+          <TimelineFilterBar
+            compact={compactTimelineFilters}
+            compactOpen={timelineFilterPanelOpen}
+            sidebarCollapsed={sidebarCollapsed}
+            isOverlaySidebar={isOverlaySidebar}
+            filters={timelineFilters}
+            allTimelineTags={allTimelineTags}
+            filterKeywordRef={filterKeywordRef}
+            timelineCollapsed={timelineCollapsed}
+            compareSelectionCount={compareEventIds.size}
+            selectedScreenshotCount={selectedScreenshots.size}
+            onToggleCompactOpen={() => setTimelineFilterPanelOpen((prev) => !prev)}
+            onToggleSidebarCollapse={toggleSidebarCollapse}
+            onChangeFilters={updateTimelineFilters}
+            onClearFilters={clearTimelineFilters}
+            onCollapseAll={collapseTimelineEvents}
+            onExpandAll={expandTimelineEvents}
+            onExportTimeline={exportTimeline}
+            onLoadDbStats={loadDbStats}
+            onOpenDiff={() => setShowDiffModal(true)}
+            onClearDiff={() => setCompareEventIds(new Set())}
+            onDeleteSelectedScreenshots={() => void handleDeleteSelectedScreenshots()}
+            onClearSelectedScreenshots={() => setSelectedScreenshots(new Set())}
+          />
 
           <div className="timeline-scroll-shell">
             <div ref={timelineFeedRef} onScroll={handleTimelineScroll} className="timeline-feed">
@@ -3868,20 +5918,12 @@ export default function Home() {
               )}
 
               {filteredTimeline.map((event, idx) => {
-                const outputLines = (event.output || '').split('\n');
-                const isLong = outputLines.length > OUTPUT_PREVIEW_LINES;
-                const isExpanded = expandedOutputs.has(event.id);
-                const pagedOutput = paginateOutput(event.output || '', outputPageByEvent[event.id] || 0, OUTPUT_PAGE_LINES);
-                const isPagedOutput = pagedOutput.totalLines > OUTPUT_PAGE_LINES;
-                const visibleOutput = isExpanded
-                  ? (isPagedOutput ? pagedOutput.text : event.output)
-                  : outputLines.slice(0, OUTPUT_PREVIEW_LINES).join('\n');
                 const isTimelineEventExpanded = !timelineCollapsed || expandedTimelineEvents.has(event.id);
                 const compactSummary = summarizeTimelineEvent(event);
                 const isEventInPoc = pocLinkedEventIds.has(event.id);
                 const eventTime = formatTimelineTime(event.timestamp);
                 const elapsedSeconds = getTimelineElapsedSeconds(event.timestamp);
-                const tags = (() => { try { return JSON.parse(event.tags || '[]'); } catch { return []; } })();
+                const tags = parseTagsList(event.tags);
                 const eventToneClass = event.type === 'note'
                   ? 'timeline-event--note'
                   : event.type === 'screenshot'
@@ -3948,78 +5990,25 @@ export default function Home() {
                     {isTimelineEventExpanded && (
                       <>
                         {event.type === 'command' && (
-                          <>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                              <input
-                                type="checkbox"
-                                title="Select for diff comparison"
-                                checked={compareEventIds.has(event.id)}
-                                onChange={() => toggleCompareEvent(event.id)}
-                                disabled={!compareEventIds.has(event.id) && compareEventIds.size >= 2}
-                                style={{ accentColor: 'var(--accent-secondary)', cursor: 'pointer', flexShrink: 0 }}
-                              />
-                              <div className="event-command" style={{ flex: 1 }}><span style={{ color: 'var(--accent-primary)' }}>$</span> {event.command}</div>
-                              {(event.status === 'failed' || event.status === 'error') && (
-                                <button onClick={() => { setInputType('command'); setInputVal(event.command); inputRef.current?.focus(); }}
-                                  className="mono" style={{ fontSize: '0.8rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--accent-warning)', color: 'var(--accent-warning)', background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                                  ↩ Retry
-                                </button>
-                              )}
-                            </div>
-                            {event.status !== 'running' && event.status !== 'queued' && event.output && (
-                              <>
-                                <div style={{ position: 'relative' }}>
-                                  <pre className="event-output mono">{visibleOutput || 'No output.'}</pre>
-                                  <button
-                                    onClick={() => copyOutput(event.id, event.output)}
-                                    title="Copy output"
-                                    className="mono"
-                                    style={{ position: 'absolute', top: '6px', right: '6px', fontSize: '0.72rem', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', color: copiedEventId === event.id ? 'var(--accent-primary)' : 'var(--text-muted)', background: 'rgba(1,4,9,0.85)', cursor: 'pointer', lineHeight: 1.5 }}
-                                  >{copiedEventId === event.id ? '✓ Copied' : 'Copy'}</button>
-                                </div>
-                                {isExpanded && isPagedOutput && (
-                                  <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.4rem', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                                    <button className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '2px 6px' }} disabled={pagedOutput.currentPage === 0} onClick={() => setOutputPage(event.id, 0)}>«</button>
-                                    <button className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '2px 6px' }} disabled={pagedOutput.currentPage === 0} onClick={() => setOutputPage(event.id, pagedOutput.currentPage - 1)}>‹</button>
-                                    <span>Lines {pagedOutput.startLine}-{pagedOutput.endLine} of {pagedOutput.totalLines}</span>
-                                    <button className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '2px 6px' }} disabled={pagedOutput.currentPage >= pagedOutput.totalPages - 1} onClick={() => setOutputPage(event.id, pagedOutput.currentPage + 1)}>›</button>
-                                    <button className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '2px 6px' }} disabled={pagedOutput.currentPage >= pagedOutput.totalPages - 1} onClick={() => setOutputPage(event.id, pagedOutput.totalPages - 1)}>»</button>
-                                  </div>
-                                )}
-                                {isLong && (
-                                  <button onClick={() => toggleOutput(event.id)} className="mono"
-                                    style={{ fontSize: '0.8rem', background: 'transparent', border: 'none', color: 'var(--accent-secondary)', cursor: 'pointer', padding: '3px 0', display: 'block' }}>
-                                    {isExpanded ? '▲ Collapse' : `▼ Show more (${outputLines.length - OUTPUT_PREVIEW_LINES} more lines)`}
-                                  </button>
-                                )}
-                              </>
-                            )}
-                            {event.status !== 'running' && event.status !== 'queued' && !event.output && (
-                              <pre className="event-output mono">No output.</pre>
-                            )}
-                            {(event.status === 'running' || event.status === 'queued') && (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', color: 'var(--accent-warning)', fontSize: '0.85rem' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                                  <span className="status-dot status-dot--running" />
-                                  <span className="mono">
-                                    {elapsedSeconds === null ? 'Running' : `${elapsedSeconds}s elapsed`}
-                                  </span>
-                                  <button
-                                    onClick={() => handleCancelCommand(event.id, event.session_id || currentSession)}
-                                    style={{ background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', color: '#ff5050', fontSize: '0.75rem', padding: '1px 6px', cursor: 'pointer' }}
-                                  >✕ Cancel</button>
-                                </div>
-                                {Number.isFinite(Number(event.progress_pct)) && Number(event.progress_pct) > 0 && (
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <div style={{ flex: 1, minWidth: '180px', height: '8px', background: 'rgba(255,255,255,0.08)', borderRadius: '999px', overflow: 'hidden', border: '1px solid rgba(88,166,255,0.2)' }}>
-                                      <div style={{ width: `${Math.max(0, Math.min(100, Number(event.progress_pct)))}%`, height: '100%', background: 'linear-gradient(90deg, var(--accent-secondary), var(--accent-primary))' }} />
-                                    </div>
-                                    <span className="mono" style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{Number(event.progress_pct)}%</span>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </>
+                          <CommandEventCard
+                            event={event}
+                            compareSelected={compareEventIds.has(event.id)}
+                            compareDisabled={!compareEventIds.has(event.id) && compareEventIds.size >= 2}
+                            copied={copiedEventId === event.id}
+                            isOutputExpanded={expandedOutputs.has(event.id)}
+                            currentPage={outputPageByEvent[event.id] || 0}
+                            elapsedSeconds={elapsedSeconds}
+                            onToggleCompare={toggleCompareEvent}
+                            onRetry={(command) => {
+                              setInputType('command');
+                              setInputVal(command);
+                              inputRef.current?.focus();
+                            }}
+                            onCopyOutput={copyOutput}
+                            onSetOutputPage={setOutputPage}
+                            onToggleOutput={toggleOutput}
+                            onCancel={(eventId) => handleCancelCommand(eventId, event.session_id || currentSession)}
+                          />
                         )}
 
                         {event.type === 'note' && (() => {
@@ -4262,6 +6251,17 @@ export default function Home() {
                   : 'Type a note...'}
                 disabled={isLoading || (inputType === 'command' && !commandExecutionEnabled)}
               />
+              {inputType === 'command' && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => openCommandPalette(inputVal)}
+                  style={{ whiteSpace: 'nowrap' }}
+                  title="Open command palette (Ctrl/Cmd+K)"
+                >
+                  Palette
+                </button>
+              )}
               <button
                 type="submit"
                 className="btn-primary"
@@ -4273,8 +6273,43 @@ export default function Home() {
                 {isLoading ? '...' : (inputType === 'command' ? (commandExecutionEnabled ? 'Execute' : 'Exec Off') : 'Add Note')}
               </button>
             </div>
+            {inputType === 'command' && inlineCommandSuggestion && (
+              <div className="mono" style={{ marginTop: '0.45rem', display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                <span style={{ color: 'var(--accent-secondary)' }}>Tab</span>
+                <span>accept</span>
+                <span style={{ color: 'var(--text-main)' }}>{inlineCommandSuggestion.label}</span>
+                {inlineCommandSuggestion.subtitle && (
+                  <span>· {inlineCommandSuggestion.subtitle}</span>
+                )}
+                <span style={{ opacity: 0.82 }}>→ {inlineCommandSuggestion.command}</span>
+              </div>
+            )}
           </form>
           </>)}
+
+          {mainView === 'shells' && (
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <ShellHub
+                shellSessions={shellSessions}
+                activeShell={activeShell}
+                activeShellId={activeShellId}
+                transcriptsByShell={transcriptsByShell}
+                unreadByShell={unreadByShell}
+                loading={shellLoading}
+                creating={shellCreating}
+                busyByShell={shellBusyByShell}
+                error={shellError}
+                streamStatus={shellStreamStatus}
+                onSelectShell={selectShell}
+                onCreateShellSession={handleCreateShellSession}
+                onSendInput={sendShellInput}
+                onResizeShell={resizeShellSession}
+                onDisconnectShell={handleDisconnectShellSession}
+                onClearLocalShell={clearLocalShellTabState}
+                onCreateTranscriptArtifact={handleCreateTranscriptArtifact}
+              />
+            </div>
+          )}
 
           {mainView === 'graph' && (
             <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -4282,6 +6317,12 @@ export default function Home() {
                 sessionId={currentSession}
                 timeline={timeline}
                 apiFetch={apiFetch}
+                refreshToken={graphRefreshToken}
+                activeTargetId={activeSessionTarget?.id || ''}
+                activeTargetLabel={activeSessionTarget?.label || activeSessionTarget?.target || ''}
+                serviceSuggestions={displayedServiceSuggestions}
+                onInsertCommand={insertSuggestedCommand}
+                onFocusTimeline={focusTimelineForTerm}
                 onAddToReport={(dataUrl) => {
                   if (!dataUrl) return;
                   applyReportBlocks([...reportBlocks, newImageBlock('Discovery Map', dataUrl, 'Discovery Map', 'Auto-generated attack graph', '')]);
@@ -4460,6 +6501,7 @@ export default function Home() {
           .timeline-jump-arrow { width: 30px; height: 30px; min-width: 30px; min-height: 30px; }
         }
       `}</style>
+      <ToastViewport toasts={toasts} onDismiss={dismissToast} />
     </main>
   );
 }

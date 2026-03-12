@@ -4,6 +4,8 @@ out
 build
 coverage
 data
+output
+.playwright-cli
 *.db
 *.sqlite
 .git

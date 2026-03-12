@@ -1,4 +1,12 @@
 import { escapeMarkdownInline, normalizeAnalystName, normalizePlainText } from './text-sanitize';
+import {
+  buildAttackCoverage,
+  buildRiskMatrix,
+  cvssSeverityLabel,
+  enrichFindings,
+  filterFindings,
+  normalizeReportFilters,
+} from './finding-intelligence';
 
 // Report format generators for Helm's Watch
 
@@ -93,6 +101,45 @@ function normalizeFinding(finding) {
       : Array.isArray(finding.evidence_events)
         ? finding.evidence_events
         : [],
+    likelihood: finding.likelihood || '',
+    cvssScore: finding.cvssScore ?? finding.cvss_score ?? null,
+    cvssVector: finding.cvssVector || finding.cvss_vector || '',
+    attackTechniqueIds: Array.isArray(finding.attackTechniqueIds)
+      ? finding.attackTechniqueIds
+      : Array.isArray(finding.attack_technique_ids)
+        ? finding.attack_technique_ids
+        : [],
+    attackTechniques: Array.isArray(finding.attackTechniques)
+      ? finding.attackTechniques
+      : [],
+    relatedFindingIds: Array.isArray(finding.relatedFindingIds)
+      ? finding.relatedFindingIds
+      : Array.isArray(finding.related_finding_ids)
+        ? finding.related_finding_ids
+        : [],
+    duplicateOf: finding.duplicateOf ?? finding.duplicate_of ?? null,
+    duplicateGroup: finding.duplicateGroup || finding.duplicate_group || '',
+    riskLevel: finding.riskLevel || '',
+    riskScore: finding.riskScore ?? null,
+    isDuplicate: Boolean(finding.isDuplicate || finding.duplicateOf || finding.duplicate_of),
+  };
+}
+
+function normalizeCredential(credential) {
+  if (!credential || typeof credential !== 'object') return null;
+  return {
+    label: credential.label || '',
+    username: credential.username || '',
+    secret: credential.secret || '',
+    hash: credential.hash || '',
+    hashType: credential.hashType || credential.hash_type || '',
+    host: credential.host || '',
+    port: credential.port ?? null,
+    service: credential.service || '',
+    notes: credential.notes || '',
+    verified: Boolean(credential.verified),
+    findingIds: Array.isArray(credential.findingIds) ? credential.findingIds : [],
+    graphNodeIds: Array.isArray(credential.graphNodeIds) ? credential.graphNodeIds : [],
   };
 }
 
@@ -175,6 +222,55 @@ function renderSeveritySummaryMarkdown(findings = []) {
 `;
 }
 
+function renderReportFilterSummaryMarkdown(filters = {}, totalCount = 0, filteredCount = 0) {
+  const normalized = normalizeReportFilters(filters);
+  const entries = [];
+  if (normalized.minimumSeverity !== 'all') entries.push(`Minimum severity: ${normalized.minimumSeverity.toUpperCase()}`);
+  if (normalized.tag) entries.push(`Tag filter: \`${escapeMarkdownInline(normalized.tag)}\``);
+  if (normalized.techniqueId) entries.push(`ATT&CK filter: \`${escapeMarkdownInline(normalized.techniqueId)}\``);
+  entries.push(`Duplicate handling: ${normalized.includeDuplicates ? 'include related duplicates' : 'primary findings only'}`);
+  if (totalCount > 0) entries.push(`Included findings: ${filteredCount}/${totalCount}`);
+  if (entries.length === 1 && totalCount === filteredCount && !normalized.tag && !normalized.techniqueId && normalized.minimumSeverity === 'all') {
+    return '';
+  }
+  return `## Report Scope
+
+${entries.map((entry) => `- ${entry}`).join('\n')}
+
+`;
+}
+
+function renderRiskMatrixMarkdown(findings = []) {
+  const matrix = buildRiskMatrix(findings);
+  const total = ['high', 'medium', 'low'].reduce((acc, likelihood) => (
+    acc + ['critical', 'high', 'medium', 'low'].reduce((count, severity) => count + Number(matrix?.[likelihood]?.[severity] || 0), 0)
+  ), 0);
+  if (total === 0) return '';
+
+  return `## Risk Matrix
+
+| Likelihood \\ Impact | Low | Medium | High | Critical |
+| --- | --- | --- | --- | --- |
+| High | ${matrix.high.low} | ${matrix.high.medium} | ${matrix.high.high} | ${matrix.high.critical} |
+| Medium | ${matrix.medium.low} | ${matrix.medium.medium} | ${matrix.medium.high} | ${matrix.medium.critical} |
+| Low | ${matrix.low.low} | ${matrix.low.medium} | ${matrix.low.high} | ${matrix.low.critical} |
+
+`;
+}
+
+function renderAttackCoverageMarkdown(findings = []) {
+  const coverage = buildAttackCoverage(findings);
+  if (coverage.length === 0) return '';
+
+  let md = `## ATT&CK Coverage\n\n`;
+  md += `| Technique | Tactic | Findings |\n| --- | --- | --- |\n`;
+  coverage.forEach((item) => {
+    md += `| ${escapeMarkdownInline(`${item.id} — ${item.name}`)} | ${escapeMarkdownInline(item.tactic)} | ${item.count} |\n`;
+  });
+  md += `\n`;
+  return md;
+}
+
 function findingSeverityLabel(severity) {
   const value = String(severity || 'medium').toLowerCase();
   if (value === 'critical') return 'Critical';
@@ -192,33 +288,55 @@ function summarizeEvidenceRef(event) {
 }
 
 function renderFindingsSection(findings = []) {
-  const normalized = (Array.isArray(findings) ? findings : [])
+  const normalized = enrichFindings((Array.isArray(findings) ? findings : [])
     .map(normalizeFinding)
-    .filter((finding) => finding && finding.title)
-    .sort((a, b) => {
-      return (FINDING_SEVERITY_ORDER[a.severity] ?? 99) - (FINDING_SEVERITY_ORDER[b.severity] ?? 99);
-    });
+    .filter((finding) => finding && finding.title))
+    .sort((a, b) => (
+      (FINDING_SEVERITY_ORDER[a.severity] ?? 99) - (FINDING_SEVERITY_ORDER[b.severity] ?? 99)
+      || Number(b.riskScore || 0) - Number(a.riskScore || 0)
+    ));
 
   let md = `## Findings\n\n`;
   if (normalized.length === 0) {
     md += `> _Document each finding with severity, description, and evidence references._\n\n`;
-    md += `| # | Finding | Severity | Evidence |\n| --- | --- | --- | --- |\n`;
-    md += `| 1 | _Fill in_ | Critical / High / Medium / Low | _ref_ |\n\n`;
+    md += `| # | Finding | Severity | Risk | Evidence |\n| --- | --- | --- | --- | --- |\n`;
+    md += `| 1 | _Fill in_ | Critical / High / Medium / Low | _Fill in_ | _ref_ |\n\n`;
     return md;
   }
 
-  md += `| # | Finding | Severity | Evidence |\n| --- | --- | --- | --- |\n`;
+  md += `| # | Finding | Severity | Risk | CVSS | Evidence |\n| --- | --- | --- | --- | --- | --- |\n`;
   normalized.forEach((finding, index) => {
     const evidenceCount = finding.evidenceEvents.length || finding.evidenceEventIds.length;
-    md += `| ${index + 1} | ${finding.title} | ${findingSeverityLabel(finding.severity)} | ${evidenceCount > 0 ? `${evidenceCount} item(s)` : '—'} |\n`;
+    const cvss = finding.cvssScore === null || finding.cvssScore === undefined
+      ? '—'
+      : `${finding.cvssScore.toFixed(1)} (${cvssSeverityLabel(finding.cvssScore)})`;
+    md += `| ${index + 1} | ${finding.title} | ${findingSeverityLabel(finding.severity)} | ${String(finding.riskLevel || 'medium').toUpperCase()} | ${cvss} | ${evidenceCount > 0 ? `${evidenceCount} item(s)` : '—'} |\n`;
   });
   md += `\n`;
 
   normalized.forEach((finding, index) => {
     md += `### ${index + 1}. ${finding.title}\n\n`;
     md += `**Severity:** ${findingSeverityLabel(finding.severity)}\n\n`;
+    md += `**Likelihood:** ${String(finding.likelihood || 'medium').toUpperCase()}\n\n`;
+    md += `**Risk:** ${String(finding.riskLevel || 'medium').toUpperCase()}\n\n`;
+    if (finding.cvssScore !== null && finding.cvssScore !== undefined) {
+      md += `**CVSS:** ${finding.cvssScore.toFixed(1)} (${cvssSeverityLabel(finding.cvssScore)})`;
+      if (finding.cvssVector) {
+        md += ` — \`${escapeMarkdownInline(finding.cvssVector)}\``;
+      }
+      md += `\n\n`;
+    }
+    if (finding.attackTechniques.length > 0) {
+      md += `**MITRE ATT&CK:** ${finding.attackTechniques.map((technique) => `${escapeMarkdownInline(technique.id)} (${escapeMarkdownInline(technique.name)})`).join(', ')}\n\n`;
+    }
     if (finding.tags.length > 0) {
       md += `**Tags:** ${finding.tags.map((tag) => `\`${escapeMarkdownInline(tag)}\``).join(', ')}\n\n`;
+    }
+    if (finding.duplicateOf) {
+      md += `**Deduplication:** Duplicate of finding #${finding.duplicateOf}\n\n`;
+    }
+    if (finding.relatedFindingIds.length > 0) {
+      md += `**Related Findings:** ${finding.relatedFindingIds.map((id) => `#${id}`).join(', ')}\n\n`;
     }
     md += `**Description:** ${finding.description || '_Not specified_'}\n\n`;
     md += `**Impact:** ${finding.impact || '_Not specified_'}\n\n`;
@@ -290,8 +408,104 @@ function renderPocSection(session, pocSteps) {
   return md;
 }
 
+function renderCredentialsSection(credentials = []) {
+  const normalized = (Array.isArray(credentials) ? credentials : [])
+    .map(normalizeCredential)
+    .filter((credential) => credential && (credential.label || credential.username || credential.secret || credential.hash));
+
+  if (normalized.length === 0) return '';
+
+  let md = `## Credentials\n\n`;
+  md += `| # | Label | Username | Target | Service | Verified |\n| --- | --- | --- | --- | --- | --- |\n`;
+  normalized.forEach((credential, index) => {
+    const target = credential.host
+      ? `${credential.host}${credential.port ? `:${credential.port}` : ''}`
+      : '—';
+    const label = credential.label || (credential.hash ? 'Hash' : 'Credential');
+    md += `| ${index + 1} | ${escapeMarkdownInline(label)} | ${escapeMarkdownInline(credential.username || '—')} | ${escapeMarkdownInline(target)} | ${escapeMarkdownInline(credential.service || '—')} | ${credential.verified ? 'Yes' : 'No'} |\n`;
+  });
+  md += `\n`;
+
+  normalized.forEach((credential, index) => {
+    const label = credential.label || (credential.hash ? 'Hash' : 'Credential');
+    md += `### ${index + 1}. ${escapeMarkdownInline(label)}\n\n`;
+    md += `**Username:** ${credential.username || '_Not specified_'}\n\n`;
+    if (credential.secret) {
+      md += `**Secret:** \`${escapeMarkdownInline(credential.secret)}\`\n\n`;
+    }
+    if (credential.hash) {
+      md += `**Hash:** \`${escapeMarkdownInline(credential.hash)}\`\n\n`;
+    }
+    if (credential.hashType) {
+      md += `**Hash Type:** ${escapeMarkdownInline(credential.hashType)}\n\n`;
+    }
+    if (credential.host || credential.service) {
+      const target = credential.host
+        ? `${credential.host}${credential.port ? `:${credential.port}` : ''}`
+        : 'Not specified';
+      md += `**Target:** ${escapeMarkdownInline(target)}\n\n`;
+      md += `**Service:** ${escapeMarkdownInline(credential.service || 'Unknown')}\n\n`;
+    }
+    md += `**Verified:** ${credential.verified ? 'Yes' : 'No'}\n\n`;
+    if (credential.findingIds.length > 0) {
+      md += `**Linked Findings:** ${credential.findingIds.join(', ')}\n\n`;
+    }
+    if (credential.graphNodeIds.length > 0) {
+      md += `**Linked Graph Nodes:** ${credential.graphNodeIds.map((id) => `\`${escapeMarkdownInline(id)}\``).join(', ')}\n\n`;
+    }
+    if (credential.notes) {
+      md += `**Notes:** ${credential.notes}\n\n`;
+    }
+  });
+
+  return md;
+}
+
+function prepareReportFindingContext(options = {}) {
+  const allFindings = Array.isArray(options?.allFindings)
+    ? options.allFindings
+    : Array.isArray(options?.findings)
+      ? options.findings
+      : [];
+  const reportFilters = normalizeReportFilters(options?.reportFilters);
+  const findings = filterFindings(allFindings, reportFilters);
+  return {
+    allFindings,
+    findings,
+    reportFilters,
+  };
+}
+
+function renderTopFindingsMarkdown(findings = [], heading = '## Key Findings', limit = 5) {
+  const normalized = enrichFindings((Array.isArray(findings) ? findings : [])
+    .map(normalizeFinding)
+    .filter((finding) => finding && finding.title))
+    .sort((a, b) => (
+      (FINDING_SEVERITY_ORDER[a.severity] ?? 99) - (FINDING_SEVERITY_ORDER[b.severity] ?? 99)
+      || Number(b.riskScore || 0) - Number(a.riskScore || 0)
+    ))
+    .slice(0, limit);
+
+  if (normalized.length === 0) return '';
+
+  let md = `${heading}\n\n`;
+  normalized.forEach((finding) => {
+    const parts = [
+      `**${escapeMarkdownInline(finding.title)}**`,
+      `${findingSeverityLabel(finding.severity)} severity`,
+      `${String(finding.riskLevel || 'medium').toUpperCase()} risk`,
+    ];
+    if (finding.cvssScore !== null && finding.cvssScore !== undefined) {
+      parts.push(`CVSS ${finding.cvssScore.toFixed(1)} (${cvssSeverityLabel(finding.cvssScore)})`);
+    }
+    md += `- ${parts.join(' · ')}\n`;
+  });
+  md += `\n`;
+  return md;
+}
+
 export function labReport(session, events, analystName = 'Unknown', options = {}) {
-  const findings = Array.isArray(options?.findings) ? options.findings : [];
+  const { allFindings, findings, reportFilters } = prepareReportFindingContext(options);
   const generatedAt = resolveGeneratedAt(options);
   const meta = buildReportMeta(session, 'lab-report', analystName, generatedAt);
   let md = renderReportCoverMarkdown(`Laboratory Report: ${session.name}`, meta);
@@ -299,7 +513,10 @@ export function labReport(session, events, analystName = 'Unknown', options = {}
   let body = '';
   body += `## 1. Overview\n`;
   body += `This document serves as the official laboratory report for the reconnaissance session conducted on **${session.name}**. It contains a detailed log of commands executed, observations recorded, and technical evidence captured during the engagement.\n\n`;
+  body += renderReportFilterSummaryMarkdown(reportFilters, allFindings.length, findings.length);
   body += renderSeveritySummaryMarkdown(findings);
+  body += renderRiskMatrixMarkdown(findings);
+  body += renderAttackCoverageMarkdown(findings);
 
   const notes = events.filter(e => e.type === 'note');
   body += `## 2. Reconnaissance Observations\n`;
@@ -348,14 +565,18 @@ export function labReport(session, events, analystName = 'Unknown', options = {}
 }
 
 export function executiveSummary(session, events, analystName = 'Unknown', options = {}) {
-  const findings = Array.isArray(options?.findings) ? options.findings : [];
+  const { allFindings, findings, reportFilters } = prepareReportFindingContext(options);
   const meta = buildReportMeta(session, 'executive-summary', analystName, resolveGeneratedAt(options));
   let md = renderReportCoverMarkdown(`Executive Summary: ${session.name}`, meta);
 
   if (session.objective) {
     md += `## Objective\n${session.objective}\n\n`;
   }
+  md += renderReportFilterSummaryMarkdown(reportFilters, allFindings.length, findings.length);
   md += renderSeveritySummaryMarkdown(findings);
+  md += renderRiskMatrixMarkdown(findings);
+  md += renderAttackCoverageMarkdown(findings);
+  md += renderTopFindingsMarkdown(findings);
 
   const notes = events.filter(e => e.type === 'note');
   const commands = events.filter(e => e.type === 'command');
@@ -372,7 +593,7 @@ export function executiveSummary(session, events, analystName = 'Unknown', optio
   md += `| Screenshots Captured | ${screenshots.length} |\n\n`;
 
   if (notes.length > 0) {
-    md += `## Key Findings\n`;
+    md += `## Analyst Notes\n`;
     notes.forEach(note => {
       md += `- ${note.content}\n`;
     });
@@ -404,7 +625,8 @@ export function executiveSummary(session, events, analystName = 'Unknown', optio
 
 export function technicalWalkthrough(session, events, analystName = 'Unknown', options = {}) {
   const pocSteps = Array.isArray(options?.pocSteps) ? options.pocSteps : [];
-  const findings = Array.isArray(options?.findings) ? options.findings : [];
+  const { allFindings, findings, reportFilters } = prepareReportFindingContext(options);
+  const credentials = Array.isArray(options?.credentials) ? options.credentials : [];
   const meta = buildReportMeta(session, 'technical-walkthrough', analystName, resolveGeneratedAt(options));
   let md = renderReportCoverMarkdown(`Technical Walkthrough: ${session.name}`, meta);
 
@@ -412,7 +634,10 @@ export function technicalWalkthrough(session, events, analystName = 'Unknown', o
     md += `> **Objective:** ${session.objective}\n\n`;
   }
 
+  md += renderReportFilterSummaryMarkdown(reportFilters, allFindings.length, findings.length);
   md += renderSeveritySummaryMarkdown(findings);
+  md += renderRiskMatrixMarkdown(findings);
+  md += renderAttackCoverageMarkdown(findings);
   md += `## Walkthrough\n\n`;
 
   const allEvents = [...events].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
@@ -442,16 +667,20 @@ export function technicalWalkthrough(session, events, analystName = 'Unknown', o
 
   md += `${renderPocSection(session, pocSteps)}`;
   md += `${renderFindingsSection(findings)}`;
+  md += `${renderCredentialsSection(credentials)}`;
 
   md += `---\n*Technical Walkthrough generated by Helm's Watch*`;
   return md;
 }
 
 export function ctfSolution(session, events, analystName = 'Unknown', options = {}) {
-  const findings = Array.isArray(options?.findings) ? options.findings : [];
+  const { allFindings, findings, reportFilters } = prepareReportFindingContext(options);
   const meta = buildReportMeta(session, 'ctf-solution', analystName, resolveGeneratedAt(options));
   let md = renderReportCoverMarkdown(`CTF Solution: ${session.name}`, meta);
+  md += renderReportFilterSummaryMarkdown(reportFilters, allFindings.length, findings.length);
   md += renderSeveritySummaryMarkdown(findings);
+  md += renderAttackCoverageMarkdown(findings);
+  md += renderTopFindingsMarkdown(findings, '## Finding Summary', 3);
 
   if (session.objective) {
     md += `## Challenge Description\n${session.objective}\n\n`;
@@ -495,7 +724,7 @@ export function bugBountyReport(session, events, analystName = 'Unknown', option
   const commands = events.filter(e => e.type === 'command' && e.status === 'success');
   const notes = events.filter(e => e.type === 'note');
   const screenshots = events.filter(e => e.type === 'screenshot');
-  const findings = Array.isArray(options?.findings) ? options.findings : [];
+  const { allFindings, findings, reportFilters } = prepareReportFindingContext(options);
   const meta = buildReportMeta(session, 'bug-bounty', analystName, resolveGeneratedAt(options));
   const safeAnalystName = safeAnalyst(meta.analystName);
 
@@ -509,7 +738,10 @@ export function bugBountyReport(session, events, analystName = 'Unknown', option
   md += `| **Date** | ${timestamp} |\n`;
   if (session.objective) md += `| **Summary** | ${session.objective} |\n`;
   md += `\n`;
+  md += renderReportFilterSummaryMarkdown(reportFilters, allFindings.length, findings.length);
   md += renderSeveritySummaryMarkdown(findings);
+  md += renderRiskMatrixMarkdown(findings);
+  md += renderTopFindingsMarkdown(findings, '## Vulnerability Snapshot', 3);
 
   md += `## Summary\n\n`;
   md += `_Describe the vulnerability in 2-3 sentences: what it is, where it exists, and what an attacker could do._\n\n`;
@@ -553,15 +785,14 @@ export function bugBountyReport(session, events, analystName = 'Unknown', option
 
 export function pentestReport(session, events, analystName = 'Unknown', options = {}) {
   const generatedAt = resolveGeneratedAt(options);
-  const timestamp = generatedAt.toLocaleString();
   const pocSteps = Array.isArray(options?.pocSteps) ? options.pocSteps : [];
-  const findings = Array.isArray(options?.findings) ? options.findings : [];
+  const { allFindings, findings, reportFilters } = prepareReportFindingContext(options);
+  const credentials = Array.isArray(options?.credentials) ? options.credentials : [];
   const allCmds = events.filter(e => e.type === 'command');
   const successCmds = allCmds.filter(c => c.status === 'success');
   const failedCmds = allCmds.filter(c => c.status === 'failed');
   const notes = events.filter(e => e.type === 'note');
   const screenshots = events.filter(e => e.type === 'screenshot');
-  const safeAnalystName = safeAnalyst(analystName);
   const meta = buildReportMeta(session, 'pentest', analystName, generatedAt);
 
   let md = renderReportCoverMarkdown('Penetration Test Report', meta);
@@ -570,6 +801,7 @@ export function pentestReport(session, events, analystName = 'Unknown', options 
   if (session.objective) {
     md += `**Objective:** ${session.objective}\n\n`;
   }
+  md += renderReportFilterSummaryMarkdown(reportFilters, allFindings.length, findings.length);
   md += `| Metric | Value |\n| --- | --- |\n`;
   md += `| Commands Executed | ${allCmds.length} |\n`;
   md += `| Successful | ${successCmds.length} |\n`;
@@ -578,6 +810,9 @@ export function pentestReport(session, events, analystName = 'Unknown', options 
   md += `| Screenshots | ${screenshots.length} |\n\n`;
   md += `_Overall risk posture: — fill in (Critical / High / Medium / Low)_\n\n`;
   md += renderSeveritySummaryMarkdown(findings);
+  md += renderRiskMatrixMarkdown(findings);
+  md += renderAttackCoverageMarkdown(findings);
+  md += renderTopFindingsMarkdown(findings, '## Priority Findings');
 
   md += `## Methodology\n\n`;
   md += `Testing followed a structured approach:\n\n`;
@@ -606,6 +841,7 @@ export function pentestReport(session, events, analystName = 'Unknown', options 
 
   md += `${renderPocSection(session, pocSteps)}`;
   md += `${renderFindingsSection(findings)}`;
+  md += `${renderCredentialsSection(credentials)}`;
 
   if (notes.length > 0) {
     md += `## Analyst Notes\n\n`;

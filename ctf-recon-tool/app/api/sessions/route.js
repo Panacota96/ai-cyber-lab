@@ -13,7 +13,7 @@ export async function GET() {
 export const POST = withErrorHandler(
   withAuth(async (request) => {
     const body = await readJsonBody(request, {});
-    const { name, target, difficulty, objective } = body;
+    const { name, target, difficulty, objective, targets, metadata } = body;
     const id = body.id || crypto.randomUUID();
     if (!isValidSessionId(id)) {
       return apiError('Invalid session id', 400);
@@ -21,7 +21,7 @@ export const POST = withErrorHandler(
     if (!name || !String(name).trim()) {
       return apiError('Session name is required', 400);
     }
-    const session = createSession(id, name, { target, difficulty, objective });
+    const session = createSession(id, name, { target, difficulty, objective, targets, metadata });
     if (!session) {
       return apiError('Session could not be created (possibly duplicate id)', 409);
     }

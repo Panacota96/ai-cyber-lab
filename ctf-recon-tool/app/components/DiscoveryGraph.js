@@ -13,7 +13,10 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
+import { buildGraphContextActions } from '@/lib/operator-suggestions';
 import {
+  computeAttackPathHighlights,
+  filterGraphStateByTarget,
   NODE_COLORS,
   NODE_ICONS,
   NODE_PHASE,
@@ -166,7 +169,7 @@ function DiscoveryNode({ data, selected }) {
 
 const NODE_TYPES = { discovery: DiscoveryNode };
 
-function buildManualNode(type, label) {
+function buildManualNode(type, label, options = {}) {
   const normalized = String(label || '').trim();
   const id = `manual::${type}::${normalized.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'node'}-${Date.now()}`;
   return {
@@ -179,6 +182,7 @@ function buildManualNode(type, label) {
       phase: NODE_PHASE[type] || 'Any',
       color: NODE_COLORS[type] || '#58a6ff',
       origin: 'manual',
+      targetIds: Array.isArray(options.targetIds) ? options.targetIds.filter(Boolean) : [],
     },
   };
 }
@@ -219,13 +223,28 @@ async function renderGraphPng(reactFlowInstance) {
   }
 }
 
-export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport, apiFetch }) {
+export default function DiscoveryGraph({
+  sessionId,
+  timeline = [],
+  onAddToReport,
+  apiFetch,
+  refreshToken = 0,
+  activeTargetId = '',
+  activeTargetLabel = '',
+  serviceSuggestions = [],
+  onInsertCommand,
+  onFocusTimeline,
+}) {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [addNodeType, setAddNodeType] = useState('host');
   const [addNodeLabel, setAddNodeLabel] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [phaseFilter, setPhaseFilter] = useState('All');
+  const [targetScope, setTargetScope] = useState('all');
+  const [layoutMode, setLayoutMode] = useState('phase');
+  const [pathMode, setPathMode] = useState('all');
+  const [selectedNodeId, setSelectedNodeId] = useState('');
   const [saveStatus, setSaveStatus] = useState('');
   const [graphError, setGraphError] = useState('');
   const [reactFlowInstance, setReactFlowInstance] = useState(null);
@@ -265,8 +284,14 @@ export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport
     setEdges([]);
     setSearchTerm('');
     setPhaseFilter('All');
+    setSelectedNodeId('');
     void loadGraphState({ preserveLocalManual: false });
   }, [loadGraphState, sessionId]);
+
+  useEffect(() => {
+    if (activeTargetId) return;
+    setTargetScope('all');
+  }, [activeTargetId]);
 
   useEffect(() => {
     if (!sessionId || loadedSessionRef.current !== sessionId) return;
@@ -290,6 +315,11 @@ export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport
       void loadGraphState({ preserveLocalManual: true });
     }
   }, [loadGraphState, sessionId, timeline]);
+
+  useEffect(() => {
+    if (!sessionId || loadedSessionRef.current !== sessionId || refreshToken <= 0) return;
+    void loadGraphState({ preserveLocalManual: true });
+  }, [loadGraphState, refreshToken, sessionId]);
 
   const scheduleSave = useCallback((currentNodes, currentEdges) => {
     if (!sessionId) return;
@@ -350,22 +380,28 @@ export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport
   const handleAddNode = useCallback(() => {
     const label = addNodeLabel.trim();
     if (!label) return;
-    const newNode = buildManualNode(addNodeType, label);
+    const newNode = buildManualNode(addNodeType, label, {
+      targetIds: activeTargetId ? [activeTargetId] : [],
+    });
     setNodes((prev) => {
       const next = [...prev, newNode];
       scheduleSave(next, edges);
       return next;
     });
     setAddNodeLabel('');
-  }, [addNodeLabel, addNodeType, edges, scheduleSave]);
+  }, [activeTargetId, addNodeLabel, addNodeType, edges, scheduleSave]);
 
   const handleAutoLayout = useCallback(() => {
     setNodes((prev) => {
-      const laidOut = layoutGraphNodes(prev, { preserveExisting: false });
+      const laidOut = layoutGraphNodes(prev, {
+        preserveExisting: false,
+        mode: layoutMode,
+        focusTargetId: activeTargetId || null,
+      });
       scheduleSave(laidOut, edges);
       return laidOut;
     });
-  }, [edges, scheduleSave]);
+  }, [activeTargetId, edges, layoutMode, scheduleSave]);
 
   const handleResetAutoDerived = useCallback(() => {
     setNodes((prevNodes) => {
@@ -405,23 +441,48 @@ export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport
     }
   }, [onAddToReport, reactFlowInstance]);
 
+  const targetScopedState = useMemo(() => {
+    if (targetScope === 'active' && activeTargetId) {
+      return filterGraphStateByTarget({ nodes, edges }, activeTargetId);
+    }
+    return normalizeGraphState(nodes, edges);
+  }, [activeTargetId, edges, nodes, targetScope]);
+
   const degreeMap = useMemo(() => {
     const counts = new Map();
-    for (const node of nodes) counts.set(node.id, 0);
-    for (const edge of edges) {
+    for (const node of targetScopedState.nodes) counts.set(node.id, 0);
+    for (const edge of targetScopedState.edges) {
       counts.set(edge.source, (counts.get(edge.source) || 0) + 1);
       counts.set(edge.target, (counts.get(edge.target) || 0) + 1);
     }
     return counts;
-  }, [edges, nodes]);
+  }, [targetScopedState]);
+
+  const attackHighlights = useMemo(() => {
+    if (pathMode !== 'attack') {
+      return { highlightedNodeIds: [], highlightedEdgeIds: [], goalCount: 0, startCount: 0 };
+    }
+    return computeAttackPathHighlights(targetScopedState.nodes, targetScopedState.edges, {
+      targetId: targetScope === 'active' ? activeTargetId : null,
+    });
+  }, [activeTargetId, pathMode, targetScope, targetScopedState.edges, targetScopedState.nodes]);
 
   const decoratedNodes = useMemo(() => {
     const needle = searchTerm.trim().toLowerCase();
-    return nodes.map((node) => {
+    const highlightedNodeIds = new Set(attackHighlights.highlightedNodeIds);
+    const hasFocus = Boolean(needle) || highlightedNodeIds.size > 0;
+    return targetScopedState.nodes.map((node) => {
       const degree = degreeMap.get(node.id) || 0;
-      const haystack = `${node.data?.label || ''} ${node.data?.nodeType || ''} ${node.data?.phase || ''}`.toLowerCase();
-      const isHighlighted = needle ? haystack.includes(needle) : false;
-      const isDimmed = Boolean(needle) && !isHighlighted;
+      const haystack = [
+        node.data?.label || '',
+        node.data?.nodeType || '',
+        node.data?.phase || '',
+        ...(node.data?.targetIds || []),
+      ].join(' ').toLowerCase();
+      const matchesSearch = needle ? haystack.includes(needle) : false;
+      const matchesPath = highlightedNodeIds.has(node.id);
+      const isHighlighted = matchesSearch || matchesPath;
+      const isDimmed = hasFocus && !isHighlighted;
       const nodeSize = Math.min(2.2, Math.max(1, 1 + (degree * 0.14)));
       return {
         ...node,
@@ -445,7 +506,7 @@ export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport
         },
       };
     });
-  }, [degreeMap, edges, nodes, scheduleSave, searchTerm]);
+  }, [attackHighlights.highlightedNodeIds, degreeMap, edges, scheduleSave, searchTerm, targetScopedState.nodes]);
 
   const visibleNodeIds = useMemo(() => {
     const phase = phaseFilter === 'All' ? null : phaseFilter;
@@ -455,13 +516,27 @@ export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport
   }, [decoratedNodes, phaseFilter]);
 
   const visibleNodes = useMemo(() => decoratedNodes.filter((node) => visibleNodeIds.has(node.id)), [decoratedNodes, visibleNodeIds]);
-  const visibleEdges = useMemo(() => edges
-    .filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target))
-    .map((edge) => ({
-      ...edge,
-      animated: edge.animated || isHighSignalEdge(edge),
-      markerEnd: edge.markerEnd || { type: 'arrowclosed', color: edge?.style?.stroke || '#30363d' },
-    })), [edges, visibleNodeIds]);
+  const visibleEdges = useMemo(() => {
+    const highlightedEdgeIds = new Set(attackHighlights.highlightedEdgeIds);
+    const hasHighlightedPath = highlightedEdgeIds.size > 0;
+    return targetScopedState.edges
+      .filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target))
+      .map((edge) => {
+        const isAttackPath = highlightedEdgeIds.has(edge.id);
+        const stroke = isAttackPath ? '#ffd700' : edge?.style?.stroke || '#30363d';
+        return {
+          ...edge,
+          animated: edge.animated || isHighSignalEdge(edge) || isAttackPath,
+          style: {
+            ...(edge.style || {}),
+            stroke,
+            opacity: hasHighlightedPath && !isAttackPath ? 0.22 : 1,
+            strokeWidth: isAttackPath ? 2.8 : (edge?.style?.strokeWidth || 1.4),
+          },
+          markerEnd: { ...(edge.markerEnd || { type: 'arrowclosed' }), color: stroke },
+        };
+      });
+  }, [attackHighlights.highlightedEdgeIds, targetScopedState.edges, visibleNodeIds]);
 
   const stats = useMemo(() => {
     const byType = new Map();
@@ -479,9 +554,29 @@ export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport
   }, [visibleEdges.length, visibleNodes]);
 
   const phaseOptions = useMemo(() => {
-    const found = new Set(nodes.map((node) => node.data?.phase || 'Any'));
+    const found = new Set(targetScopedState.nodes.map((node) => node.data?.phase || 'Any'));
     return ALL_PHASES.filter((phase) => phase === 'All' || found.has(phase));
-  }, [nodes]);
+  }, [targetScopedState.nodes]);
+
+  useEffect(() => {
+    if (!selectedNodeId) return;
+    if (targetScopedState.nodes.some((node) => node.id === selectedNodeId)) return;
+    setSelectedNodeId('');
+  }, [selectedNodeId, targetScopedState.nodes]);
+
+  const selectedNode = useMemo(() => (
+    targetScopedState.nodes.find((node) => node.id === selectedNodeId) || null
+  ), [selectedNodeId, targetScopedState.nodes]);
+
+  const graphContextActions = useMemo(() => (
+    buildGraphContextActions({
+      node: selectedNode,
+      nodes: targetScopedState.nodes,
+      edges: targetScopedState.edges,
+      serviceSuggestions,
+      activeTargetId,
+    })
+  ), [activeTargetId, selectedNode, serviceSuggestions, targetScopedState.edges, targetScopedState.nodes]);
 
   const legendItems = useMemo(() => Object.entries(NODE_COLORS).map(([type, color]) => (
     <div key={type} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
@@ -501,6 +596,8 @@ export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onInit={setReactFlowInstance}
+        onNodeClick={(_, node) => setSelectedNodeId(node?.id || '')}
+        onPaneClick={() => setSelectedNodeId('')}
         nodeTypes={NODE_TYPES}
         deleteKeyCode={['Backspace', 'Delete']}
         fitView
@@ -521,12 +618,22 @@ export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport
           </div>
           {legendItems}
           <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #30363d' }}>
+            {targetScope === 'active' && activeTargetId && (
+              <div style={{ fontSize: '0.62rem', color: '#79c0ff', fontFamily: 'var(--font-mono, monospace)', marginBottom: '6px' }}>
+                Scope: {activeTargetLabel || activeTargetId}
+              </div>
+            )}
             <div style={{ fontSize: '0.65rem', color: '#c9d1d9', fontFamily: 'var(--font-mono, monospace)', marginBottom: '4px' }}>
               Nodes: {stats.nodeCount} | Edges: {stats.edgeCount}
             </div>
             <div style={{ fontSize: '0.65rem', color: '#8b949e', fontFamily: 'var(--font-mono, monospace)', marginBottom: '6px' }}>
               Density: {stats.density}
             </div>
+            {pathMode === 'attack' && (
+              <div style={{ fontSize: '0.62rem', color: '#ffd700', fontFamily: 'var(--font-mono, monospace)', marginBottom: '6px' }}>
+                Paths: {attackHighlights.goalCount} goals from {attackHighlights.startCount} roots
+              </div>
+            )}
             {stats.byType.slice(0, 6).map(([type, count]) => (
               <div key={type} style={{ display: 'flex', justifyContent: 'space-between', gap: '6px', fontSize: '0.62rem', color: '#8b949e', fontFamily: 'var(--font-mono, monospace)' }}>
                 <span>{type}</span>
@@ -546,12 +653,39 @@ export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport
               style={{ fontSize: '0.72rem', padding: '5px 8px', background: '#161b22', border: '1px solid #30363d', color: '#c9d1d9', borderRadius: '4px', outline: 'none', fontFamily: 'var(--font-mono, monospace)' }}
             />
             <select
+              value={targetScope}
+              onChange={(event) => setTargetScope(event.target.value)}
+              disabled={!activeTargetId}
+              style={{ fontSize: '0.72rem', padding: '5px 8px', background: '#161b22', border: '1px solid #30363d', color: '#c9d1d9', borderRadius: '4px', outline: 'none', fontFamily: 'var(--font-mono, monospace)', opacity: activeTargetId ? 1 : 0.7 }}
+            >
+              <option value="all">All targets</option>
+              <option value="active">Active target only</option>
+            </select>
+            <select
               value={phaseFilter}
               onChange={(event) => setPhaseFilter(event.target.value)}
               style={{ fontSize: '0.72rem', padding: '5px 8px', background: '#161b22', border: '1px solid #30363d', color: '#c9d1d9', borderRadius: '4px', outline: 'none', fontFamily: 'var(--font-mono, monospace)' }}
             >
               {phaseOptions.map((phase) => <option key={phase} value={phase}>{phase}</option>)}
             </select>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px' }}>
+              <select
+                value={layoutMode}
+                onChange={(event) => setLayoutMode(event.target.value)}
+                style={{ fontSize: '0.72rem', padding: '5px 8px', background: '#161b22', border: '1px solid #30363d', color: '#c9d1d9', borderRadius: '4px', outline: 'none', fontFamily: 'var(--font-mono, monospace)' }}
+              >
+                <option value="phase">Phase layout</option>
+                <option value="target">Target layout</option>
+              </select>
+              <select
+                value={pathMode}
+                onChange={(event) => setPathMode(event.target.value)}
+                style={{ fontSize: '0.72rem', padding: '5px 8px', background: '#161b22', border: '1px solid #30363d', color: '#c9d1d9', borderRadius: '4px', outline: 'none', fontFamily: 'var(--font-mono, monospace)' }}
+              >
+                <option value="all">Full graph</option>
+                <option value="attack">Attack paths</option>
+              </select>
+            </div>
           </div>
 
           <div style={{ background: 'rgba(13,17,23,0.92)', border: '1px solid #30363d', borderRadius: '8px', padding: '10px', backdropFilter: 'blur(6px)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -596,6 +730,79 @@ export default function DiscoveryGraph({ sessionId, timeline = [], onAddToReport
             )}
           </div>
         </Panel>
+
+        {selectedNode && (
+          <Panel position="bottom-right" style={{ width: '320px', maxWidth: '36vw', background: 'rgba(13,17,23,0.94)', border: '1px solid #30363d', borderRadius: '8px', padding: '10px', backdropFilter: 'blur(6px)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#58a6ff', fontFamily: 'var(--font-mono, monospace)', letterSpacing: '0.5px' }}>
+                  NODE CONTEXT
+                </div>
+                <div className="mono" style={{ fontSize: '0.8rem', color: '#c9d1d9', marginTop: '4px', wordBreak: 'break-word' }}>
+                  {selectedNode.data?.label || selectedNode.id}
+                </div>
+              </div>
+              <button onClick={() => setSelectedNodeId('')} style={{ fontSize: '0.72rem', padding: '4px 8px', background: '#161b22', border: '1px solid #30363d', color: '#8b949e', borderRadius: '4px', cursor: 'pointer', fontFamily: 'var(--font-mono, monospace)' }}>
+                Close
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              <span className="mono" style={{ fontSize: '0.66rem', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(88,166,255,0.24)', color: '#79c0ff', background: 'rgba(88,166,255,0.08)' }}>
+                {selectedNode.data?.nodeType || 'node'}
+              </span>
+              <span className="mono" style={{ fontSize: '0.66rem', color: '#8b949e' }}>
+                phase {selectedNode.data?.phase || 'Any'}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => onFocusTimeline?.(selectedNode.data?.label || '')}
+                style={{ fontSize: '0.72rem', padding: '5px 8px', background: 'rgba(88,166,255,0.12)', border: '1px solid rgba(88,166,255,0.35)', color: '#79c0ff', borderRadius: '4px', cursor: 'pointer', fontFamily: 'var(--font-mono, monospace)' }}
+              >
+                Search Timeline
+              </button>
+              {selectedNode.data?.details && (
+                <span className="mono" style={{ fontSize: '0.66rem', color: '#8b949e', alignSelf: 'center' }}>
+                  details loaded
+                </span>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {graphContextActions.length === 0 && (
+                <div className="mono" style={{ fontSize: '0.72rem', color: '#8b949e', lineHeight: 1.45 }}>
+                  No command actions for this node yet. Service nodes and hosts with related graph evidence expose follow-up commands here.
+                </div>
+              )}
+              {graphContextActions.map((action) => (
+                <div key={action.id} style={{ border: '1px solid rgba(88,166,255,0.14)', borderRadius: '8px', padding: '8px', background: 'rgba(1,4,9,0.5)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' }}>
+                    <span className="mono" style={{ fontSize: '0.76rem', color: '#c9d1d9' }}>{action.label}</span>
+                    {action.subtitle && (
+                      <span className="mono" style={{ fontSize: '0.62rem', color: '#8b949e' }}>{action.subtitle}</span>
+                    )}
+                  </div>
+                  <div className="mono" style={{ fontSize: '0.68rem', color: '#8b949e', lineHeight: 1.45, marginBottom: '6px' }}>
+                    {action.description || 'Insert this follow-up command into the command box.'}
+                  </div>
+                  <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '0.68rem', background: 'rgba(1,4,9,0.82)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '6px', padding: '6px', color: '#c9d1d9' }}>
+                    {action.command}
+                  </pre>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                    <button
+                      onClick={() => onInsertCommand?.(action.command)}
+                      style={{ fontSize: '0.72rem', padding: '4px 9px', background: 'rgba(57,211,83,0.12)', border: '1px solid rgba(57,211,83,0.35)', color: '#39d353', borderRadius: '4px', cursor: 'pointer', fontFamily: 'var(--font-mono, monospace)' }}
+                    >
+                      Insert Command
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        )}
       </ReactFlow>
 
       {nodes.length === 0 && (

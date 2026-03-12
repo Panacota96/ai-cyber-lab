@@ -14,6 +14,16 @@ const NODE_TYPES = {
   note: 'note',
 };
 
+function parseStructuredField(rawValue) {
+  if (!rawValue) return null;
+  if (typeof rawValue === 'object') return rawValue;
+  try {
+    return JSON.parse(rawValue);
+  } catch {
+    return null;
+  }
+}
+
 export const PHASE_ORDER = [
   'Information Gathering',
   'Enumeration',
@@ -138,6 +148,22 @@ function normalizeLabel(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 240);
 }
 
+function normalizeDetails(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return { ...value };
+}
+
+function normalizeTargetIds(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return [...new Set(values
+    .map((item) => String(item || '').trim())
+    .filter(Boolean))];
+}
+
+function mergeTargetIds(...groups) {
+  return normalizeTargetIds(groups.flatMap((group) => normalizeTargetIds(group)));
+}
+
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -170,13 +196,14 @@ function isHighSignalLabel(label = '') {
   ].includes(String(label || '').trim().toLowerCase());
 }
 
-function buildEdge(source, target, label = '', stroke = '#30363d', animated = false) {
+function buildEdge(source, target, label = '', stroke = '#30363d', animated = false, targetIds = []) {
   return {
     id: stableEdgeId(source, target, label),
     source,
     target,
     label,
     animated,
+    targetIds: normalizeTargetIds(targetIds),
     style: buildEdgeStyle(stroke),
     markerEnd: {
       type: 'arrowclosed',
@@ -205,6 +232,20 @@ function buildNode(type, label, meta = {}) {
       port: meta.port || undefined,
       service: meta.service || undefined,
       severity: meta.severity || undefined,
+      targetIds: normalizeTargetIds(meta.targetIds),
+      details: normalizeDetails(meta.details),
+    },
+  };
+}
+
+function mergeNodeData(current = {}, incoming = {}) {
+  return {
+    ...current,
+    ...incoming,
+    targetIds: mergeTargetIds(current.targetIds, incoming.targetIds),
+    details: {
+      ...(current.details || {}),
+      ...(incoming.details || {}),
     },
   };
 }
@@ -221,6 +262,7 @@ export function normalizeGraphNode(node) {
   return {
     ...built,
     id: node?.id || built.id,
+    data: mergeNodeData(built.data, node?.data || {}),
   };
 }
 
@@ -229,8 +271,9 @@ export function normalizeGraphEdge(edge) {
   const stroke = edge?.style?.stroke || '#30363d';
   const label = edge?.label || '';
   return {
-    ...buildEdge(edge.source, edge.target, label, stroke, Boolean(edge.animated)),
+    ...buildEdge(edge.source, edge.target, label, stroke, Boolean(edge.animated), edge.targetIds),
     id: edge.id || stableEdgeId(edge.source, edge.target, label),
+    targetIds: normalizeTargetIds(edge.targetIds),
     style: { ...buildEdgeStyle(stroke), ...(edge.style || {}) },
     markerEnd: edge.markerEnd || { type: 'arrowclosed', color: stroke },
   };
@@ -247,7 +290,14 @@ export function normalizeGraphState(nodes = [], edges = []) {
       nodeMap.set(node.id, node);
       normalizedNodes.push(node);
     } else {
-      nodeMap.set(node.id, { ...nodeMap.get(node.id), ...node, data: { ...nodeMap.get(node.id).data, ...node.data } });
+      const mergedNode = {
+        ...nodeMap.get(node.id),
+        ...node,
+        data: mergeNodeData(nodeMap.get(node.id).data, node.data),
+      };
+      nodeMap.set(node.id, mergedNode);
+      const existingIndex = normalizedNodes.findIndex((item) => item.id === node.id);
+      if (existingIndex >= 0) normalizedNodes[existingIndex] = mergedNode;
     }
   }
 
@@ -258,7 +308,17 @@ export function normalizeGraphState(nodes = [], edges = []) {
     const edge = normalizeGraphEdge(rawEdge);
     if (!edge || edge.source === edge.target) continue;
     if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) continue;
-    if (edgeMap.has(edge.id)) continue;
+    if (edgeMap.has(edge.id)) {
+      const mergedEdge = {
+        ...edgeMap.get(edge.id),
+        ...edge,
+        targetIds: mergeTargetIds(edgeMap.get(edge.id)?.targetIds, edge.targetIds),
+      };
+      edgeMap.set(edge.id, mergedEdge);
+      const existingIndex = normalizedEdges.findIndex((item) => item.id === edge.id);
+      if (existingIndex >= 0) normalizedEdges[existingIndex] = mergedEdge;
+      continue;
+    }
     edgeMap.set(edge.id, edge);
     normalizedEdges.push(edge);
   }
@@ -445,8 +505,7 @@ function buildAdder(existingNodes = [], existingEdges = [], meta = {}) {
       nodeMap.set(node.id, {
         ...existing,
         data: {
-          ...existing.data,
-          ...node.data,
+          ...mergeNodeData(existing.data, node.data),
           origin: inferOrigin(existing.data),
         },
       });
@@ -459,14 +518,116 @@ function buildAdder(existingNodes = [], existingEdges = [], meta = {}) {
 
   const addEdge = (source, target, label = '', stroke = '#30363d') => {
     if (!source || !target || source === target) return null;
-    const edge = buildEdge(source, target, label, stroke, isHighSignalLabel(label));
-    if (edgeMap.has(edge.id)) return edge.id;
+    const edge = buildEdge(source, target, label, stroke, isHighSignalLabel(label), meta.targetIds);
+    if (edgeMap.has(edge.id)) {
+      const mergedEdge = {
+        ...edgeMap.get(edge.id),
+        targetIds: mergeTargetIds(edgeMap.get(edge.id)?.targetIds, edge.targetIds),
+      };
+      edgeMap.set(edge.id, mergedEdge);
+      return edge.id;
+    }
     edgeMap.set(edge.id, edge);
     newEdges.push(edge);
     return edge.id;
   };
 
   return { addNode, addEdge, newNodes, newEdges };
+}
+
+function deriveFromNmapOutput(model, meta, existingNodes = [], existingEdges = []) {
+  const { addNode, addEdge, newNodes, newEdges } = buildAdder(existingNodes, existingEdges, meta);
+  const hosts = safeArray(model?.hosts);
+
+  for (const host of hosts) {
+    const hostIds = safeArray(host?.addresses)
+      .map((entry) => addNode(NODE_TYPES.host, entry?.addr, {
+        details: {
+          addrType: entry?.addrType || undefined,
+          status: host?.status || undefined,
+          osMatches: safeArray(host?.osMatches),
+        },
+      }))
+      .filter(Boolean);
+
+    const hostnameIds = safeArray(host?.hostnames)
+      .map((entry) => {
+        const hostname = normalizeLabel(entry?.name);
+        if (!hostname) return null;
+        return addNode(classifyHostname(hostname), hostname, {
+          details: {
+            hostnameType: entry?.type || undefined,
+          },
+        });
+      })
+      .filter(Boolean);
+
+    if (hostIds.length > 0 && hostnameIds.length > 0) {
+      for (const hostnameId of hostnameIds) {
+        for (const hostId of hostIds) {
+          addEdge(hostnameId, hostId, 'resolves');
+        }
+      }
+    }
+
+    const attachmentTargets = hostIds.length > 0 ? hostIds : hostnameIds;
+
+    for (const port of safeArray(host?.ports)) {
+      if (!port?.port || String(port?.state || '').toLowerCase() !== 'open') continue;
+      const serviceName = normalizeLabel(port?.service || 'unknown').toLowerCase() || 'unknown';
+      const serviceLabel = `${serviceName}:${port.port}/${port.protocol || 'tcp'}`;
+      const serviceId = addNode(NODE_TYPES.service, serviceLabel, {
+        port: String(port.port),
+        service: serviceName,
+        details: {
+          port: Number(port.port),
+          protocol: port.protocol || 'tcp',
+          service: serviceName,
+          product: port.product || undefined,
+          version: port.version || undefined,
+          extrainfo: port.extrainfo || undefined,
+          tunnel: port.tunnel || undefined,
+          cpes: safeArray(port.cpes),
+          scripts: safeArray(port.scripts),
+        },
+      });
+
+      for (const targetId of attachmentTargets) {
+        addEdge(targetId, serviceId, 'found');
+      }
+
+      const cves = uniqueValues([
+        ...safeArray(port?.cves),
+        ...safeArray(port?.scripts).flatMap((script) => safeArray(script?.cves)),
+      ]);
+
+      for (const cve of cves) {
+        const vulnId = addNode(NODE_TYPES.vulnerability, cve, {
+          details: {
+            cveId: cve,
+            port: Number(port.port),
+            service: serviceName,
+            source: 'nmap-xml',
+          },
+        });
+        addEdge(serviceId, vulnId, 'vulnerable', '#f85149');
+      }
+    }
+
+    for (const cve of uniqueValues(host?.cves || [])) {
+      const vulnId = addNode(NODE_TYPES.vulnerability, cve, {
+        details: {
+          cveId: cve,
+          source: 'nmap-xml',
+        },
+      });
+      for (const targetId of attachmentTargets) {
+        addEdge(targetId, vulnId, 'vulnerable', '#f85149');
+      }
+    }
+  }
+
+  return { newNodes, newEdges };
 }
 
 function deriveEvidence(text, meta, existingNodes = [], existingEdges = []) {
@@ -588,6 +749,7 @@ export function deriveFromFinding(finding, existingNodes = [], existingEdges = [
 
 export function deriveFromEvent(event, existingNodes = [], existingEdges = []) {
   if (!event || !event.type) return { newNodes: [], newEdges: [] };
+  const eventTargetIds = normalizeTargetIds(event.target_id || event.targetId);
 
   if (event.type === 'note' && event.content) {
     const label = normalizeLabel(event.content).slice(0, 80) || 'Note';
@@ -595,6 +757,7 @@ export function deriveFromEvent(event, existingNodes = [], existingEdges = []) {
       origin: 'auto',
       sourceEventId: event.id,
       timestamp: event.timestamp,
+      targetIds: eventTargetIds,
     });
     return noteNode ? { newNodes: [noteNode], newEdges: [] } : { newNodes: [], newEdges: [] };
   }
@@ -608,7 +771,14 @@ export function deriveFromEvent(event, existingNodes = [], existingEdges = []) {
     origin: 'auto',
     sourceEventId: event.id,
     timestamp: event.timestamp,
+    targetIds: eventTargetIds,
   };
+
+  const structuredFormat = String(event.structured_output_format || '').trim().toLowerCase();
+  const structuredOutput = parseStructuredField(event.structured_output_json);
+  if (structuredFormat === 'nmap-xml' && structuredOutput) {
+    return deriveFromNmapOutput(structuredOutput, meta, existingNodes, existingEdges);
+  }
 
   const { addNode, addEdge, newNodes, newEdges } = buildAdder(existingNodes, existingEdges, meta);
   const evidence = deriveEvidence(text, meta, existingNodes, existingEdges);
@@ -680,9 +850,224 @@ export function deriveFromTimeline(events, existingNodes = [], existingEdges = [
   return current;
 }
 
+export function hydrateGraphStateTargetIds(state = {}, events = []) {
+  const normalized = normalizeGraphState(state.nodes || [], state.edges || []);
+  const eventTargetIds = new Map(
+    safeArray(events)
+      .filter((event) => event?.id)
+      .map((event) => [String(event.id), normalizeTargetIds(event.target_id || event.targetId)])
+  );
+
+  const nodes = normalized.nodes.map((node) => {
+    const targetIds = mergeTargetIds(
+      node.data?.targetIds,
+      eventTargetIds.get(String(node.data?.sourceEventId || ''))
+    );
+    return targetIds.length === normalizeTargetIds(node.data?.targetIds).length
+      ? node
+      : {
+          ...node,
+          data: {
+            ...node.data,
+            targetIds,
+          },
+        };
+  });
+
+  const nodeTargetMap = new Map(nodes.map((node) => [node.id, normalizeTargetIds(node.data?.targetIds)]));
+  const edges = normalized.edges.map((edge) => {
+    const targetIds = mergeTargetIds(edge.targetIds, nodeTargetMap.get(edge.source), nodeTargetMap.get(edge.target));
+    return targetIds.length === normalizeTargetIds(edge.targetIds).length
+      ? edge
+      : { ...edge, targetIds };
+  });
+
+  return normalizeGraphState(nodes, edges);
+}
+
+export function filterGraphStateByTarget(state = {}, targetId = null) {
+  const normalized = normalizeGraphState(state.nodes || [], state.edges || []);
+  const activeTargetId = String(targetId || '').trim();
+  if (!activeTargetId) return normalized;
+
+  const nodeMap = new Map(normalized.nodes.map((node) => [node.id, node]));
+  const seedIds = normalized.nodes
+    .filter((node) => normalizeTargetIds(node.data?.targetIds).includes(activeTargetId))
+    .map((node) => node.id);
+
+  if (seedIds.length === 0) {
+    return { nodes: [], edges: [] };
+  }
+
+  const adjacency = new Map();
+  for (const edge of normalized.edges) {
+    const edgeTargetIds = normalizeTargetIds(edge.targetIds);
+    if (edgeTargetIds.length > 0 && !edgeTargetIds.includes(activeTargetId)) continue;
+    if (!adjacency.has(edge.source)) adjacency.set(edge.source, new Set());
+    if (!adjacency.has(edge.target)) adjacency.set(edge.target, new Set());
+    adjacency.get(edge.source).add(edge.target);
+    adjacency.get(edge.target).add(edge.source);
+  }
+
+  const queue = [...seedIds];
+  const visited = new Set(seedIds);
+  while (queue.length > 0) {
+    const nodeId = queue.shift();
+    for (const neighborId of adjacency.get(nodeId) || []) {
+      if (visited.has(neighborId)) continue;
+      const neighbor = nodeMap.get(neighborId);
+      const neighborTargetIds = normalizeTargetIds(neighbor?.data?.targetIds);
+      if (neighborTargetIds.length > 0 && !neighborTargetIds.includes(activeTargetId)) continue;
+      visited.add(neighborId);
+      queue.push(neighborId);
+    }
+  }
+
+  return normalizeGraphState(
+    normalized.nodes.filter((node) => visited.has(node.id)),
+    normalized.edges.filter((edge) => visited.has(edge.source) && visited.has(edge.target))
+  );
+}
+
+const ATTACK_GOAL_PRIORITY = {
+  flag: 0,
+  credential: 1,
+  exploit: 2,
+  vulnerability: 3,
+  hash: 4,
+  database: 5,
+};
+
+export function computeAttackPathHighlights(nodes = [], edges = [], options = {}) {
+  const { targetId = null } = options;
+  const normalized = normalizeGraphState(nodes, edges);
+  const activeTargetId = String(targetId || '').trim();
+  const targetScopedNodes = activeTargetId
+    ? normalized.nodes.filter((node) => {
+        const targetIds = normalizeTargetIds(node.data?.targetIds);
+        return targetIds.length === 0 || targetIds.includes(activeTargetId);
+      })
+    : normalized.nodes;
+  const visibleNodeIds = new Set(targetScopedNodes.map((node) => node.id));
+  const targetScopedEdges = normalized.edges.filter((edge) => {
+    if (!visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target)) return false;
+    const edgeTargetIds = normalizeTargetIds(edge.targetIds);
+    return edgeTargetIds.length === 0 || !activeTargetId || edgeTargetIds.includes(activeTargetId);
+  });
+
+  const startIds = targetScopedNodes
+    .filter((node) => ['host', 'subdomain'].includes(node.data?.nodeType || ''))
+    .map((node) => node.id);
+  const fallbackStarts = targetScopedNodes
+    .filter((node) => normalizeTargetIds(node.data?.targetIds).includes(activeTargetId))
+    .map((node) => node.id);
+  const roots = startIds.length > 0 ? startIds : fallbackStarts;
+  if (roots.length === 0) {
+    return { highlightedNodeIds: [], highlightedEdgeIds: [], goalCount: 0, startCount: 0 };
+  }
+
+  const goalNodes = targetScopedNodes
+    .filter((node) => Object.prototype.hasOwnProperty.call(ATTACK_GOAL_PRIORITY, node.data?.nodeType || ''))
+    .sort((left, right) => {
+      const leftPriority = ATTACK_GOAL_PRIORITY[left.data?.nodeType] ?? 99;
+      const rightPriority = ATTACK_GOAL_PRIORITY[right.data?.nodeType] ?? 99;
+      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      return String(left.data?.label || '').localeCompare(String(right.data?.label || ''));
+    });
+  if (goalNodes.length === 0) {
+    return { highlightedNodeIds: [], highlightedEdgeIds: [], goalCount: 0, startCount: roots.length };
+  }
+
+  const outgoing = new Map();
+  for (const edge of targetScopedEdges) {
+    if (!outgoing.has(edge.source)) outgoing.set(edge.source, []);
+    outgoing.get(edge.source).push({ nodeId: edge.target, edgeId: edge.id });
+  }
+
+  const queue = [...roots];
+  const visited = new Set(roots);
+  const parentNode = new Map();
+  const parentEdge = new Map();
+
+  while (queue.length > 0) {
+    const nodeId = queue.shift();
+    for (const next of outgoing.get(nodeId) || []) {
+      if (visited.has(next.nodeId)) continue;
+      visited.add(next.nodeId);
+      parentNode.set(next.nodeId, nodeId);
+      parentEdge.set(next.nodeId, next.edgeId);
+      queue.push(next.nodeId);
+    }
+  }
+
+  const highlightedNodeIds = new Set();
+  const highlightedEdgeIds = new Set();
+  let reachableGoals = 0;
+
+  for (const goal of goalNodes) {
+    if (!visited.has(goal.id)) continue;
+    reachableGoals += 1;
+    let cursor = goal.id;
+    highlightedNodeIds.add(cursor);
+    while (parentNode.has(cursor)) {
+      highlightedEdgeIds.add(parentEdge.get(cursor));
+      cursor = parentNode.get(cursor);
+      highlightedNodeIds.add(cursor);
+    }
+  }
+
+  return {
+    highlightedNodeIds: [...highlightedNodeIds],
+    highlightedEdgeIds: [...highlightedEdgeIds],
+    goalCount: reachableGoals,
+    startCount: roots.length,
+  };
+}
+
 export function layoutGraphNodes(nodes = [], options = {}) {
-  const { preserveExisting = true } = options;
+  const { preserveExisting = true, mode = 'phase', focusTargetId = null } = options;
   const normalizedNodes = normalizeGraphState(nodes, []).nodes;
+  if (mode === 'target') {
+    const targetBuckets = new Map();
+    for (const node of normalizedNodes) {
+      const bucket = normalizeTargetIds(node.data?.targetIds)[0] || 'shared';
+      if (!targetBuckets.has(bucket)) targetBuckets.set(bucket, []);
+      targetBuckets.get(bucket).push(node);
+    }
+
+    const bucketOrder = [...targetBuckets.keys()].sort((left, right) => {
+      if (left === focusTargetId) return -1;
+      if (right === focusTargetId) return 1;
+      if (left === 'shared') return 1;
+      if (right === 'shared') return -1;
+      return String(left).localeCompare(String(right));
+    });
+    const phaseIndex = new Map(PHASE_ORDER.map((phase, index) => [phase, index]));
+    const rowCounts = new Map();
+    const targetGap = 180;
+    const targetWidth = Math.max(1, PHASE_ORDER.length) * COL_WIDTH;
+
+    return normalizedNodes.map((node) => {
+      if (preserveExisting && hasValidPosition(node) && (node.position.x !== 0 || node.position.y !== 0)) {
+        return node;
+      }
+      const bucket = normalizeTargetIds(node.data?.targetIds)[0] || 'shared';
+      const bucketIndex = Math.max(0, bucketOrder.indexOf(bucket));
+      const phase = node.data?.phase || 'Any';
+      const phaseCol = phaseIndex.get(phase) ?? phaseIndex.get('Any') ?? 0;
+      const rowKey = `${bucket}::${phase}`;
+      const row = rowCounts.get(rowKey) || 0;
+      rowCounts.set(rowKey, row + 1);
+      return {
+        ...node,
+        position: {
+          x: LAYOUT_PADDING_X + (bucketIndex * (targetWidth + targetGap)) + (phaseCol * COL_WIDTH),
+          y: LAYOUT_PADDING_Y + (row * ROW_HEIGHT),
+        },
+      };
+    });
+  }
+
   const phaseColumns = new Map();
   const phases = [...PHASE_ORDER];
   for (const node of normalizedNodes) {

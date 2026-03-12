@@ -40,4 +40,20 @@ describe('wordlists route', () => {
     const traversalRes = await wordlistsGet(traversalReq);
     expect(traversalRes.status).toBe(400);
   });
+
+  it('returns an empty browser state when the configured root does not exist', async () => {
+    fs.rmSync(rootDir, { recursive: true, force: true });
+
+    const req = new Request('http://localhost/api/wordlists');
+    const res = await wordlistsGet(req);
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      root: rootDir,
+      currentPath: '',
+      parentPath: null,
+      entries: [],
+    });
+  });
 });

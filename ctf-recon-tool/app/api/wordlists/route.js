@@ -19,6 +19,14 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const requestedPath = String(searchParams.get('path') || '').trim();
     const wordlistRoot = getWordlistRoot();
+    if (!fs.existsSync(wordlistRoot)) {
+      return NextResponse.json({
+        root: wordlistRoot,
+        currentPath: '',
+        parentPath: null,
+        entries: [],
+      });
+    }
     const absolutePath = requestedPath ? resolvePathWithin(wordlistRoot, requestedPath) : wordlistRoot;
 
     if (!fs.existsSync(absolutePath)) {

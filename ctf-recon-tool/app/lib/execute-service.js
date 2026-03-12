@@ -10,9 +10,12 @@ import {
   markExecutionSettled,
   removeQueuedExecutionJob,
 } from '@/lib/execute-queue';
+import { publishExecutionStreamEvent } from '@/lib/execution-stream';
 import { stripAnsiAndControl } from '@/lib/text-sanitize';
 import { buildCommandHash, extractProgressPct } from '@/lib/command-metadata';
 import { applyEventToGraphState, applyFindingsToGraphState } from '@/lib/graph-derive';
+import { enrichSessionGraphCves } from '@/lib/cve-enrichment';
+import { parseStructuredOutput, serializeStructuredField } from '@/lib/structured-output';
 
 export const CMD_MAX_LEN = 4000;
 const DEFAULT_TIMEOUT_MS = 120000;
@@ -72,6 +75,44 @@ export function buildCommandOutput(stdout, stderr) {
   return combined || 'Command executed successfully with no output.';
 }
 
+function publishExecutionState(sessionId, event, meta = {}) {
+  if (!event?.id) return;
+  publishExecutionStreamEvent(sessionId, {
+    type: 'state',
+    event: {
+      ...event,
+      ...meta,
+    },
+  });
+}
+
+function publishExecutionOutput(sessionId, { eventId, stream, chunk }) {
+  const sanitizedChunk = stripAnsiAndControl(chunk);
+  if (!sanitizedChunk) return;
+  publishExecutionStreamEvent(sessionId, {
+    type: 'output',
+    eventId,
+    stream,
+    chunk: sanitizedChunk,
+  });
+}
+
+function publishExecutionProgress(sessionId, { eventId, progressPct }) {
+  if (!Number.isInteger(progressPct)) return;
+  publishExecutionStreamEvent(sessionId, {
+    type: 'progress',
+    eventId,
+    progressPct,
+  });
+}
+
+function publishGraphRefresh(sessionId, reason = 'graph-updated') {
+  publishExecutionStreamEvent(sessionId, {
+    type: 'graph-refresh',
+    reason,
+  });
+}
+
 function safeUpdateTimelineEvent(sessionId, eventId, updates) {
   try {
     const updated = db.updateTimelineEvent(sessionId, eventId, updates);
@@ -95,7 +136,7 @@ function safeUpdateTimelineEvent(sessionId, eventId, updates) {
 
 function safeRefreshGraphState(sessionId, finalizedEvent) {
   if (!finalizedEvent || finalizedEvent.type !== 'command' || finalizedEvent.status !== 'success') {
-    return false;
+    return { persisted: false, cveIds: [] };
   }
 
   try {
@@ -110,21 +151,46 @@ function safeRefreshGraphState(sessionId, finalizedEvent) {
         eventId: finalizedEvent.id,
       });
     }
-    return persisted;
+    const cveIds = stateWithEvent.nodes
+      .filter((node) => node?.data?.nodeType === 'vulnerability')
+      .map((node) => String(node?.data?.details?.cveId || node?.data?.label || '').trim().toUpperCase())
+      .filter((value) => /^CVE-\d{4}-\d{4,}$/.test(value));
+    return { persisted, cveIds: [...new Set(cveIds)] };
   } catch (error) {
     logger.error('Failed to refresh discovery graph after successful command', {
       sessionId,
       eventId: finalizedEvent.id,
       error,
     });
-    return false;
+    return { persisted: false, cveIds: [] };
   }
 }
 
-function buildExecutionEnv(session) {
+function buildStructuredUpdates(stdout, status) {
+  if (status !== 'success') return {};
+  const structured = parseStructuredOutput(stripAnsiAndControl(stdout));
+  if (!structured) {
+    return {
+      structured_output_format: null,
+      structured_output_json: null,
+      structured_output_pretty: null,
+      structured_output_summary: null,
+    };
+  }
+
+  return {
+    structured_output_format: structured.format,
+    structured_output_json: serializeStructuredField(structured.json),
+    structured_output_pretty: structured.pretty || null,
+    structured_output_summary: serializeStructuredField(structured.summary),
+  };
+}
+
+function buildExecutionEnv(session, target = null) {
   return {
     ...process.env,
-    CTF_TARGET: String(session?.target || ''),
+    CTF_TARGET: String(target?.target || session?.target || ''),
+    CTF_TARGET_ID: String(target?.id || ''),
     CTF_SESSION_ID: String(session?.id || ''),
     CTF_WORDLIST_DIR: String(process.env.CTF_WORDLIST_DIR || '/usr/share/wordlists'),
   };
@@ -143,6 +209,7 @@ function persistProgress(sessionId, eventId, entry, pct) {
 function scheduleProgressPersist(sessionId, eventId, entry, pct) {
   if (!Number.isInteger(pct) || pct <= (entry.progressLatestPct || 0) || entry.settled) return;
   entry.progressLatestPct = pct;
+  publishExecutionProgress(sessionId, { eventId, progressPct: pct });
 
   const now = Date.now();
   const waitMs = Math.max(0, PROGRESS_PERSIST_INTERVAL_MS - (now - (entry.progressLastPersistAt || 0)));
@@ -158,12 +225,12 @@ function scheduleProgressPersist(sessionId, eventId, entry, pct) {
   }, waitMs);
 }
 
-function executeAndRecord(session, eventId, command, timeout = DEFAULT_TIMEOUT_MS, { onSettled } = {}) {
+function executeAndRecord(session, target, eventId, command, timeout = DEFAULT_TIMEOUT_MS, { onSettled } = {}) {
   const entry = spawnTrackedCommand({
     eventId,
     command,
     timeoutMs: timeout,
-    env: buildExecutionEnv(session),
+    env: buildExecutionEnv(session, target),
   });
 
   entry.progressLatestPct = 0;
@@ -171,7 +238,20 @@ function executeAndRecord(session, eventId, command, timeout = DEFAULT_TIMEOUT_M
   entry.progressLastPersistAt = 0;
   entry.progressFlushTimer = null;
 
+  entry.child.stdout?.on('data', (chunk) => {
+    publishExecutionOutput(session.id, {
+      eventId,
+      stream: 'stdout',
+      chunk: chunk?.toString?.() ?? chunk,
+    });
+  });
+
   entry.child.stderr?.on('data', (chunk) => {
+    publishExecutionOutput(session.id, {
+      eventId,
+      stream: 'stderr',
+      chunk: chunk?.toString?.() ?? chunk,
+    });
     const nextPct = extractProgressPct(chunk?.toString?.() ?? chunk, entry.progressLatestPct || 0);
     if (nextPct !== null) {
       scheduleProgressPersist(session.id, eventId, entry, nextPct);
@@ -186,15 +266,38 @@ function executeAndRecord(session, eventId, command, timeout = DEFAULT_TIMEOUT_M
       entry.progressFlushTimer = null;
     }
 
-    const updates = { status, output };
+    const updates = {
+      status,
+      output,
+      ...buildStructuredUpdates(entry.stdout, status),
+    };
     if (entry.progressLatestPct > 0) {
       updates.progress_pct = entry.progressLatestPct;
     }
 
     try {
       const updatedEvent = safeUpdateTimelineEvent(session.id, eventId, updates);
+      publishExecutionState(session.id, updatedEvent || { id: eventId, session_id: session.id, type: 'command', ...updates });
       if (updatedEvent?.status === 'success') {
-        safeRefreshGraphState(session.id, updatedEvent);
+        const graphRefresh = safeRefreshGraphState(session.id, updatedEvent);
+        if (graphRefresh.persisted) {
+          publishGraphRefresh(session.id, 'command-success');
+        }
+        if (graphRefresh.cveIds.length > 0) {
+          void enrichSessionGraphCves(session.id, graphRefresh.cveIds)
+            .then((result) => {
+              if (result?.updated) {
+                publishGraphRefresh(session.id, 'cve-enrichment');
+              }
+            })
+            .catch((error) => {
+              logger.warn('CVE enrichment refresh failed', {
+                sessionId: session.id,
+                eventId,
+                error: error?.message || String(error),
+              });
+            });
+        }
       }
       return updatedEvent;
     } catch (error) {
@@ -313,14 +416,17 @@ function executeAndRecord(session, eventId, command, timeout = DEFAULT_TIMEOUT_M
   });
 }
 
-export function startCommandExecution({ sessionId, command, timeoutMs, tags = [] }) {
+export function startCommandExecution({ sessionId, targetId = null, command, timeoutMs, tags = [] }) {
   const session = db.getSession(sessionId);
   if (!session) {
     return { error: { status: 404, message: 'Session not found' } };
   }
+  const resolvedTargetId = db.resolveSessionTargetId(sessionId, targetId);
+  const target = resolvedTargetId ? db.getSessionTarget(sessionId, resolvedTargetId) : null;
 
   const trimmedCommand = String(command || '').trim();
   const event = db.addTimelineEvent(sessionId, {
+    target_id: resolvedTargetId,
     type: 'command',
     command: trimmedCommand,
     status: 'queued',
@@ -334,8 +440,9 @@ export function startCommandExecution({ sessionId, command, timeoutMs, tags = []
   }
 
   const startQueuedExecution = () => {
-    safeUpdateTimelineEvent(sessionId, event.id, { status: 'running' });
-    executeAndRecord(session, event.id, trimmedCommand, timeoutMs, {
+    const runningEvent = safeUpdateTimelineEvent(sessionId, event.id, { status: 'running' }) || { ...event, status: 'running' };
+    publishExecutionState(sessionId, runningEvent);
+    executeAndRecord(session, target, event.id, trimmedCommand, timeoutMs, {
       onSettled: () => markExecutionSettled(event.id),
     });
   };
@@ -352,6 +459,11 @@ export function startCommandExecution({ sessionId, command, timeoutMs, tags = []
       status: 'failed',
       output: 'Failed to start command process.',
     });
+    publishExecutionState(sessionId, {
+      ...event,
+      status: 'failed',
+      output: 'Failed to start command process.',
+    });
   };
 
   try {
@@ -365,6 +477,7 @@ export function startCommandExecution({ sessionId, command, timeoutMs, tags = []
     if (mode === 'started') {
       return { event: { ...event, status: 'running' } };
     }
+    publishExecutionState(sessionId, event);
     return { event };
   } catch (error) {
     handleStartupFailure(error);
@@ -376,8 +489,16 @@ export function startCommandExecution({ sessionId, command, timeoutMs, tags = []
 export function cancelQueuedExecution(sessionId, eventId) {
   const removed = removeQueuedExecutionJob(eventId, sessionId);
   if (!removed) return null;
-  return safeUpdateTimelineEvent(sessionId, eventId, {
+  const cancelledEvent = safeUpdateTimelineEvent(sessionId, eventId, {
     status: 'cancelled',
     output: '[Cancelled before execution]',
   });
+  publishExecutionState(sessionId, cancelledEvent || {
+    id: eventId,
+    session_id: sessionId,
+    type: 'command',
+    status: 'cancelled',
+    output: '[Cancelled before execution]',
+  });
+  return cancelledEvent;
 }

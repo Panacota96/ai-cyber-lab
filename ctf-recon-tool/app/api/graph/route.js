@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
-import { getGraphState, listFindings, saveGraphState } from '@/lib/db';
+import { getGraphState, getTimeline, listFindings, saveGraphState } from '@/lib/db';
 import { apiError } from '@/lib/api-error';
-import { applyFindingsToGraphState, normalizeGraphState, toMermaid } from '@/lib/graph-derive';
+import {
+  applyFindingsToGraphState,
+  filterGraphStateByTarget,
+  hydrateGraphStateTargetIds,
+  normalizeGraphState,
+  toMermaid,
+} from '@/lib/graph-derive';
 import { graphSaveSchema } from '@/lib/graph-schemas';
 import {
   getRouteMeta,
@@ -16,7 +22,9 @@ export const GET = withErrorHandler(
     const { sessionId, searchParams } = getRouteMeta(request);
     const persistedState = getGraphState(sessionId);
     const findings = listFindings(sessionId);
-    const state = applyFindingsToGraphState(persistedState, findings);
+    const timeline = getTimeline(sessionId);
+    const stateWithFindings = applyFindingsToGraphState(persistedState, findings);
+    const state = hydrateGraphStateTargetIds(stateWithFindings, timeline);
     if (
       JSON.stringify(state.nodes) !== JSON.stringify(persistedState.nodes)
       || JSON.stringify(state.edges) !== JSON.stringify(persistedState.edges)
@@ -24,13 +32,16 @@ export const GET = withErrorHandler(
       saveGraphState(sessionId, state.nodes, state.edges);
     }
 
+    const targetId = String(searchParams?.get('targetId') || '').trim() || null;
+    const scopedState = targetId ? filterGraphStateByTarget(state, targetId) : state;
+
     // ?mermaid=1 → return Mermaid flowchart string instead of JSON
     if (searchParams?.get('mermaid') === '1') {
-      const mermaidStr = toMermaid(state.nodes, state.edges);
+      const mermaidStr = toMermaid(scopedState.nodes, scopedState.edges);
       return new NextResponse(mermaidStr, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     }
 
-    return NextResponse.json(state);
+    return NextResponse.json(scopedState);
   }, { source: 'query' }),
   { route: '/api/graph GET' }
 );

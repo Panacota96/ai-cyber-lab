@@ -23,6 +23,7 @@ export const runtime = 'nodejs';
 const ExecuteSchema = z.object({
   command: z.string().min(1).max(4000),
   sessionId: z.string().optional().default('default'),
+  targetId: z.string().optional(),
   timeout: z.number().optional(),
   tags: z.array(z.string()).optional().default([]),
 });
@@ -32,7 +33,7 @@ export const POST = withErrorHandler(
     withValidSessionId(async (request) => {
       const parsed = ExecuteSchema.safeParse(await readJsonBody(request, {}));
       if (!parsed.success) return apiError('Validation failed', 400, { details: parsed.error.errors });
-      const { command, timeout = 120000, tags = [] } = parsed.data;
+      const { command, targetId, timeout = 120000, tags = [] } = parsed.data;
       const { sessionId } = getRouteMeta(request);
 
       if (!isCommandExecutionEnabled()) {
@@ -71,6 +72,7 @@ export const POST = withErrorHandler(
 
       const result = startCommandExecution({
         sessionId,
+        targetId,
         command: command.trim(),
         timeoutMs: normalizedTimeout,
         tags,

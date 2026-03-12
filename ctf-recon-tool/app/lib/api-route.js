@@ -1,4 +1,5 @@
 import { apiError } from '@/lib/api-error';
+import { validateCsrfRequest } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
 import { isApiTokenValid, isValidSessionId } from '@/lib/security';
 
@@ -67,6 +68,18 @@ export function withAuth(handler) {
     if (!isApiTokenValid(request)) {
       return apiError('Unauthorized', 401);
     }
+
+    const csrf = validateCsrfRequest(request);
+    if (!csrf.ok) {
+      logger.warn('Rejected request due to CSRF validation failure', {
+        method: request?.method || 'UNKNOWN',
+        url: request?.url || '',
+        reason: csrf.reason,
+        details: csrf.details || null,
+      });
+      return apiError(csrf.reason || 'Forbidden', 403);
+    }
+
     return handler(request, ...rest);
   };
 }

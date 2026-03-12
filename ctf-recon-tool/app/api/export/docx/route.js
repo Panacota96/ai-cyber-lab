@@ -19,6 +19,7 @@ export async function POST(request) {
     const analystName = normalizeAnalystName(payload?.analystName);
     const inlineImages = normalizeBoolean(payload?.inlineImages, true);
     const includeAppendix = normalizeBoolean(payload?.includeAppendix, true);
+    const reportFilters = payload?.reportFilters || {};
 
     if (!sessionId || !isValidSessionId(sessionId)) {
       return apiError('sessionId is required', 400);
@@ -29,6 +30,7 @@ export async function POST(request) {
       format,
       analystName,
       inlineImages,
+      reportFilters,
     });
     if (!bundle) {
       return apiError('Session not found', 404);

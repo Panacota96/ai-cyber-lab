@@ -42,3 +42,5 @@ next-env.d.ts
 
 # runtime data
 /data/
+/output/
+/.playwright-cli/

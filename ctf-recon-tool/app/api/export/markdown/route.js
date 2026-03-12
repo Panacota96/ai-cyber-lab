@@ -15,6 +15,7 @@ export async function POST(request) {
     const format = payload?.format || 'technical-walkthrough';
     const analystName = normalizeAnalystName(payload?.analystName);
     const inlineImages = normalizeBoolean(payload?.inlineImages, true);
+    const reportFilters = payload?.reportFilters || {};
 
     if (!sessionId || !isValidSessionId(sessionId)) {
       return apiError('sessionId is required', 400);
@@ -25,6 +26,7 @@ export async function POST(request) {
       format,
       analystName,
       inlineImages,
+      reportFilters,
     });
 
     if (!bundle) {

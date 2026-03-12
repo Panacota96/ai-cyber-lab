@@ -1,5 +1,5 @@
 import { GET as flagsGet, POST as flagsPost, PATCH as flagsPatch, DELETE as flagsDelete } from '@/api/flags/route';
-import { cleanupTestSession, createTestSession, makeJsonRequest, readJson } from '../helpers/test-helpers';
+import { TEST_API_TOKEN, TEST_CSRF_TOKEN, cleanupTestSession, createTestSession, makeJsonRequest, readJson } from '../helpers/test-helpers';
 
 describe('flags route', () => {
   const sessions = [];
@@ -44,7 +44,11 @@ describe('flags route', () => {
 
     const deleteRes = await flagsDelete(new Request(`http://localhost/api/flags?sessionId=${session.id}&id=${createdBody.flag.id}`, {
       method: 'DELETE',
-      headers: new Headers({ 'x-api-token': process.env.APP_API_TOKEN || 'test-token' }),
+      headers: new Headers({
+        'x-api-token': TEST_API_TOKEN,
+        'x-csrf-token': TEST_CSRF_TOKEN,
+        cookie: `helms_watch_csrf=${encodeURIComponent(TEST_CSRF_TOKEN)}`,
+      }),
     }));
     expect(deleteRes.status).toBe(200);
   });

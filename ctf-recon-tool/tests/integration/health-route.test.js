@@ -35,6 +35,7 @@ describe('/api/health route', () => {
     expect(payload.status).toBeTypeOf('string');
     expect(payload.features).toEqual({
       commandExecutionEnabled: false,
+      shellHubEnabled: false,
       adminApiEnabled: false,
       apiTokenRequired: true,
     });

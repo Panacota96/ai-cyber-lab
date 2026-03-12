@@ -1,6 +1,9 @@
 import {
   applyEventToGraphState,
   applyFindingsToGraphState,
+  computeAttackPathHighlights,
+  filterGraphStateByTarget,
+  hydrateGraphStateTargetIds,
   mergeGraphState,
   toMermaid,
 } from '@/lib/graph-derive';
@@ -60,6 +63,61 @@ describe('graph-derive', () => {
 
     expect(second.nodes).toHaveLength(first.nodes.length);
     expect(second.edges).toHaveLength(first.edges.length);
+  });
+
+  it('prefers normalized Nmap structured output and preserves node details', () => {
+    const state = applyEventToGraphState({ nodes: [], edges: [] }, {
+      id: 'evt-nmap-xml',
+      type: 'command',
+      status: 'success',
+      timestamp: '2026-03-11T10:10:10.000Z',
+      command: 'nmap -sV -oX - 10.10.10.30',
+      output: '<nmaprun />',
+      structured_output_format: 'nmap-xml',
+      structured_output_json: JSON.stringify({
+        hosts: [
+          {
+            status: 'up',
+            addresses: [{ addr: '10.10.10.30', addrType: 'ipv4' }],
+            hostnames: [{ name: 'files.acme.local', type: 'user' }],
+            ports: [
+              {
+                port: 445,
+                protocol: 'tcp',
+                state: 'open',
+                service: 'smb',
+                product: 'Samba smbd',
+                version: '4.19.0',
+                cpes: ['cpe:/a:samba:samba:4.19.0'],
+                scripts: [{ id: 'vulners', output: 'CVE-2026-99999', cves: ['CVE-2026-99999'] }],
+                cves: ['CVE-2026-99999'],
+              },
+            ],
+            cves: [],
+          },
+        ],
+      }),
+    });
+
+    const serviceNode = state.nodes.find((node) => node.data?.nodeType === 'service');
+    const vulnerabilityNode = state.nodes.find((node) => node.data?.nodeType === 'vulnerability');
+
+    expect(serviceNode.data.details).toMatchObject({
+      port: 445,
+      protocol: 'tcp',
+      service: 'smb',
+      product: 'Samba smbd',
+      version: '4.19.0',
+      cpes: ['cpe:/a:samba:samba:4.19.0'],
+    });
+    expect(vulnerabilityNode.data.details).toMatchObject({
+      cveId: 'CVE-2026-99999',
+      service: 'smb',
+      port: 445,
+      source: 'nmap-xml',
+    });
+    expect(state.edges.some((edge) => edge.label === 'resolves')).toBe(true);
+    expect(state.edges.some((edge) => edge.label === 'vulnerable')).toBe(true);
   });
 
   it('maps findings into persisted graph node types without dropping manual nodes', () => {
@@ -155,5 +213,122 @@ describe('graph-derive', () => {
     expect(mermaid).toContain('subgraph phase_Information_Gathering');
     expect(mermaid).toContain('classDef host');
     expect(mermaid).toContain('classDef api_endpoint');
+  });
+
+  it('hydrates node targetIds from source timeline events and filters graph state by target', () => {
+    const hydrated = hydrateGraphStateTargetIds({
+      nodes: [
+        {
+          id: 'host::10-10-10-10',
+          type: 'discovery',
+          position: { x: 20, y: 20 },
+          data: {
+            nodeType: 'host',
+            label: '10.10.10.10',
+            phase: 'Information Gathering',
+            color: '#39d353',
+            origin: 'auto',
+            sourceEventId: 'evt-target-a',
+          },
+        },
+        {
+          id: 'service::http-80',
+          type: 'discovery',
+          position: { x: 40, y: 80 },
+          data: {
+            nodeType: 'service',
+            label: 'http:80/tcp',
+            phase: 'Enumeration',
+            color: '#58a6ff',
+            origin: 'auto',
+            sourceEventId: 'evt-target-a',
+          },
+        },
+        {
+          id: 'host::10-10-10-20',
+          type: 'discovery',
+          position: { x: 240, y: 20 },
+          data: {
+            nodeType: 'host',
+            label: '10.10.10.20',
+            phase: 'Information Gathering',
+            color: '#39d353',
+            origin: 'auto',
+            sourceEventId: 'evt-target-b',
+          },
+        },
+      ],
+      edges: [
+        {
+          id: 'edge::host-a--svc-http--found',
+          source: 'host::10-10-10-10',
+          target: 'service::http-80',
+          label: 'found',
+        },
+      ],
+    }, [
+      { id: 'evt-target-a', target_id: 'target-a' },
+      { id: 'evt-target-b', target_id: 'target-b' },
+    ]);
+
+    expect(hydrated.nodes.find((node) => node.id === 'host::10-10-10-10').data.targetIds).toEqual(['target-a']);
+    const filtered = filterGraphStateByTarget(hydrated, 'target-a');
+    expect(filtered.nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
+      'host::10-10-10-10',
+      'service::http-80',
+    ]));
+    expect(filtered.nodes.some((node) => node.id === 'host::10-10-10-20')).toBe(false);
+  });
+
+  it('computes directed attack-path highlights from target roots to exploitation goals', () => {
+    const highlights = computeAttackPathHighlights([
+      {
+        id: 'host::10-10-10-10',
+        type: 'discovery',
+        position: { x: 20, y: 20 },
+        data: {
+          nodeType: 'host',
+          label: '10.10.10.10',
+          phase: 'Information Gathering',
+          color: '#39d353',
+          targetIds: ['target-a'],
+        },
+      },
+      {
+        id: 'service::http-80',
+        type: 'discovery',
+        position: { x: 40, y: 80 },
+        data: {
+          nodeType: 'service',
+          label: 'http:80/tcp',
+          phase: 'Enumeration',
+          color: '#58a6ff',
+          targetIds: ['target-a'],
+        },
+      },
+      {
+        id: 'vulnerability::cve-2026-12345',
+        type: 'discovery',
+        position: { x: 60, y: 140 },
+        data: {
+          nodeType: 'vulnerability',
+          label: 'CVE-2026-12345',
+          phase: 'Vulnerability Assessment',
+          color: '#f85149',
+          targetIds: ['target-a'],
+        },
+      },
+    ], [
+      { id: 'edge-1', source: 'host::10-10-10-10', target: 'service::http-80', label: 'found' },
+      { id: 'edge-2', source: 'service::http-80', target: 'vulnerability::cve-2026-12345', label: 'vulnerable' },
+    ], { targetId: 'target-a' });
+
+    expect(highlights.highlightedNodeIds).toEqual(expect.arrayContaining([
+      'host::10-10-10-10',
+      'service::http-80',
+      'vulnerability::cve-2026-12345',
+    ]));
+    expect(highlights.highlightedEdgeIds).toEqual(expect.arrayContaining(['edge-1', 'edge-2']));
+    expect(highlights.goalCount).toBe(1);
   });
 });

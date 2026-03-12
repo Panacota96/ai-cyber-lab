@@ -14,6 +14,7 @@ import {
 
 const TimelinePostSchema = z.object({
   sessionId: z.string().optional().default('default'),
+  targetId: z.string().optional(),
   type: z.enum(['command', 'note', 'screenshot']),
   content: z.string().optional(),
   command: z.string().optional(),

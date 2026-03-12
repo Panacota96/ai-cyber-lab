@@ -26,6 +26,7 @@ export const POST = withErrorHandler(
     const formData = await request.formData();
     const file = formData.get('file');
     const sessionId = formData.get('sessionId') || 'default';
+    const targetId = String(formData.get('targetId') || '').trim() || null;
     const tag = normalizePlainText(formData.get('tag'), 64);
     const caption = normalizePlainText(formData.get('caption'), 255);
     const context = normalizePlainText(formData.get('context'), 2000);
@@ -71,6 +72,7 @@ export const POST = withErrorHandler(
     fs.writeFileSync(filePath, buffer);
 
     const event = addTimelineEvent(sessionId, {
+      targetId,
       type: 'screenshot',
       filename: filename,
       name: name,

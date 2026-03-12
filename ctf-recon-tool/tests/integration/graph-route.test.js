@@ -1,5 +1,5 @@
 import { GET as graphGet, POST as graphPost } from '@/api/graph/route';
-import { createFinding } from '@/lib/db';
+import { addTimelineEvent, createFinding } from '@/lib/db';
 import {
   cleanupTestSession,
   createTestSession,
@@ -123,5 +123,69 @@ describe('/api/graph route validation', () => {
       'database',
       'directory',
     ]));
+  });
+
+  it('filters graph reads by targetId after hydrating target links from timeline events', async () => {
+    const session = createTestSession({
+      targets: [
+        { label: 'External', target: '10.10.10.10', isPrimary: true },
+        { label: 'Internal', target: '172.16.0.0/24' },
+      ],
+    });
+    sessions.push(session.id);
+    const internalTarget = session.targets.find((item) => item.target === '172.16.0.0/24');
+    const commandEvent = addTimelineEvent(session.id, {
+      targetId: internalTarget.id,
+      type: 'command',
+      status: 'success',
+      command: 'nmap 172.16.0.10',
+      output: '172.16.0.10\n80/tcp open http',
+    });
+
+    await graphPost(makeJsonRequest('/api/graph', 'POST', {
+      sessionId: session.id,
+      nodes: [
+        {
+          id: 'host::172-16-0-10',
+          type: 'discovery',
+          position: { x: 20, y: 40 },
+          data: {
+            label: '172.16.0.10',
+            nodeType: 'host',
+            phase: 'Information Gathering',
+            color: '#39d353',
+            origin: 'auto',
+            sourceEventId: commandEvent.id,
+          },
+        },
+        {
+          id: 'service::http:80-tcp',
+          type: 'discovery',
+          position: { x: 40, y: 120 },
+          data: {
+            label: 'http:80/tcp',
+            nodeType: 'service',
+            phase: 'Enumeration',
+            color: '#58a6ff',
+            origin: 'auto',
+            sourceEventId: commandEvent.id,
+          },
+        },
+      ],
+      edges: [{
+        id: 'edge::host::svc::found',
+        source: 'host::172-16-0-10',
+        target: 'service::http:80-tcp',
+        label: 'found',
+        animated: false,
+        style: { stroke: '#30363d' },
+      }],
+    }, { auth: true }));
+
+    const res = await graphGet(makeJsonRequest(`/api/graph?sessionId=${session.id}&targetId=${internalTarget.id}`, 'GET'));
+    expect(res.status).toBe(200);
+    const body = await readJson(res);
+    expect(body.nodes).toHaveLength(2);
+    expect(body.nodes.every((node) => node.data?.targetIds?.includes(internalTarget.id))).toBe(true);
   });
 });

@@ -168,6 +168,36 @@ describe('/api/execute route runtime hardening', () => {
     expect(getTrackedProcess(event.id)).toBeNull();
   });
 
+  it('uses the selected session target for env injection and timeline linkage', async () => {
+    const session = createTestSession({
+      targets: [
+        { label: 'External', target: '10.10.10.10', isPrimary: true },
+        { label: 'Internal', target: '172.16.0.0/24' },
+      ],
+    });
+    sessions.push(session.id);
+    const internalTarget = session.targets.find((item) => item.target === '172.16.0.0/24');
+
+    const executeReq = makeJsonRequest('/api/execute', 'POST', {
+      sessionId: session.id,
+      targetId: internalTarget.id,
+      command: 'echo scoped',
+      timeout: 5000,
+    }, { auth: true });
+
+    const executeRes = await executePost(executeReq);
+    expect(executeRes.status).toBe(200);
+    const event = await readJson(executeRes);
+    const tracked = getTrackedProcess(event.id);
+    expect(tracked.child.spawnOptions.env.CTF_TARGET).toBe('172.16.0.0/24');
+    expect(tracked.child.spawnOptions.env.CTF_TARGET_ID).toBe(internalTarget.id);
+    tracked.child.emit('close', 0, null);
+    await flushAsync();
+
+    const updated = db.getTimeline(session.id).find((item) => item.id === event.id);
+    expect(updated.target_id).toBe(internalTarget.id);
+  });
+
   it('queues commands above MAX_CONCURRENT_COMMANDS and starts them as slots free up', async () => {
     const session = createTestSession();
     sessions.push(session.id);
@@ -284,6 +314,59 @@ describe('/api/execute route runtime hardening', () => {
     graphState = db.getGraphState(session.id);
     expect(graphState.nodes).toEqual(afterFailure.nodes);
     expect(graphState.edges).toEqual(afterFailure.edges);
+  });
+
+  it('persists structured output fields and derives graph entities from Nmap XML', async () => {
+    const session = createTestSession();
+    sessions.push(session.id);
+
+    const executeReq = makeJsonRequest('/api/execute', 'POST', {
+      sessionId: session.id,
+      command: 'nmap -sV -oX - 10.10.10.30',
+      timeout: 5000,
+    }, { auth: true });
+
+    const executeRes = await executePost(executeReq);
+    const event = await readJson(executeRes);
+    const tracked = getTrackedProcess(event.id);
+    tracked.child.stdout.push([
+      '<?xml version="1.0"?>',
+      '<nmaprun scanner="nmap" args="nmap -sV -oX - 10.10.10.30">',
+      '  <host>',
+      '    <status state="up" />',
+      '    <address addr="10.10.10.30" addrtype="ipv4" />',
+      '    <hostnames><hostname name="files.acme.local" type="user" /></hostnames>',
+      '    <ports>',
+      '      <port protocol="tcp" portid="445">',
+      '        <state state="open" />',
+      '        <service name="smb" product="Samba smbd" version="4.19.0"><cpe>cpe:/a:samba:samba:4.19.0</cpe></service>',
+      '        <script id="vulners" output="CVE-2026-99999" />',
+      '      </port>',
+      '    </ports>',
+      '  </host>',
+      '</nmaprun>',
+    ].join('\n'));
+    tracked.child.emit('close', 0, null);
+    await flushAsync();
+    await flushAsync();
+
+    const updated = db.getTimeline(session.id).find((item) => item.id === event.id);
+    expect(updated.structured_output_format).toBe('nmap-xml');
+    expect(updated.structured_output_pretty).toContain('<nmaprun');
+    expect(updated.structured_output_summary).toContain('"hostCount":1');
+
+    const graphState = db.getGraphState(session.id);
+    const serviceNode = graphState.nodes.find((node) => node.data?.nodeType === 'service');
+    const vulnerabilityNode = graphState.nodes.find((node) => node.data?.nodeType === 'vulnerability');
+    expect(serviceNode.data.details).toMatchObject({
+      service: 'smb',
+      product: 'Samba smbd',
+      version: '4.19.0',
+    });
+    expect(vulnerabilityNode.data.details).toMatchObject({
+      cveId: 'CVE-2026-99999',
+      source: 'nmap-xml',
+    });
   });
 
   it('marks the event as cancelled and prevents later overwrite', async () => {

@@ -47,6 +47,9 @@ describe('/api/findings route', () => {
       sessionId: session.id,
       title: 'Initial finding',
       severity: 'medium',
+      likelihood: 'high',
+      cvssScore: 7.4,
+      cvssVector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N',
       description: 'Initial description',
     }, { auth: true });
     const createRes = await POST(createReq);
@@ -62,17 +65,23 @@ describe('/api/findings route', () => {
     expect(Array.isArray(listData)).toBe(true);
     expect(listData).toHaveLength(1);
     expect(listData[0].title).toBe('Initial finding');
+    expect(listData[0].likelihood).toBe('high');
+    expect(listData[0].cvssScore).toBe(7.4);
 
     const patchReq = makeJsonRequest('/api/findings', 'PATCH', {
       sessionId: session.id,
       id: findingId,
       severity: 'high',
+      likelihood: 'low',
+      cvssScore: 9.3,
       remediation: 'Apply hardening.',
     }, { auth: true });
     const patchRes = await PATCH(patchReq);
     expect(patchRes.status).toBe(200);
     const patchData = await readJson(patchRes);
     expect(patchData.finding.severity).toBe('high');
+    expect(patchData.finding.likelihood).toBe('low');
+    expect(patchData.finding.cvssScore).toBe(9.3);
     expect(patchData.finding.remediation).toBe('Apply hardening.');
 
     const deleteReq = makeJsonRequest(`/api/findings?sessionId=${session.id}&id=${findingId}`, 'DELETE', null, { auth: true });

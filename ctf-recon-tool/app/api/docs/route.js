@@ -29,6 +29,7 @@ const SPEC = {
           target: { type: 'string' },
           difficulty: { type: 'string', enum: ['easy', 'medium', 'hard', 'insane'] },
           objective: { type: 'string' },
+          metadata: { type: 'object', additionalProperties: true },
         },
       },
       TimelineEvent: {
@@ -97,6 +98,7 @@ const SPEC = {
           value: { type: 'string' },
           status: { type: 'string', enum: ['captured', 'submitted', 'accepted', 'rejected'] },
           notes: { type: 'string' },
+          metadata: { type: 'object', additionalProperties: true },
           submittedAt: { type: 'string', format: 'date-time', nullable: true },
           createdAt: { type: 'string', format: 'date-time', nullable: true },
           updatedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -612,7 +614,7 @@ const SPEC = {
         security: [{ ApiToken: [] }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' }, provider: { type: 'string', enum: ['claude', 'openai', 'gemini'], default: 'claude' }, skill: { type: 'string', enum: ['enum-target', 'web-solve', 'privesc', 'crypto-solve', 'pwn-solve', 'reversing-solve', 'stego', 'analyze-file'], default: 'enum-target' }, apiKey: { type: 'string' } } } } },
+          content: { 'application/json': { schema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' }, provider: { type: 'string', enum: ['claude', 'openai', 'gemini'], default: 'claude' }, skill: { type: 'string', enum: ['enum-target', 'web-solve', 'privesc', 'crypto-solve', 'pwn-solve', 'reversing-solve', 'stego', 'analyze-file'], default: 'enum-target' }, coachLevel: { type: 'string', enum: ['beginner', 'intermediate', 'expert'], default: 'intermediate' }, contextMode: { type: 'string', enum: ['compact', 'balanced', 'full'], default: 'balanced' }, compare: { type: 'boolean', default: false }, bypassCache: { type: 'boolean', default: false }, apiKey: { type: 'string' } } } } },
         },
         responses: {
           '200': { description: 'Streaming text response (text/plain)' },
@@ -990,6 +992,78 @@ const SPEC = {
           '200': { description: 'Deleted flag record' },
           '401': { description: 'Unauthorized' },
           '404': { description: 'Flag not found' },
+        },
+      },
+    },
+    '/platform/session-link': {
+      get: {
+        summary: 'Get linked platform metadata and capability status for a session',
+        operationId: 'getPlatformSessionLink',
+        security: [{ ApiToken: [] }],
+        parameters: [{ name: 'sessionId', in: 'query', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'Current link and capability map' },
+          '401': { description: 'Unauthorized' },
+        },
+      },
+      post: {
+        summary: 'Link or refresh a session from HTB / THM / CTFd metadata',
+        operationId: 'syncPlatformSessionLink',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  platformType: { type: 'string', enum: ['htb', 'thm', 'ctfd'] },
+                  remoteId: { type: 'string' },
+                  label: { type: 'string' },
+                  context: { type: 'object', additionalProperties: true },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Updated session link payload' },
+          '400': { description: 'Validation failed or required remote identifiers missing' },
+          '401': { description: 'Unauthorized' },
+          '409': { description: 'Platform capability unavailable for the requested action' },
+          '503': { description: 'Platform credentials are not configured server-side' },
+        },
+      },
+    },
+    '/platform/submit-flag': {
+      post: {
+        summary: 'Submit or validate a captured flag against the linked platform',
+        operationId: 'submitPlatformFlag',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId', 'flagId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  flagId: { type: 'integer' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Updated local flag record plus remote submission result' },
+          '400': { description: 'Validation failed or missing linked identifiers' },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Session or flag not found' },
+          '409': { description: 'No supported linked platform action available' },
+          '503': { description: 'Platform credentials are not configured server-side' },
         },
       },
     },

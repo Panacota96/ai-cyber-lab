@@ -63,3 +63,9 @@ export function isAdminApiEnabled() {
   if (process.env.ENABLE_ADMIN_API === 'true') return true;
   return process.env.NODE_ENV !== 'production';
 }
+
+export function isShellHubEnabled() {
+  if (process.env.ENABLE_SHELL_HUB === 'true') return true;
+  if (process.env.ENABLE_SHELL_HUB === 'false') return false;
+  return process.env.NODE_ENV !== 'production';
+}
