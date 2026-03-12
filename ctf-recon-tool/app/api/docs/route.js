@@ -113,6 +113,26 @@ const SPEC = {
           size: { type: 'integer', nullable: true },
         },
       },
+      WriteupSuggestion: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          sessionId: { type: 'string' },
+          status: { type: 'string', enum: ['pending', 'ready', 'applied', 'dismissed', 'failed'] },
+          triggerEventId: { type: 'string', nullable: true },
+          provider: { type: 'string', enum: ['claude', 'openai', 'gemini', 'offline'] },
+          skill: { type: 'string' },
+          targetSectionIds: { type: 'array', items: { type: 'string' } },
+          patches: { type: 'array', items: { type: 'object', additionalProperties: true } },
+          summary: { type: 'string', nullable: true },
+          evidenceRefs: { type: 'array', items: { type: 'object', additionalProperties: true } },
+          metadata: { type: 'object', additionalProperties: true },
+          createdAt: { type: 'string', format: 'date-time', nullable: true },
+          updatedAt: { type: 'string', format: 'date-time', nullable: true },
+          appliedAt: { type: 'string', format: 'date-time', nullable: true },
+          dismissedAt: { type: 'string', format: 'date-time', nullable: true },
+        },
+      },
     },
   },
   paths: {
@@ -130,13 +150,42 @@ const SPEC = {
         security: [{ ApiToken: [] }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, target: { type: 'string' }, difficulty: { type: 'string' }, objective: { type: 'string' }, id: { type: 'string' } } } } },
+          content: { 'application/json': { schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, target: { type: 'string' }, difficulty: { type: 'string' }, objective: { type: 'string' }, id: { type: 'string' }, metadata: { type: 'object', additionalProperties: true } } } } },
         },
         responses: {
           '200': { description: 'Created session', content: { 'application/json': { schema: { $ref: '#/components/schemas/Session' } } } },
           '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
           '401': { description: 'Unauthorized' },
           '409': { description: 'Duplicate session id' },
+        },
+      },
+      patch: {
+        summary: 'Update session metadata and operator settings',
+        operationId: 'updateSession',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  name: { type: 'string' },
+                  target: { type: 'string' },
+                  difficulty: { type: 'string', enum: ['easy', 'medium', 'hard', 'insane'] },
+                  objective: { type: 'string' },
+                  metadata: { type: 'object', additionalProperties: true },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Updated session', content: { 'application/json': { schema: { $ref: '#/components/schemas/Session' } } } },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Session not found' },
         },
       },
       delete: {
@@ -614,10 +663,12 @@ const SPEC = {
         security: [{ ApiToken: [] }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' }, provider: { type: 'string', enum: ['claude', 'openai', 'gemini'], default: 'claude' }, skill: { type: 'string', enum: ['enum-target', 'web-solve', 'privesc', 'crypto-solve', 'pwn-solve', 'reversing-solve', 'stego', 'analyze-file'], default: 'enum-target' }, coachLevel: { type: 'string', enum: ['beginner', 'intermediate', 'expert'], default: 'intermediate' }, contextMode: { type: 'string', enum: ['compact', 'balanced', 'full'], default: 'balanced' }, compare: { type: 'boolean', default: false }, bypassCache: { type: 'boolean', default: false }, apiKey: { type: 'string' } } } } },
+          content: { 'application/json': { schema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' }, provider: { type: 'string', enum: ['claude', 'openai', 'gemini', 'offline'], default: 'claude' }, skill: { type: 'string', enum: ['enum-target', 'web-solve', 'privesc', 'crypto-solve', 'pwn-solve', 'reversing-solve', 'stego', 'analyze-file', 'adversarial-challenge'], default: 'enum-target' }, coachLevel: { type: 'string', enum: ['beginner', 'intermediate', 'expert'], default: 'intermediate' }, contextMode: { type: 'string', enum: ['compact', 'balanced', 'full'], default: 'balanced' }, compare: { type: 'boolean', default: false, description: 'Offline provider and adversarial challenge mode are excluded from compare mode even when selected.' }, bypassCache: { type: 'boolean', default: false }, apiKey: { type: 'string' } } } } },
         },
         responses: {
           '200': { description: 'Streaming text response (text/plain)' },
+          '400': { description: 'Unsupported compare/mode combination' },
+          '403': { description: 'Offline provider or adversarial challenge mode is disabled by feature flags' },
           '401': { description: 'Unauthorized' },
           '429': { description: 'Rate limit exceeded' },
           '503': { description: 'No AI API key configured' },
@@ -697,9 +748,110 @@ const SPEC = {
         security: [{ ApiToken: [] }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['sessionId', 'reportContent'], properties: { sessionId: { type: 'string' }, reportContent: { type: 'string' }, provider: { type: 'string' }, apiKey: { type: 'string' }, skill: { type: 'string' } } } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId', 'reportContent'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  reportContent: { type: 'string' },
+                  provider: { type: 'string', enum: ['claude', 'openai', 'gemini', 'offline'], default: 'claude' },
+                  apiKey: { type: 'string' },
+                  skill: { type: 'string', enum: ['enhance', 'writeup-refiner', 'report'], default: 'enhance' },
+                  mode: { type: 'string', enum: ['stream', 'section-patch'], default: 'stream' },
+                  reportBlocks: { type: 'array', items: { type: 'object', additionalProperties: true } },
+                  selectedSectionIds: { type: 'array', items: { type: 'string' } },
+                  evidenceContext: { type: 'string' },
+                },
+              },
+            },
+          },
         },
-        responses: { '200': { description: 'Streaming enhanced text' } },
+        responses: {
+          '200': { description: 'Streaming enhanced text or JSON section patches depending on mode' },
+          '403': { description: 'Offline provider is disabled by feature flags' },
+          '503': { description: 'Provider is not configured' },
+        },
+      },
+    },
+    '/writeup/suggestions': {
+      get: {
+        summary: 'List persisted auto-writeup suggestions for a session',
+        operationId: 'listWriteupSuggestions',
+        parameters: [{ name: 'sessionId', in: 'query', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            description: 'Suggestion list',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    suggestions: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/WriteupSuggestion' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/writeup/suggestions/apply': {
+      post: {
+        summary: 'Apply a ready auto-writeup suggestion to the saved draft',
+        operationId: 'applyWriteupSuggestion',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId', 'suggestionId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  suggestionId: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Updated writeup plus applied suggestion metadata' },
+          '403': { description: 'Auto-writeup suggestions are disabled' },
+          '404': { description: 'Suggestion not found or not ready' },
+        },
+      },
+    },
+    '/writeup/suggestions/dismiss': {
+      post: {
+        summary: 'Dismiss a persisted auto-writeup suggestion without changing the saved draft',
+        operationId: 'dismissWriteupSuggestion',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId', 'suggestionId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  suggestionId: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Dismissed suggestion metadata' },
+          '403': { description: 'Auto-writeup suggestions are disabled' },
+          '404': { description: 'Suggestion not found' },
+        },
       },
     },
     '/upload': {
@@ -851,7 +1003,53 @@ const SPEC = {
         summary: 'Health check',
         operationId: 'healthCheck',
         responses: {
-          '200': { description: 'Health status', content: { 'application/json': { schema: { type: 'object', properties: { status: { type: 'string', enum: ['ok', 'degraded', 'error'] }, db: { type: 'string' }, ai: { type: 'string' } } } } } },
+          '200': {
+            description: 'Health status',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    status: { type: 'string', enum: ['ok', 'degraded', 'error'] },
+                    db: { type: 'object', additionalProperties: true },
+                    ai: {
+                      type: 'object',
+                      properties: {
+                        anthropic: { type: 'boolean' },
+                        google: { type: 'boolean' },
+                        openai: { type: 'boolean' },
+                        offline: {
+                          type: 'object',
+                          properties: {
+                            enabled: { type: 'boolean' },
+                            configured: { type: 'boolean' },
+                            backend: { type: 'string', nullable: true },
+                            model: { type: 'string', nullable: true },
+                            baseUrl: { type: 'string', nullable: true },
+                          },
+                        },
+                      },
+                    },
+                    platforms: { type: 'object', additionalProperties: true },
+                    disk: { type: 'object', additionalProperties: true },
+                    features: {
+                      type: 'object',
+                      properties: {
+                        commandExecutionEnabled: { type: 'boolean' },
+                        shellHubEnabled: { type: 'boolean' },
+                        adminApiEnabled: { type: 'boolean' },
+                        experimentalAiEnabled: { type: 'boolean' },
+                        offlineAiEnabled: { type: 'boolean' },
+                        autoWriteupSuggestionsEnabled: { type: 'boolean' },
+                        adversarialChallengeModeEnabled: { type: 'boolean' },
+                        apiTokenRequired: { type: 'boolean' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       },
     },

@@ -1,6 +1,6 @@
 ---
 title: Helm's Watch — Improvement Backlog
-updated: 2026-03-11
+updated: 2026-03-12
 source: automated codebase scan (claude-sonnet-4-6)
 format: knowledge-sync compatible
 ---
@@ -14,8 +14,8 @@ format: knowledge-sync compatible
 
 ## Roadmap Wave Sync
 
-### Next Wave Set — Waves 13-19 Planned
-**Status:** Active (2026-03-11)
+### Next Wave Set — Waves 13-19 Active
+**Status:** Active (2026-03-12)
 
 - **Wave 10.5 — Runtime Foundation:** Implemented with `EX.1`, `CTF.1`, `SEC.2`, `B.7`.
 - **Wave 11 — Operator Intelligence Layer:** Implemented with `EX.2`, `EX.3`, `CTF.5`, `CTF.10`, `CTF.11`.
@@ -24,10 +24,11 @@ format: knowledge-sync compatible
 - **Wave 13 — Stabilization and Decomposition:** Implemented with `G.7`, `G.2`, `UX.11`, `UX.3`.
 - **Wave 14 — Multi-Target Recon Core:** Implemented with `CTF.8`, `GR.12`, `GR.18`.
 - **Wave 15 — Assisted Operator Flow:** Implemented with `CTF.6`, `A.4`, `UX.5`, `GR.8`.
-- **Wave 16 — Reporting Intelligence Core:** Planned with `R.2`, `R.8`, `R.9`, `R.11`, `R.4`.
+- **Wave 16 — Reporting Intelligence Core:** Implemented with `R.2`, `R.8`, `R.9`, `R.11`, `R.4`.
 - **Wave 17 — Executive and Comparative Reporting:** Implemented with `R.1`, `R.5`, `R.6`, `R.10`, `D.1`.
 - **Wave 18 — Coach and Platform Expansion:** Implemented with `E.1`, `E.2`, `CTF.7`.
-- **Wave 19 — Experimental AI Extensions:** Planned with `E.3`, `E.8`, `E.9`.
+- **Wave 19A — Experimental Offline Coach and Auto-Writeup:** Implemented with `E.3`, `E.8`.
+- **Wave 19B — Adversarial Challenge Mode:** Implemented with `E.9`.
 - Strategy rationale: the runtime, intelligence, shell/artifact, and hash-identification foundations now exist; the next sequence should reduce structural risk first, then expand target scope, then deepen operator/reporting workflows.
 
 ### Wave 12 — Shell and Artifact Operations
@@ -93,10 +94,19 @@ format: knowledge-sync compatible
   - SysReptor docs: https://docs.sysreptor.com/
   - HTB reporting with SysReptor: https://docs.sysreptor.com/htb-reporting-with-sysreptor/
 
-### Wave 19 — Experimental AI Extensions
-**Status:** Planned
+### Wave 19A — Experimental Offline Coach and Auto-Writeup
+**Status:** Implemented (2026-03-12)
 
-- `E.3`, `E.8`, `E.9` stay explicitly experimental so offline/auto-authoring/simulation ideas do not destabilize the primary operator workflow.
+- `E.3` now ships through a shared AI provider runtime that lets AI Coach and writeup enhancement use the same experimental `offline` provider contract.
+- Offline provider support is gated by explicit runtime flags and server-side backend config (`ollama` or local OpenAI-compatible), and offline usage tracking stays cost-free with backend/model metadata.
+- `E.8` now queues review-first writeup section patches from major evidence updates, persists completed suggestions in SQLite, and requires explicit apply/dismiss actions instead of rewriting drafts automatically.
+- The session metadata model now carries `experimental.autoWriteup` settings so the queue state is server-driven rather than client-only.
+
+### Wave 19B — Adversarial Challenge Mode
+**Status:** Implemented (2026-03-12)
+
+- `E.9` now ships as an experimental `adversarial-challenge` coach skill that challenges the operator's current assumption, asks one pressure-test question, and proposes a falsification command.
+- The mode stays single-provider and compare-disabled so the experimental behavior is easier to reason about and remains isolated from the core operator workflow.
 
 ### Wave 10.5 — Runtime Foundation
 **Status:** Implemented (2026-03-11)
@@ -469,10 +479,11 @@ format: knowledge-sync compatible
 **Files:** `app/api/coach/route.js`
 **Difficulty:** Medium | **Impact:** Medium
 
-### E.3 — Offline Coach Mode (llama.cpp / ollama)
+### E.3 — Offline Coach Mode (Ollama / local OpenAI-compatible)
 **What:** Support local LLM when no API key available.
-**Files:** `app/api/coach/route.js`, `app/lib/ai-providers.js`
+**Files:** `app/api/coach/route.js`, `app/lib/ai-provider-runtime.js`, `app/lib/coach-context.js`, `app/HomeClient.js`
 **Difficulty:** Hard | **Impact:** Low-Med
+**Status:** Implemented (2026-03-12). Added a shared provider runtime with an experimental `offline` provider backed by Ollama or a local OpenAI-compatible endpoint, plus gated UI exposure and zero-cost local usage tracking.
 
 ### E.4 — Coach Feedback Loop
 **What:** Thumbs up/down on suggestions; persist to improve skill prompts.
@@ -496,13 +507,15 @@ format: knowledge-sync compatible
 
 ### E.8 — Auto Writeup Enhancement on Timeline Update
 **What:** Trigger writeup enhancement when major findings added to timeline.
-**Files:** `app/api/timeline/route.js`, `app/api/writeup/enhance/route.js`
+**Files:** `app/api/timeline/route.js`, `app/api/upload/route.js`, `app/lib/execute-service.js`, `app/api/writeup/enhance/route.js`, `app/api/writeup/suggestions/**`, `app/lib/writeup-ai.js`, `app/lib/writeup-suggestions.js`, `app/HomeClient.js`
 **Difficulty:** Hard | **Impact:** Low-Med
+**Status:** Implemented (2026-03-12). Major evidence events now queue debounced review-first writeup patch suggestions, persist completed suggestions in `writeup_suggestions`, and require explicit apply/dismiss actions from the Chronicle workflow.
 
 ### E.9 — Adversarial Challenge Mode
 **What:** Coach proposes defensive questions and edge cases to test.
-**Files:** `app/api/coach/route.js`
+**Files:** `app/api/coach/route.js`, `app/HomeClient.js`, `app/lib/security.js`, `app/api/health/route.js`
 **Difficulty:** Hard | **Impact:** Low
+**Status:** Implemented (2026-03-12). Added an experimental `adversarial-challenge` coach skill that pressure-tests the current operator assumption, stays behind `ENABLE_ADVERSARIAL_CHALLENGE_MODE`, and disables compare mode for this single-provider path.
 
 ### E.10 — API Cost Tracking
 **What:** Log and display estimated cost of AI API calls per session.

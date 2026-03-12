@@ -120,6 +120,10 @@ function makeWriteupShareToken() {
   return crypto.randomBytes(24).toString('base64url');
 }
 
+function makeWriteupSuggestionId() {
+  return `ws-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`;
+}
+
 function normalizeSessionTargetKind(value, fallback = 'host') {
   const normalized = normalizePlainText(value, 64);
   return normalized || fallback;
@@ -349,6 +353,31 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_writeup_shares_session_created
     ON writeup_shares(session_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS writeup_suggestions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    trigger_event_id TEXT,
+    provider TEXT NOT NULL,
+    skill TEXT NOT NULL,
+    target_section_ids TEXT,
+    patches_json TEXT,
+    summary TEXT,
+    evidence_refs_json TEXT,
+    metadata TEXT,
+    applied_at DATETIME,
+    dismissed_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_writeup_suggestions_session_created
+    ON writeup_suggestions(session_id, created_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_writeup_suggestions_session_status
+    ON writeup_suggestions(session_id, status, updated_at DESC);
 
   CREATE TABLE IF NOT EXISTS coach_feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -967,6 +996,9 @@ export function deleteSession(sessionId) {
     const deleteWriteupShares = tableExists('writeup_shares')
       ? db.prepare('DELETE FROM writeup_shares WHERE session_id = ?')
       : null;
+    const deleteWriteupSuggestions = tableExists('writeup_suggestions')
+      ? db.prepare('DELETE FROM writeup_suggestions WHERE session_id = ?')
+      : null;
     const deleteReportTemplates = tableExists('report_templates')
       ? db.prepare('DELETE FROM report_templates WHERE session_id = ?')
       : null;
@@ -994,6 +1026,7 @@ export function deleteSession(sessionId) {
       deleteWriteup.run(sessionId);
       deleteWriteupVersions.run(sessionId);
       deleteWriteupShares?.run(sessionId);
+      deleteWriteupSuggestions?.run(sessionId);
       deleteReportTemplates?.run(sessionId);
       deletePocSteps.run(sessionId);
       deleteFindings.run(sessionId);
@@ -2719,6 +2752,156 @@ function hydrateWriteupShareRow(row) {
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
   };
+}
+
+function hydrateWriteupSuggestionRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    status: row.status || 'pending',
+    triggerEventId: row.trigger_event_id || null,
+    provider: row.provider || 'claude',
+    skill: row.skill || 'writeup-refiner',
+    targetSectionIds: parseJsonColumn(row.target_section_ids, []),
+    patches: parseJsonColumn(row.patches_json, []),
+    summary: row.summary || '',
+    evidenceRefs: parseJsonColumn(row.evidence_refs_json, []),
+    metadata: parseJsonColumn(row.metadata, {}) || {},
+    appliedAt: row.applied_at || null,
+    dismissedAt: row.dismissed_at || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+export function listWriteupSuggestions(sessionId, { statuses = [], limit = 25 } = {}) {
+  try {
+    requireValidSessionId(sessionId);
+    const normalizedStatuses = [...new Set((Array.isArray(statuses) ? statuses : []).map((value) => normalizePlainText(value, 32)).filter(Boolean))];
+    const clauses = ['session_id = ?'];
+    const params = [sessionId];
+    if (normalizedStatuses.length > 0) {
+      clauses.push(`status IN (${normalizedStatuses.map(() => '?').join(', ')})`);
+      params.push(...normalizedStatuses);
+    }
+    const rows = db.prepare(`
+      SELECT *
+      FROM writeup_suggestions
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(...params, Math.max(1, Number(limit) || 25));
+    return rows.map(hydrateWriteupSuggestionRow).filter(Boolean);
+  } catch (error) {
+    console.error('Error listing writeup suggestions', error);
+    return [];
+  }
+}
+
+export function getWriteupSuggestion(id, sessionId = null) {
+  try {
+    const normalizedId = String(id || '').trim();
+    if (!normalizedId) return null;
+    if (sessionId) {
+      requireValidSessionId(sessionId);
+      return hydrateWriteupSuggestionRow(
+        db.prepare('SELECT * FROM writeup_suggestions WHERE id = ? AND session_id = ?').get(normalizedId, sessionId)
+      );
+    }
+    return hydrateWriteupSuggestionRow(
+      db.prepare('SELECT * FROM writeup_suggestions WHERE id = ?').get(normalizedId)
+    );
+  } catch (error) {
+    console.error('Error getting writeup suggestion', error);
+    return null;
+  }
+}
+
+export function createWriteupSuggestion(input = {}) {
+  try {
+    const sessionId = String(input?.sessionId || '');
+    requireValidSessionId(sessionId);
+    const id = normalizePlainText(input?.id, 128) || makeWriteupSuggestionId();
+    const status = normalizePlainText(input?.status, 32) || 'pending';
+    const triggerEventId = normalizePlainText(input?.triggerEventId, 255) || null;
+    const provider = normalizePlainText(input?.provider, 64) || 'claude';
+    const skill = normalizePlainText(input?.skill, 64) || 'writeup-refiner';
+    const summary = normalizePlainText(input?.summary, 4000) || '';
+    const targetSectionIds = Array.isArray(input?.targetSectionIds) ? JSON.stringify(input.targetSectionIds.map((value) => String(value))) : null;
+    const patchesJson = Array.isArray(input?.patches) ? JSON.stringify(input.patches) : null;
+    const evidenceRefsJson = Array.isArray(input?.evidenceRefs) ? JSON.stringify(input.evidenceRefs.map((value) => String(value))) : null;
+    const metadata = normalizeSessionMetadata(input?.metadata);
+    db.prepare(`
+      INSERT INTO writeup_suggestions (
+        id, session_id, status, trigger_event_id, provider, skill, target_section_ids, patches_json, summary, evidence_refs_json, metadata, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `).run(
+      id,
+      sessionId,
+      status,
+      triggerEventId,
+      provider,
+      skill,
+      targetSectionIds,
+      patchesJson,
+      summary,
+      evidenceRefsJson,
+      JSON.stringify(metadata)
+    );
+    return getWriteupSuggestion(id, sessionId);
+  } catch (error) {
+    console.error('Error creating writeup suggestion', error);
+    return null;
+  }
+}
+
+export function updateWriteupSuggestion(id, updates = {}, sessionId = null) {
+  try {
+    const existing = getWriteupSuggestion(id, sessionId);
+    if (!existing) return null;
+    const mapped = {};
+    if (updates.status !== undefined) mapped.status = normalizePlainText(updates.status, 32) || existing.status;
+    if (updates.triggerEventId !== undefined) mapped.trigger_event_id = normalizePlainText(updates.triggerEventId, 255) || null;
+    if (updates.provider !== undefined) mapped.provider = normalizePlainText(updates.provider, 64) || existing.provider;
+    if (updates.skill !== undefined) mapped.skill = normalizePlainText(updates.skill, 64) || existing.skill;
+    if (updates.targetSectionIds !== undefined) {
+      mapped.target_section_ids = Array.isArray(updates.targetSectionIds)
+        ? JSON.stringify(updates.targetSectionIds.map((value) => String(value)))
+        : null;
+    }
+    if (updates.patches !== undefined) {
+      mapped.patches_json = Array.isArray(updates.patches) ? JSON.stringify(updates.patches) : null;
+    }
+    if (updates.summary !== undefined) mapped.summary = normalizePlainText(updates.summary, 4000) || '';
+    if (updates.evidenceRefs !== undefined) {
+      mapped.evidence_refs_json = Array.isArray(updates.evidenceRefs)
+        ? JSON.stringify(updates.evidenceRefs.map((value) => String(value)))
+        : null;
+    }
+    if (updates.metadata !== undefined) {
+      mapped.metadata = JSON.stringify(normalizeSessionMetadata(updates.metadata));
+    }
+    if (updates.appliedAt !== undefined) mapped.applied_at = updates.appliedAt || null;
+    if (updates.dismissedAt !== undefined) mapped.dismissed_at = updates.dismissedAt || null;
+
+    const keys = Object.keys(mapped);
+    if (keys.length === 0) return existing;
+    const setClause = [...keys.map((key) => `${key} = ?`), 'updated_at = CURRENT_TIMESTAMP'].join(', ');
+    const values = keys.map((key) => mapped[key]);
+    const params = sessionId
+      ? [...values, String(id || ''), sessionId]
+      : [...values, String(id || '')];
+    db.prepare(`
+      UPDATE writeup_suggestions
+      SET ${setClause}
+      WHERE id = ? ${sessionId ? 'AND session_id = ?' : ''}
+    `).run(...params);
+    return getWriteupSuggestion(id, sessionId || existing.sessionId);
+  } catch (error) {
+    console.error('Error updating writeup suggestion', error);
+    return null;
+  }
 }
 
 export function listReportTemplates({ format = null, sessionId = null } = {}) {

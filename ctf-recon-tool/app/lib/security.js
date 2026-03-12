@@ -69,3 +69,19 @@ export function isShellHubEnabled() {
   if (process.env.ENABLE_SHELL_HUB === 'false') return false;
   return process.env.NODE_ENV !== 'production';
 }
+
+export function isExperimentalAiEnabled() {
+  return process.env.ENABLE_EXPERIMENTAL_AI === 'true';
+}
+
+export function isOfflineAiEnabled() {
+  return isExperimentalAiEnabled() && process.env.ENABLE_OFFLINE_AI === 'true';
+}
+
+export function isAutoWriteupSuggestionsEnabled() {
+  return isExperimentalAiEnabled() && process.env.ENABLE_AUTO_WRITEUP_SUGGESTIONS === 'true';
+}
+
+export function isAdversarialChallengeModeEnabled() {
+  return isExperimentalAiEnabled() && process.env.ENABLE_ADVERSARIAL_CHALLENGE_MODE === 'true';
+}

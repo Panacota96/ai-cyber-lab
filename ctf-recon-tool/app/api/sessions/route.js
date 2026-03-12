@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { listSessions, createSession, deleteSession } from '@/lib/db';
+import { listSessions, createSession, deleteSession, updateSession } from '@/lib/db';
 import { isValidSessionId } from '@/lib/security';
 import { logger } from '@/lib/logger';
 import { apiError } from '@/lib/api-error';
@@ -45,4 +45,25 @@ export const DELETE = withErrorHandler(
     }, { source: 'query', key: 'id', fallback: 'default' })
   ),
   { route: '/api/sessions DELETE' }
+);
+
+export const PATCH = withErrorHandler(
+  withAuth(
+    withValidSessionId(async (request) => {
+      const { sessionId } = getRouteMeta(request);
+      const body = await readJsonBody(request, {});
+      const updated = updateSession(sessionId, {
+        name: body?.name,
+        target: body?.target,
+        difficulty: body?.difficulty,
+        objective: body?.objective,
+        metadata: body?.metadata,
+      });
+      if (!updated) {
+        return apiError('Session not found', 404);
+      }
+      return NextResponse.json(updated);
+    }, { source: 'body' })
+  ),
+  { route: '/api/sessions PATCH' }
 );

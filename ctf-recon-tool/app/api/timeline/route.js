@@ -4,6 +4,7 @@ import { getTimeline, addTimelineEvent, updateTimelineEvent, deleteTimelineEvent
 import { logger } from '@/lib/logger';
 import { apiError } from '@/lib/api-error';
 import { normalizePlainText } from '@/lib/text-sanitize';
+import { queueWriteupSuggestionForEvent } from '@/lib/writeup-suggestions';
 import {
   getRouteMeta,
   readJsonBody,
@@ -85,6 +86,15 @@ export const POST = withErrorHandler(
       }
 
       logger.info(`New timeline event added of type: ${data.type} to session: ${sessionId}`);
+      if (event?.id && (event.type === 'note' || event.type === 'screenshot')) {
+        void queueWriteupSuggestionForEvent(sessionId, event).catch((error) => {
+          logger.warn('Failed to enqueue auto writeup suggestion from timeline event', {
+            sessionId,
+            eventId: event.id,
+            error: error?.message || String(error),
+          });
+        });
+      }
       return NextResponse.json(event);
     }, { source: 'body' })
   ),

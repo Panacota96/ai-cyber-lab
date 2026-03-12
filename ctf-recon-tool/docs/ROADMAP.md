@@ -1,6 +1,6 @@
 ---
 title: Helm's Watch — Project Improvement Roadmap
-updated: 2026-03-11
+updated: 2026-03-12
 source: automated multi-agent codebase scan (claude-sonnet-4-6)
 ---
 
@@ -11,7 +11,7 @@ source: automated multi-agent codebase scan (claude-sonnet-4-6)
 Helm's Watch is a production-grade Next.js 16 CTF reconnaissance assistant with:
 
 - Clean separation of concerns (frontend, API routes, SQLite DB, security layer)
-- Multi-provider AI coach (Claude, Gemini, OpenAI) with streaming, cost tracking, and feedback
+- Multi-provider AI coach (Claude, Gemini, OpenAI, plus an experimental offline provider) with streaming, cost tracking, and feedback
 - Rich CTF-specific features: session mgmt, timeline, discovery graph, credential manager, PoC recorder, AI findings, reporting, local flags, wordlist browsing, SearchSploit, and operator templates
 - Robust security: path traversal protection, rate limiting, API token rotation, CSRF enforcement, and zod validation
 - Multi-format export: PDF, DOCX, HTML, JSON, Markdown
@@ -196,15 +196,28 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
   - [SysReptor documentation](https://docs.sysreptor.com/)
   - [Hack The Box Reporting with SysReptor](https://docs.sysreptor.com/htb-reporting-with-sysreptor/)
 
-#### Wave 19 — Experimental AI Extensions
+#### Wave 19A — Experimental Offline Coach and Auto-Writeup
 
-**Status:** Planned
+**Status:** Implemented (2026-03-12)
 
-**Scope:** `E.3`, `E.8`, `E.9`
+**Scope:** `E.3`, `E.8`
 
 **Outcome:**
-- Defer offline coach mode, auto-writeup enhancement, and adversarial challenge mode into an explicitly experimental wave.
-- Keep these features behind flags/provider checks so they do not destabilize the core operator workflow.
+- Added a shared AI provider runtime so AI Coach and writeup enhancement can use the same online/offline provider contract.
+- Added an experimental `offline` provider backed by either Ollama or a local OpenAI-compatible endpoint, with explicit runtime flags and zero-cost local usage tracking.
+- Added a review-first auto-writeup suggestion queue that turns major evidence updates into persisted section-patch suggestions instead of rewriting drafts automatically.
+- Kept all offline and auto-writeup behavior behind explicit experimental feature flags so the core operator workflow remains stable by default.
+
+#### Wave 19B — Adversarial Challenge Mode
+
+**Status:** Implemented (2026-03-12)
+
+**Scope:** `E.9`
+
+**Outcome:**
+- Added an experimental adversarial coach skill that pressure-tests the operator's current path from the target or challenge-author perspective.
+- Kept it isolated inside the existing coach workflow behind an explicit feature flag rather than broadening it into a larger simulation subsystem.
+- Disabled compare mode for adversarial runs so the experimental behavior stays single-provider and easier to reason about.
 
 #### Structural Refactor Track
 
@@ -226,7 +239,8 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 - Wave 16: additive report metadata, filtering, scoring, and deduplication on top of the current export formats.
 - Wave 17: additive sharing, comparison, and reusable template/report-generation surfaces.
 - Wave 18: additive coach behavior, optional CTF platform/session integration paths, and the planning anchor for downstream report-platform linkage such as SysReptor.
-- Wave 19: experimental AI-only additions behind explicit runtime flags.
+- Wave 19A: additive experimental offline-provider support plus review-first writeup suggestion APIs behind explicit runtime flags.
+- Wave 19B: additive adversarial challenge coaching behind explicit runtime flags and constrained to the existing coach workflow.
 
 #### Success Criteria
 
@@ -240,7 +254,8 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 - Wave 16: reports carry ATT&CK/CVSS/dedup/filter semantics consistently across Markdown, PDF, HTML, JSON, and DOCX.
 - Wave 17: reports can be compared, shared read-only, and generated from reusable templates.
 - Wave 18: implemented coach difficulty/context scaling plus optional HTB / THM / CTFd linkage, while preserving the roadmap linkage toward SysReptor-based downstream reporting workflows.
-- Wave 19: experimental AI features remain isolated from the core execution, evidence, and reporting paths.
+- Wave 19A: offline AI and auto-writeup stay opt-in, bounded, and review-first so they do not silently mutate core evidence or reporting state.
+- Wave 19B: adversarial challenge guidance remains isolated from the core execution, evidence, and reporting paths.
 
 ### UX
 
@@ -321,9 +336,9 @@ All currently tracked ops/infrastructure items are completed through Wave 10.5.
 |----|------|--------|--------|
 | E.1 | Coach persona difficulty levels (beginner / intermediate / expert) | Med | M |
 | E.2 | Coach caching + context limit management (avoid token overflow on long sessions) | Med | M |
-| E.3 | Offline coach mode (ollama / llama.cpp provider) | Low | H |
-| E.8 | Auto writeup enhancement when timeline is updated | Low | H |
-| E.9 | Adversarial challenge mode (AI simulates the target system) | Low | H |
+| E.3 | Offline coach mode (ollama / local OpenAI-compatible provider) | Implemented | H |
+| E.8 | Auto writeup enhancement when timeline is updated | Implemented | H |
+| E.9 | Adversarial challenge mode (AI simulates the target system) | Implemented | H |
 
 ---
 

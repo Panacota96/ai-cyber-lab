@@ -61,6 +61,12 @@ afterEach(async () => {
     // ignore cleanup issues when coach context is not loaded
   }
   try {
+    const { clearWriteupSuggestionQueueForTests } = await import('@/lib/writeup-suggestions');
+    clearWriteupSuggestionQueueForTests();
+  } catch (_) {
+    // ignore cleanup issues when writeup suggestion queue is not loaded
+  }
+  try {
     const { clearShellStreamStateForTests } = await import('@/lib/shell-stream');
     clearShellStreamStateForTests();
   } catch (_) {

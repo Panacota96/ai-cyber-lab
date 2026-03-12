@@ -16,6 +16,7 @@ import { buildCommandHash, extractProgressPct } from '@/lib/command-metadata';
 import { applyEventToGraphState, applyFindingsToGraphState } from '@/lib/graph-derive';
 import { enrichSessionGraphCves } from '@/lib/cve-enrichment';
 import { parseStructuredOutput, serializeStructuredField } from '@/lib/structured-output';
+import { queueWriteupSuggestionForEvent } from '@/lib/writeup-suggestions';
 
 export const CMD_MAX_LEN = 4000;
 const DEFAULT_TIMEOUT_MS = 120000;
@@ -283,6 +284,13 @@ function executeAndRecord(session, target, eventId, command, timeout = DEFAULT_T
         if (graphRefresh.persisted) {
           publishGraphRefresh(session.id, 'command-success');
         }
+        void queueWriteupSuggestionForEvent(session.id, updatedEvent).catch((error) => {
+          logger.warn('Auto writeup suggestion enqueue failed after command completion', {
+            sessionId: session.id,
+            eventId,
+            error: error?.message || String(error),
+          });
+        });
         if (graphRefresh.cveIds.length > 0) {
           void enrichSessionGraphCves(session.id, graphRefresh.cveIds)
             .then((result) => {

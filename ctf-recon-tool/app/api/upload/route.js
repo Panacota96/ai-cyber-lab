@@ -12,6 +12,7 @@ import {
 } from '@/lib/security';
 import { apiError } from '@/lib/api-error';
 import { normalizePlainText } from '@/lib/text-sanitize';
+import { queueWriteupSuggestionForEvent } from '@/lib/writeup-suggestions';
 import { withAuth, withErrorHandler } from '@/lib/api-route';
 
 function normalizeMime(mime) {
@@ -83,6 +84,13 @@ export const POST = withErrorHandler(
     });
 
     logger.info(`Screenshot uploaded: ${filename} for session ${sessionId}`);
+    void queueWriteupSuggestionForEvent(sessionId, event).catch((error) => {
+      logger.warn('Failed to enqueue auto writeup suggestion from screenshot upload', {
+        sessionId,
+        eventId: event?.id || null,
+        error: error?.message || String(error),
+      });
+    });
     return NextResponse.json(event);
   }),
   { route: '/api/upload POST' }

@@ -117,6 +117,53 @@ function formatPlatformTypeLabel(value) {
   return normalized ? normalized.toUpperCase() : 'Platform';
 }
 
+function isAdversarialCoachSkill(value) {
+  return String(value || '').trim().toLowerCase() === 'adversarial-challenge';
+}
+
+const AUTO_WRITEUP_DEBOUNCE_MS = 120000;
+
+function getAutoWriteupSettings(session) {
+  const autoWriteup = session?.metadata?.experimental?.autoWriteup;
+  if (!autoWriteup || typeof autoWriteup !== 'object') {
+    return {
+      enabled: false,
+      provider: 'claude',
+      debounceMs: AUTO_WRITEUP_DEBOUNCE_MS,
+      lastQueuedAt: null,
+      lastCompletedAt: null,
+    };
+  }
+  return {
+    enabled: autoWriteup.enabled === true,
+    provider: String(autoWriteup.provider || 'claude').trim().toLowerCase() || 'claude',
+    debounceMs: Number(autoWriteup.debounceMs || AUTO_WRITEUP_DEBOUNCE_MS) || AUTO_WRITEUP_DEBOUNCE_MS,
+    lastQueuedAt: autoWriteup.lastQueuedAt || null,
+    lastCompletedAt: autoWriteup.lastCompletedAt || null,
+  };
+}
+
+function buildSessionMetadataWithAutoWriteup(session, updates = {}) {
+  const currentMetadata = session?.metadata && typeof session.metadata === 'object'
+    ? session.metadata
+    : {};
+  const experimental = currentMetadata.experimental && typeof currentMetadata.experimental === 'object'
+    ? currentMetadata.experimental
+    : {};
+  const currentAutoWriteup = getAutoWriteupSettings(session);
+  return {
+    ...currentMetadata,
+    experimental: {
+      ...experimental,
+      autoWriteup: {
+        ...currentAutoWriteup,
+        ...updates,
+        debounceMs: AUTO_WRITEUP_DEBOUNCE_MS,
+      },
+    },
+  };
+}
+
 function formatSessionTargetOption(target) {
   if (!target) return 'No target';
   const label = String(target.label || target.target || 'Target').trim();
@@ -761,6 +808,9 @@ export default function Home() {
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [aiProvider, setAiProvider] = useState('claude');
   const [aiSkill, setAiSkill] = useState('enhance');
+  const [writeupSuggestions, setWriteupSuggestions] = useState([]);
+  const [writeupSuggestionsLoading, setWriteupSuggestionsLoading] = useState(false);
+  const [writeupSuggestionBusy, setWriteupSuggestionBusy] = useState({});
   const [analystName, setAnalystName] = useState('');
   const [analystNameError, setAnalystNameError] = useState(false);
   const [aiUsageSummary, setAiUsageSummary] = useState(null);
@@ -793,6 +843,7 @@ export default function Home() {
   const graphToastRef = useRef({ reason: '', at: 0 });
   const shellErrorToastRef = useRef('');
   const artifactErrorToastRef = useRef('');
+  const writeupSuggestionToastRef = useRef({ readyCount: 0, sessionId: '' });
   const filterKeywordRef = useRef(null);
   const reportAutosaveSignatureRef = useRef('');
   const { apiFetch, ensureCsrfToken } = useApiClient();
@@ -978,6 +1029,27 @@ export default function Home() {
       setReportSharesLoading(false);
     }
   }, [apiFetch, currentSession]);
+
+  const fetchWriteupSuggestions = useCallback(async ({ silent = false } = {}) => {
+    if (!currentSession || !autoWriteupSuggestionsEnabled) {
+      setWriteupSuggestions([]);
+      return;
+    }
+    try {
+      if (!silent) setWriteupSuggestionsLoading(true);
+      const res = await apiFetch(`/api/writeup/suggestions?sessionId=${currentSession}`);
+      if (!res.ok) {
+        setWriteupSuggestions([]);
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      setWriteupSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
+    } catch (_) {
+      setWriteupSuggestions([]);
+    } finally {
+      if (!silent) setWriteupSuggestionsLoading(false);
+    }
+  }, [apiFetch, autoWriteupSuggestionsEnabled, currentSession]);
 
   const fetchPocSteps = useCallback(async () => {
     try {
@@ -1206,6 +1278,39 @@ export default function Home() {
     void fetchReportTemplates();
     void fetchReportShares();
   }, [fetchReportShares, fetchReportTemplates, reportFormat, showReportModal]);
+  useEffect(() => {
+    if (!autoWriteupSuggestionsEnabled || !currentSession || !autoWriteupSettings.enabled) {
+      setWriteupSuggestions([]);
+      writeupSuggestionToastRef.current = { readyCount: 0, sessionId: currentSession || '' };
+      return;
+    }
+    void fetchWriteupSuggestions();
+  }, [autoWriteupSettings.enabled, autoWriteupSuggestionsEnabled, currentSession, fetchWriteupSuggestions]);
+  useEffect(() => {
+    if (!autoWriteupSuggestionsEnabled || !currentSession || !autoWriteupSettings.enabled) return undefined;
+    const interval = setInterval(() => {
+      void fetchWriteupSuggestions({ silent: true });
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [autoWriteupSettings.enabled, autoWriteupSuggestionsEnabled, currentSession, fetchWriteupSuggestions]);
+  useEffect(() => {
+    if (!currentSession || !autoWriteupSettings.enabled) return;
+    const readyCount = autoWriteupSuggestionReady.length;
+    const previous = writeupSuggestionToastRef.current;
+    if (previous.sessionId !== currentSession) {
+      writeupSuggestionToastRef.current = { readyCount, sessionId: currentSession };
+      return;
+    }
+    if (readyCount > previous.readyCount) {
+      pushToast({
+        tone: 'info',
+        title: 'Writeup suggestion ready',
+        message: `${readyCount} reviewable AI patch suggestion${readyCount === 1 ? '' : 's'} available.`,
+        durationMs: 3200,
+      });
+    }
+    writeupSuggestionToastRef.current = { readyCount, sessionId: currentSession };
+  }, [autoWriteupSettings.enabled, autoWriteupSuggestionReady.length, currentSession, pushToast]);
 
   useEffect(() => {
     const template = reportTemplates.find((entry) => entry.id === selectedReportTemplateId);
@@ -1342,6 +1447,18 @@ export default function Home() {
     }
     setCompareAgainstSessionId(comparisonSessionOptions[0]?.id || '');
   }, [compareAgainstSessionId, comparisonSessionOptions]);
+
+  useEffect(() => {
+    if (!adversarialCoachModeVisible && adversarialCoachModeActive) {
+      setCoachSkill('enum-target');
+    }
+  }, [adversarialCoachModeActive, adversarialCoachModeVisible]);
+
+  useEffect(() => {
+    if (adversarialCoachModeActive && coachCompareMode) {
+      setCoachCompareMode(false);
+    }
+  }, [adversarialCoachModeActive, coachCompareMode]);
 
   const fetchHealth = useCallback(async () => {
     try {
@@ -2318,6 +2435,123 @@ export default function Home() {
     applyReportBlocks(markdownToReportBlocks(content));
   }, [applyReportBlocks]);
 
+  const updateAutoWriteupSettings = useCallback(async (enabled) => {
+    if (!currentSessionData?.id) return;
+    const nextMetadata = buildSessionMetadataWithAutoWriteup(currentSessionData, {
+      enabled,
+      provider: enabled ? aiProvider : autoWriteupProvider,
+    });
+    try {
+      const res = await apiFetch('/api/sessions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSessionData.id,
+          metadata: nextMetadata,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.id) {
+        alert(data.error || 'Failed to update auto-writeup settings.');
+        return;
+      }
+      setSessions((prev) => prev.map((entry) => (
+        entry.id === data.id ? data : entry
+      )));
+      if (enabled) {
+        void fetchWriteupSuggestions();
+      } else {
+        setWriteupSuggestions([]);
+      }
+      pushToast({
+        tone: enabled ? 'success' : 'info',
+        title: enabled ? 'Auto-writeup enabled' : 'Auto-writeup disabled',
+        message: enabled
+          ? `Background review suggestions will use ${String(aiProvider).toUpperCase()} with a ${Math.round(AUTO_WRITEUP_DEBOUNCE_MS / 1000)}s debounce.`
+          : 'Background AI patch suggestions were turned off for this session.',
+        durationMs: 3600,
+      });
+    } catch (error) {
+      console.error('Failed to update auto-writeup settings', error);
+    }
+  }, [aiProvider, apiFetch, autoWriteupProvider, currentSessionData, fetchWriteupSuggestions, pushToast]);
+
+  const applyQueuedWriteupSuggestion = useCallback(async (suggestionId) => {
+    if (!suggestionId) return;
+    setWriteupSuggestionBusy((prev) => ({ ...prev, [suggestionId]: 'apply' }));
+    try {
+      const res = await apiFetch('/api/writeup/suggestions/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          suggestionId,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to apply suggestion.');
+        return;
+      }
+      if (data?.writeup) {
+        loadReportPayload(data.writeup);
+        setReportDraft(String(data.writeup.content || ''));
+        reportAutosaveSignatureRef.current = JSON.stringify(data.writeup.contentJson || markdownToReportBlocks(String(data.writeup.content || '')));
+        setShowReportModal(true);
+      }
+      await fetchWriteupSuggestions({ silent: true });
+      pushToast({
+        tone: 'success',
+        title: 'Suggestion applied',
+        message: 'The queued writeup patch was merged into the saved draft.',
+        durationMs: 3200,
+      });
+    } catch (error) {
+      console.error('Failed to apply queued writeup suggestion', error);
+    } finally {
+      setWriteupSuggestionBusy((prev) => {
+        const next = { ...prev };
+        delete next[suggestionId];
+        return next;
+      });
+    }
+  }, [apiFetch, currentSession, fetchWriteupSuggestions, loadReportPayload, pushToast]);
+
+  const dismissQueuedWriteupSuggestion = useCallback(async (suggestionId) => {
+    if (!suggestionId) return;
+    setWriteupSuggestionBusy((prev) => ({ ...prev, [suggestionId]: 'dismiss' }));
+    try {
+      const res = await apiFetch('/api/writeup/suggestions/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          suggestionId,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || 'Failed to dismiss suggestion.');
+        return;
+      }
+      await fetchWriteupSuggestions({ silent: true });
+      pushToast({
+        tone: 'warning',
+        title: 'Suggestion dismissed',
+        message: 'The queued writeup patch was dismissed without changing the draft.',
+        durationMs: 2800,
+      });
+    } catch (error) {
+      console.error('Failed to dismiss queued writeup suggestion', error);
+    } finally {
+      setWriteupSuggestionBusy((prev) => {
+        const next = { ...prev };
+        delete next[suggestionId];
+        return next;
+      });
+    }
+  }, [apiFetch, currentSession, fetchWriteupSuggestions, pushToast]);
+
   const readLocalReportDraft = useCallback((sessionId = currentSession, format = reportFormat) => {
     try {
       const rawValue = localStorage.getItem(buildReportAutosaveKey(sessionId, format));
@@ -2775,7 +3009,7 @@ export default function Home() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert(err.error || `AI enhancement unavailable. Check the API key for ${aiProvider.toUpperCase()}.`);
+        alert(err.error || 'AI enhancement unavailable for the selected provider.');
         return;
       }
 
@@ -2850,7 +3084,7 @@ export default function Home() {
     }));
     try {
       // E.6 — Compare mode: non-streaming, all providers in parallel
-      if (coachCompareMode) {
+      if (coachCompareMode && !adversarialCoachModeActive) {
         const res = await apiFetch('/api/coach', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2893,7 +3127,7 @@ export default function Home() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        setCoachResult(`Error: ${err.error || 'Coach unavailable. Check your API key.'}`);
+        setCoachResult(`Error: ${err.error || 'Coach unavailable.'}`);
         return;
       }
       setCoachMeta(readCoachResponseMeta(res.headers));
@@ -3785,6 +4019,17 @@ export default function Home() {
   const currentSessionData = sessions.find(s => s.id === currentSession);
   const linkedPlatform = platformLinkInfo.link || currentSessionData?.metadata?.platform || null;
   const platformCapabilities = platformLinkInfo.capabilities || {};
+  const experimentalAiEnabled = healthData?.features?.experimentalAiEnabled === true;
+  const offlineAiEnabled = healthData?.features?.offlineAiEnabled === true;
+  const autoWriteupSuggestionsEnabled = healthData?.features?.autoWriteupSuggestionsEnabled === true;
+  const adversarialChallengeModeEnabled = healthData?.features?.adversarialChallengeModeEnabled === true;
+  const offlineProviderVisible = experimentalAiEnabled && offlineAiEnabled;
+  const adversarialCoachModeVisible = experimentalAiEnabled && adversarialChallengeModeEnabled;
+  const adversarialCoachModeActive = isAdversarialCoachSkill(coachSkill);
+  const autoWriteupSettings = getAutoWriteupSettings(currentSessionData);
+  const autoWriteupProvider = autoWriteupSettings.provider || 'claude';
+  const autoWriteupSuggestionReady = writeupSuggestions.filter((entry) => entry.status === 'ready');
+  const autoWriteupSuggestionPending = writeupSuggestions.filter((entry) => entry.status === 'pending');
   const activePlatformCapability = linkedPlatform?.type ? platformCapabilities[linkedPlatform.type] : null;
   const currentSessionTargets = getSessionTargets(currentSessionData);
   const primarySessionTarget = getPrimarySessionTargetValue(currentSessionData);
@@ -5147,6 +5392,9 @@ export default function Home() {
                   <option value="claude">Claude</option>
                   <option value="gemini">Gemini</option>
                   <option value="openai">OpenAI</option>
+                  {offlineProviderVisible && (
+                    <option value="offline">Offline</option>
+                  )}
                 </select>
                 <input
                   type="password"
@@ -5156,9 +5404,10 @@ export default function Home() {
                     setApiKeys(updated);
                     localStorage.setItem('aiApiKeys', JSON.stringify(updated));
                   }}
-                  placeholder={`${aiProvider} API key`}
+                  placeholder={aiProvider === 'offline' ? 'Local runtime (no key)' : `${aiProvider} API key`}
                   className="mono"
-                  style={{ fontSize: '0.75rem', padding: '4px 8px', width: '160px', background: 'rgba(1,4,9,0.6)', border: `1px solid ${apiKeys[aiProvider] ? 'var(--accent-secondary)' : 'var(--border-color)'}`, color: 'var(--text-muted)', borderRadius: '4px', outline: 'none' }}
+                  disabled={aiProvider === 'offline'}
+                  style={{ fontSize: '0.75rem', padding: '4px 8px', width: '160px', background: 'rgba(1,4,9,0.6)', border: `1px solid ${aiProvider === 'offline' ? 'rgba(99,110,123,0.4)' : apiKeys[aiProvider] ? 'var(--accent-secondary)' : 'var(--border-color)'}`, color: 'var(--text-muted)', borderRadius: '4px', outline: 'none', opacity: aiProvider === 'offline' ? 0.7 : 1 }}
                 />
                 <button className="btn-secondary" onClick={enhanceReport} disabled={isEnhancing} style={{ fontSize: '0.8rem', color: 'var(--accent-secondary)', borderColor: 'var(--accent-secondary)' }}>
                   {isEnhancing ? '[ Enhancing... ]' : '[ Enhance with AI ]'}
@@ -5183,6 +5432,88 @@ export default function Home() {
                 <button className="btn-primary" onClick={saveReport}>[ Save Write-up ]</button>
               </div>
             </div>
+            {autoWriteupSuggestionsEnabled && (
+              <div className="glass-panel" style={{ marginTop: '0.8rem', padding: '0.8rem', display: 'grid', gap: '0.6rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'grid', gap: '0.2rem' }}>
+                    <span className="mono" style={{ fontSize: '0.8rem', color: 'var(--accent-secondary)' }}>
+                      Auto-Writeup Queue
+                    </span>
+                    <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                      Provider: {String(autoWriteupProvider || 'claude').toUpperCase()} · Debounce: {Math.round((autoWriteupSettings.debounceMs || AUTO_WRITEUP_DEBOUNCE_MS) / 1000)}s · Pending {autoWriteupSuggestionPending.length} · Ready {autoWriteupSuggestionReady.length}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-secondary mono"
+                    onClick={() => void updateAutoWriteupSettings(!autoWriteupSettings.enabled)}
+                    style={{ fontSize: '0.75rem', padding: '4px 8px', color: autoWriteupSettings.enabled ? '#3fb950' : 'var(--text-muted)', borderColor: autoWriteupSettings.enabled ? 'rgba(63,185,80,0.4)' : 'var(--border-color)' }}
+                  >
+                    {autoWriteupSettings.enabled ? 'Disable Auto-Writeup' : 'Enable Auto-Writeup'}
+                  </button>
+                </div>
+                <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                  {autoWriteupSettings.enabled
+                    ? `Background review-first suggestions are queued from major evidence updates. Last queued: ${autoWriteupSettings.lastQueuedAt ? formatTimelineDateTime(autoWriteupSettings.lastQueuedAt) : 'not yet'}`
+                    : 'Enable this per-session to queue AI patch suggestions from major evidence without rewriting the draft automatically.'}
+                </div>
+                {writeupSuggestionsLoading ? (
+                  <div className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                    Loading queued suggestions...
+                  </div>
+                ) : writeupSuggestions.length === 0 ? (
+                  <div className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                    No queued writeup suggestions yet.
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gap: '0.45rem' }}>
+                    {writeupSuggestions.slice(0, 3).map((suggestion) => (
+                      <div key={suggestion.id} style={{ display: 'grid', gap: '0.35rem', padding: '0.55rem', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'rgba(1,4,9,0.35)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                          <span className="mono" style={{ fontSize: '0.72rem', color: suggestion.status === 'ready' ? '#3fb950' : suggestion.status === 'pending' ? '#d29922' : 'var(--text-muted)' }}>
+                            {String(suggestion.status || 'pending').toUpperCase()}
+                          </span>
+                          <span className="mono" style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                            {formatTimelineDateTime(suggestion.updatedAt || suggestion.createdAt)}
+                          </span>
+                        </div>
+                        <div className="mono" style={{ fontSize: '0.74rem', color: 'var(--text-primary)' }}>
+                          {suggestion.summary || 'Queued writeup patch suggestion'}
+                        </div>
+                        {Array.isArray(suggestion.patches) && suggestion.patches.length > 0 && (
+                          <div className="mono" style={{ fontSize: '0.68rem', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {(suggestion.patches[0]?.content || '').slice(0, 220) || 'Patch preview unavailable.'}
+                            {(suggestion.patches[0]?.content || '').length > 220 ? '…' : ''}
+                          </div>
+                        )}
+                        {suggestion.status === 'ready' && (
+                          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              className="btn-secondary mono"
+                              disabled={Boolean(writeupSuggestionBusy[suggestion.id])}
+                              onClick={() => void applyQueuedWriteupSuggestion(suggestion.id)}
+                              style={{ fontSize: '0.7rem', padding: '2px 7px', color: 'var(--accent-secondary)', borderColor: 'var(--accent-secondary)' }}
+                            >
+                              {writeupSuggestionBusy[suggestion.id] === 'apply' ? 'Applying…' : 'Apply'}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary mono"
+                              disabled={Boolean(writeupSuggestionBusy[suggestion.id])}
+                              onClick={() => void dismissQueuedWriteupSuggestion(suggestion.id)}
+                              style={{ fontSize: '0.7rem', padding: '2px 7px' }}
+                            >
+                              {writeupSuggestionBusy[suggestion.id] === 'dismiss' ? 'Dismissing…' : 'Dismiss'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -5274,6 +5605,9 @@ export default function Home() {
                 <option value="reversing-solve">Reversing Solve</option>
                 <option value="stego">Stego</option>
                 <option value="analyze-file">Analyze File</option>
+                {adversarialCoachModeVisible && (
+                  <option value="adversarial-challenge">Adversarial</option>
+                )}
               </select>
               <select
                 value={coachLevel}
@@ -5295,11 +5629,25 @@ export default function Home() {
                 <option value="balanced">Balanced</option>
                 <option value="full">Full</option>
               </select>
+              <select
+                value={aiProvider}
+                onChange={(e) => setAiProvider(e.target.value)}
+                style={{ fontSize: '0.72rem', padding: '2px 6px', maxWidth: '110px' }}
+                title="Coach provider"
+              >
+                <option value="claude">Claude</option>
+                <option value="gemini">Gemini</option>
+                <option value="openai">OpenAI</option>
+                {offlineProviderVisible && (
+                  <option value="offline">Offline</option>
+                )}
+              </select>
               <button
                 onClick={() => setCoachCompareMode(m => !m)}
                 className="btn-secondary"
-                style={{ fontSize: '0.7rem', padding: '2px 8px', opacity: coachCompareMode ? 1 : 0.55, border: coachCompareMode ? '1px solid var(--accent-secondary)' : undefined }}
-                title="Compare all configured AI providers">
+                disabled={adversarialCoachModeActive}
+                style={{ fontSize: '0.7rem', padding: '2px 8px', opacity: adversarialCoachModeActive ? 0.35 : (coachCompareMode ? 1 : 0.55), border: coachCompareMode ? '1px solid var(--accent-secondary)' : undefined }}
+                title={adversarialCoachModeActive ? 'Adversarial challenge mode runs as a single-provider experimental workflow.' : 'Compare all configured AI providers'}>
                 Compare
               </button>
               <button className="btn-secondary" onClick={() => void runCoach({ bypassCache: true })} disabled={isCoaching} style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
@@ -5328,6 +5676,11 @@ export default function Home() {
               <span className="mono" style={{ fontSize: '0.68rem', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(255,255,255,0.18)', color: 'var(--text-muted)', background: 'rgba(255,255,255,0.04)' }}>
                 {String(coachMeta.contextMode || coachContextMode).toUpperCase()} · {coachMeta.includedEvents || 0} evt
               </span>
+              {adversarialCoachModeActive && (
+                <span className="mono" style={{ fontSize: '0.68rem', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(227,179,65,0.3)', color: '#e3b341', background: 'rgba(227,179,65,0.08)' }}>
+                  ADVERSARIAL
+                </span>
+              )}
               {Number(coachMeta.omittedEvents || 0) > 0 && (
                 <span className="mono" style={{ fontSize: '0.68rem', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(227,179,65,0.2)', color: '#e3b341', background: 'rgba(227,179,65,0.08)' }}>
                   {coachMeta.omittedEvents} omitted

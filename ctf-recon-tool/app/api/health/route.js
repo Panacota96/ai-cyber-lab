@@ -4,8 +4,17 @@ import fs from 'fs';
 import path from 'path';
 import pkg from '../../../package.json';
 import { config } from '@/lib/config';
+import { getOfflineProviderStatus } from '@/lib/ai-provider-runtime';
 import { getPlatformCapabilities } from '@/lib/platform-adapters';
-import { isAdminApiEnabled, isCommandExecutionEnabled, isShellHubEnabled } from '@/lib/security';
+import {
+  isAdminApiEnabled,
+  isAdversarialChallengeModeEnabled,
+  isAutoWriteupSuggestionsEnabled,
+  isCommandExecutionEnabled,
+  isExperimentalAiEnabled,
+  isOfflineAiEnabled,
+  isShellHubEnabled,
+} from '@/lib/security';
 
 export async function GET() {
   const result = {
@@ -17,6 +26,7 @@ export async function GET() {
       anthropic: !!config.anthropicApiKey,
       google: !!config.geminiApiKey,
       openai: !!config.openaiApiKey,
+      offline: getOfflineProviderStatus(),
     },
     platforms: getPlatformCapabilities(),
     disk: {
@@ -26,6 +36,10 @@ export async function GET() {
       commandExecutionEnabled: isCommandExecutionEnabled(),
       shellHubEnabled: isShellHubEnabled(),
       adminApiEnabled: isAdminApiEnabled(),
+      experimentalAiEnabled: isExperimentalAiEnabled(),
+      offlineAiEnabled: isOfflineAiEnabled(),
+      autoWriteupSuggestionsEnabled: isAutoWriteupSuggestionsEnabled(),
+      adversarialChallengeModeEnabled: isAdversarialChallengeModeEnabled(),
       apiTokenRequired: Boolean(process.env.APP_API_TOKEN || process.env.APP_API_TOKEN_2),
     },
   };

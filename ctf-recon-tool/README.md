@@ -62,9 +62,12 @@ The current product name is **Helm's Watch**. Some runtime identifiers still use
 - **AI Coach**: pentest-oriented guidance from the current session state.
 - Coach difficulty controls (`beginner`, `intermediate`, `expert`) plus bounded context modes (`compact`, `balanced`, `full`) with in-memory cache headers for long sessions.
 - **AI Reporter**: report enhancement with report-only skill selection.
+- Experimental offline AI provider support for Ollama or OpenAI-compatible local backends when `ENABLE_EXPERIMENTAL_AI` and `ENABLE_OFFLINE_AI` are enabled.
+- Experimental auto-writeup suggestions queue persists review-first section patches from major evidence updates when `ENABLE_AUTO_WRITEUP_SUGGESTIONS` is enabled.
+- Experimental adversarial challenge mode pressure-tests the operator's current path from the target or challenge-author perspective when `ENABLE_ADVERSARIAL_CHALLENGE_MODE` is enabled.
 - Findings extraction proposals with manual review-before-save.
 - AI usage tracking per session, including token and estimated cost summaries.
-- Provider support for Anthropic, OpenAI, and Google Gemini.
+- Provider support for Anthropic, OpenAI, Google Gemini, and an experimental shared `offline` provider.
 
 ### Operations and platform controls
 - SQLite persistence for sessions, writeups, findings, PoC steps, graph state, credentials, and AI usage.
@@ -152,6 +155,16 @@ Copy `.env.example` to `.env` when you want explicit local configuration.
 | `OPENAI_API_KEY` | unset | OpenAI provider |
 | `GOOGLE_AI_API_KEY` | unset | Gemini provider |
 | `COACH_CACHE_TTL_MS` | `300000` | In-memory TTL for cached AI Coach responses |
+| `ENABLE_EXPERIMENTAL_AI` | `false` | Enables experimental AI-only features such as offline provider support |
+| `ENABLE_OFFLINE_AI` | `false` | Enables the shared experimental `offline` provider in coach and writeup enhancement |
+| `ENABLE_AUTO_WRITEUP_SUGGESTIONS` | `false` | Enables the review-first writeup suggestion queue |
+| `ENABLE_ADVERSARIAL_CHALLENGE_MODE` | `false` | Enables the experimental adversarial challenge coach skill |
+| `OFFLINE_AI_BACKEND` | unset | `ollama` or `openai-compatible` |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama API endpoint when `OFFLINE_AI_BACKEND=ollama` |
+| `OLLAMA_MODEL` | unset | Ollama model used by the shared `offline` provider |
+| `LOCAL_OPENAI_BASE_URL` | unset | Local OpenAI-compatible endpoint when `OFFLINE_AI_BACKEND=openai-compatible` |
+| `LOCAL_OPENAI_MODEL` | unset | Model name for the local OpenAI-compatible endpoint |
+| `LOCAL_OPENAI_API_KEY` | unset | Optional bearer token for the local OpenAI-compatible endpoint |
 | `APP_API_TOKEN` | unset | Requires `x-api-token` on mutating routes when set |
 | `ENABLE_COMMAND_EXECUTION` | `true` in dev, `false` in prod | Enables browser-triggered shell execution |
 | `ENABLE_SHELL_HUB` | `true` in dev, `false` in prod | Enables reverse-shell/webshell session APIs and UI |
@@ -190,6 +203,7 @@ Key tables currently tracked in SQLite:
 - `findings`
 - `flag_submissions`
 - `graph_state`
+- `writeup_suggestions`
 - `shell_sessions`
 - `shell_transcript_chunks`
 - `session_artifacts`

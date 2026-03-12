@@ -37,6 +37,10 @@ describe('/api/health route', () => {
       commandExecutionEnabled: false,
       shellHubEnabled: false,
       adminApiEnabled: false,
+      experimentalAiEnabled: false,
+      offlineAiEnabled: false,
+      autoWriteupSuggestionsEnabled: false,
+      adversarialChallengeModeEnabled: false,
       apiTokenRequired: true,
     });
   });
