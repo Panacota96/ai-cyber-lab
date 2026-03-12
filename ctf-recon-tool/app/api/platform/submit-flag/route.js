@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server';
 import { apiError } from '@/lib/api-error';
 import {
   getFlagSubmission,
-  getSession,
   updateFlagSubmission,
+} from '@/lib/repositories/flag-repository';
+import {
+  getSession,
   updateSession,
-} from '@/lib/db';
+} from '@/lib/repositories/session-repository';
 import { getPlatformCapabilities, submitPlatformFlag } from '@/lib/platform-adapters';
 import {
   readValidatedJsonBody,

@@ -11,6 +11,12 @@ import ShellHub from '@/components/shells/ShellHub';
 import ServiceSuggestionsPanel from '@/components/sidebar/ServiceSuggestionsPanel';
 import CommandEventCard from '@/components/timeline/CommandEventCard';
 import TimelineFilterBar from '@/components/timeline/TimelineFilterBar';
+import PlatformLinkPanel from '@/domains/session-targets-platform/components/PlatformLinkPanel';
+import SessionTargetsModal from '@/domains/session-targets-platform/components/SessionTargetsModal';
+import {
+  derivePlatformDraftState,
+  formatPlatformTypeLabel,
+} from '@/domains/session-targets-platform/lib/session-platform';
 import { filterCheatsheetTools, filterSuggestionGroups } from '@/domains/toolbox/lib/capabilities';
 import { useReportAutosave } from '@/domains/reporting/hooks/useReportAutosave';
 import { useReportResources } from '@/domains/reporting/hooks/useReportResources';
@@ -47,6 +53,12 @@ import {
   reportBlocksToMarkdown,
   reportFormatLabel,
 } from '@/lib/report-blocks';
+import {
+  applyReportPreset,
+  AUDIENCE_PACKS,
+  getAudiencePackDefinition,
+  REPORT_PRESETS,
+} from '@/lib/report-views';
 import { applyTemplatePlaceholders, buildReportTemplateContext } from '@/lib/report-template-utils';
 import { escapeMarkdownInline, normalizePlainText } from '@/lib/text-sanitize';
 import {
@@ -118,14 +130,6 @@ function readCoachResponseMeta(headers) {
     includedEvents: Number(headers?.get('x-coach-events') || 0),
     omittedEvents: Number(headers?.get('x-coach-omitted-events') || 0),
   };
-}
-
-function formatPlatformTypeLabel(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'htb') return 'Hack The Box';
-  if (normalized === 'thm') return 'TryHackMe';
-  if (normalized === 'ctfd') return 'CTFd';
-  return normalized ? normalized.toUpperCase() : 'Platform';
 }
 
 function isAdversarialCoachSkill(value) {
@@ -501,6 +505,29 @@ function buildReportFilterQuery(reportFilters = DEFAULT_REPORT_FILTERS) {
   return params.toString();
 }
 
+function buildReportViewQuery({
+  sessionId,
+  format,
+  analystName,
+  audiencePack,
+  presetId,
+  reportFilters = DEFAULT_REPORT_FILTERS,
+}) {
+  const params = new URLSearchParams({
+    sessionId,
+    format,
+    analystName: analystName || 'Unknown',
+  });
+  if (audiencePack) params.set('audiencePack', audiencePack);
+  if (presetId) params.set('presetId', presetId);
+  const filterQuery = buildReportFilterQuery(reportFilters);
+  if (filterQuery) {
+    const filterParams = new URLSearchParams(filterQuery);
+    filterParams.forEach((value, key) => params.set(key, value));
+  }
+  return params.toString();
+}
+
 export default function Home() {
   // Core state
   const [timeline, setTimeline] = useState([]);
@@ -632,6 +659,8 @@ export default function Home() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportRestoreNotice, setReportRestoreNotice] = useState('');
   const [reportFormat, setReportFormat] = useState('technical-walkthrough');
+  const [reportAudiencePack, setReportAudiencePack] = useState('technical');
+  const [reportPresetId, setReportPresetId] = useState('');
   const [reportFilters, setReportFilters] = useState(DEFAULT_REPORT_FILTERS);
   const [pdfStyle, setPdfStyle] = useState('terminal-dark');
   const [pocSteps, setPocSteps] = useState([]);
@@ -1193,26 +1222,11 @@ export default function Home() {
   useEffect(() => { void ensureCsrfToken(); }, [ensureCsrfToken]);
 
   useEffect(() => {
-    const linkedPlatform = platformLinkInfo.link || null;
-    if (!linkedPlatform) {
-      setPlatformTypeDraft('htb');
-      setPlatformRemoteIdDraft('');
-      setPlatformLabelDraft('');
-      setPlatformChallengeIdDraft('');
-      return;
-    }
-    setPlatformTypeDraft(linkedPlatform.type || 'htb');
-    if (linkedPlatform.type === 'htb') {
-      setPlatformRemoteIdDraft(linkedPlatform.remoteContext?.eventId || linkedPlatform.remoteId || '');
-      setPlatformChallengeIdDraft(linkedPlatform.remoteContext?.challengeId || '');
-    } else if (linkedPlatform.type === 'ctfd') {
-      setPlatformRemoteIdDraft(linkedPlatform.remoteContext?.challengeId || linkedPlatform.remoteId || '');
-      setPlatformChallengeIdDraft('');
-    } else {
-      setPlatformRemoteIdDraft(linkedPlatform.remoteContext?.roomCode || linkedPlatform.remoteId || '');
-      setPlatformChallengeIdDraft('');
-    }
-    setPlatformLabelDraft(linkedPlatform.label || '');
+    const nextDrafts = derivePlatformDraftState(platformLinkInfo.link || null);
+    setPlatformTypeDraft(nextDrafts.platformTypeDraft);
+    setPlatformRemoteIdDraft(nextDrafts.platformRemoteIdDraft);
+    setPlatformLabelDraft(nextDrafts.platformLabelDraft);
+    setPlatformChallengeIdDraft(nextDrafts.platformChallengeIdDraft);
   }, [currentSession, platformLinkInfo.link]);
 
   useEffect(() => {
@@ -2283,6 +2297,7 @@ export default function Home() {
   // ── Report handlers ───────────────────────────────────────────────────────
 
   const updateReportFiltersState = useCallback((patch = {}) => {
+    setReportPresetId('');
     setReportFilters((prev) => normalizeReportFilters({ ...prev, ...patch }));
   }, []);
 
@@ -2407,8 +2422,14 @@ export default function Home() {
         }
         setReportRestoreNotice(draftChoice.notice);
       } else {
-        const filterQuery = buildReportFilterQuery(reportFilters);
-        const reportUrl = `/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent(safeAnalyst)}${filterQuery ? `&${filterQuery}` : ''}`;
+        const reportUrl = `/api/report?${buildReportViewQuery({
+          sessionId: currentSession,
+          format: fmt,
+          analystName: safeAnalyst,
+          audiencePack: reportAudiencePack,
+          presetId: reportPresetId,
+          reportFilters,
+        })}`;
         const res = await apiFetch(reportUrl);
         const data = await res.json();
         if (!forceRegenerate && localDraft?.blocks?.length) {
@@ -2430,6 +2451,7 @@ export default function Home() {
 
   const onFormatChange = async (fmt) => {
     setReportFormat(fmt);
+    setReportPresetId('');
     if (showReportModal) {
       try {
         const localDraft = readLocalReportDraft(currentSession, fmt);
@@ -2440,8 +2462,13 @@ export default function Home() {
           setReportRestoreNotice('Recovered newer local draft.');
           return;
         }
-        const filterQuery = buildReportFilterQuery(reportFilters);
-        const reportUrl = `/api/report?sessionId=${currentSession}&format=${fmt}&analystName=${encodeURIComponent((analystName || '').trim() || 'Unknown')}${filterQuery ? `&${filterQuery}` : ''}`;
+        const reportUrl = `/api/report?${buildReportViewQuery({
+          sessionId: currentSession,
+          format: fmt,
+          analystName: (analystName || '').trim() || 'Unknown',
+          audiencePack: reportAudiencePack,
+          reportFilters,
+        })}`;
         const res = await apiFetch(reportUrl);
         const data = await res.json();
         if (data.report) {
@@ -2450,6 +2477,70 @@ export default function Home() {
           markReportAutosaveSignature(generatedBlocks);
           setSelectedReportBlocks([]);
           setReportRestoreNotice('');
+        }
+      } catch (_) {}
+    }
+  };
+
+  const onAudiencePackChange = async (nextAudiencePack) => {
+    const pack = getAudiencePackDefinition(nextAudiencePack);
+    const nextFormat = pack?.format || reportFormat;
+    setReportAudiencePack(nextAudiencePack);
+    setReportPresetId('');
+    if (nextFormat !== reportFormat) {
+      setReportFormat(nextFormat);
+    }
+    if (showReportModal) {
+      try {
+        const reportUrl = `/api/report?${buildReportViewQuery({
+          sessionId: currentSession,
+          format: nextFormat,
+          analystName: (analystName || '').trim() || 'Unknown',
+          audiencePack: nextAudiencePack,
+          reportFilters,
+        })}`;
+        const res = await apiFetch(reportUrl);
+        const data = await res.json();
+        if (data.report) {
+          const generatedBlocks = markdownToReportBlocks(data.report);
+          applyReportBlocks(generatedBlocks);
+          markReportAutosaveSignature(generatedBlocks);
+          setSelectedReportBlocks([]);
+          setReportRestoreNotice(`Loaded ${pack?.label || nextAudiencePack} audience pack.`);
+        }
+      } catch (_) {}
+    }
+  };
+
+  const onReportPresetChange = async (nextPresetId) => {
+    setReportPresetId(nextPresetId);
+    if (!nextPresetId) return;
+    const nextView = applyReportPreset(nextPresetId, {
+      format: reportFormat,
+      audiencePack: reportAudiencePack,
+      reportFilters,
+    });
+    setReportFormat(nextView.format);
+    setReportAudiencePack(nextView.audiencePack);
+    setReportFilters(nextView.reportFilters);
+    if (showReportModal) {
+      try {
+        const reportUrl = `/api/report?${buildReportViewQuery({
+          sessionId: currentSession,
+          format: nextView.format,
+          analystName: (analystName || '').trim() || 'Unknown',
+          audiencePack: nextView.audiencePack,
+          presetId: nextPresetId,
+          reportFilters: nextView.reportFilters,
+        })}`;
+        const res = await apiFetch(reportUrl);
+        const data = await res.json();
+        if (data.report) {
+          const generatedBlocks = markdownToReportBlocks(data.report);
+          applyReportBlocks(generatedBlocks);
+          markReportAutosaveSignature(generatedBlocks);
+          setSelectedReportBlocks([]);
+          setReportRestoreNotice(`Applied preset: ${REPORT_PRESETS.find((preset) => preset.id === nextPresetId)?.label || nextPresetId}.`);
         }
       } catch (_) {}
     }
@@ -2746,6 +2837,8 @@ export default function Home() {
         body: JSON.stringify({
           sessionId: currentSession,
           format: reportFormat,
+          audiencePack: reportAudiencePack,
+          presetId: reportPresetId || undefined,
           analystName: analystName.trim() || 'Unknown',
           inlineImages,
           reportFilters: normalizedReportFilters,
@@ -2803,6 +2896,8 @@ export default function Home() {
         body: JSON.stringify({
           sessionId: currentSession,
           format: reportFormat,
+          audiencePack: reportAudiencePack,
+          presetId: reportPresetId || undefined,
           analystName: analystName.trim() || 'Unknown',
           inlineImages,
           reportFilters: normalizedReportFilters,
@@ -2834,6 +2929,8 @@ export default function Home() {
         body: JSON.stringify({
           sessionId: currentSession,
           format: reportFormat,
+          audiencePack: reportAudiencePack,
+          presetId: reportPresetId || undefined,
           analystName: analystName.trim() || 'Unknown',
           inlineImages,
           reportFilters: normalizedReportFilters,
@@ -2865,6 +2962,8 @@ export default function Home() {
         body: JSON.stringify({
           sessionId: currentSession,
           format: reportFormat,
+          audiencePack: reportAudiencePack,
+          presetId: reportPresetId || undefined,
           analystName: analystName.trim() || 'Unknown',
           inlineImages,
           includeAppendix,
@@ -2886,6 +2985,46 @@ export default function Home() {
       URL.revokeObjectURL(blobUrl);
     } catch (err) {
       alert(`DOCX download error: ${err.message}`);
+    }
+  };
+
+  const downloadSysreptorHandoff = async () => {
+    try {
+      const res = await apiFetch('/api/report/handoff/sysreptor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSession,
+          format: reportFormat,
+          audiencePack: reportAudiencePack,
+          presetId: reportPresetId || undefined,
+          analystName: analystName.trim() || 'Unknown',
+          inlineImages: false,
+          reportFilters: normalizedReportFilters,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        alert(`SysReptor handoff failed: ${err.detail || err.error}`);
+        return;
+      }
+      const payload = await res.json();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const blobUrl = URL.createObjectURL(blob);
+      const sessionName = sessions.find(s => s.id === currentSession)?.name?.replace(/\s+/g, '-') || currentSession;
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${sessionName}-${reportAudiencePack || 'technical'}-sysreptor-handoff.json`;
+      a.click();
+      URL.revokeObjectURL(blobUrl);
+      pushToast({
+        tone: 'success',
+        title: 'SysReptor handoff ready',
+        message: 'Downloaded one-way handoff package descriptor.',
+        durationMs: 3200,
+      });
+    } catch (err) {
+      alert(`SysReptor handoff error: ${err.message}`);
     }
   };
 
@@ -3818,88 +3957,24 @@ export default function Home() {
         </div>
       )}
 
-      <div className="glass-panel objective-bar" style={{ display: 'grid', gap: '0.55rem', marginTop: currentSessionData?.objective ? '0.55rem' : '0.85rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-          <div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-            <span style={{ color: 'var(--accent-secondary)' }}>Platform:</span>{' '}
-            {linkedPlatform
-              ? `${formatPlatformTypeLabel(linkedPlatform.type)} · ${linkedPlatform.label || linkedPlatform.remoteLabel || linkedPlatform.remoteId}`
-              : 'Not linked'}
-            {linkedPlatform?.syncedAt ? ` · synced ${new Date(linkedPlatform.syncedAt).toLocaleString()}` : ''}
-          </div>
-          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-            {activePlatformCapability && (
-              <span className="mono" style={{ fontSize: '0.7rem', padding: '2px 7px', borderRadius: '999px', border: '1px solid rgba(88,166,255,0.28)', color: 'var(--accent-secondary)', background: 'rgba(88,166,255,0.08)' }}>
-                {activePlatformCapability.flagMode === 'validation' ? 'flag validation' : activePlatformCapability?.flagSubmit ? 'flag submit' : 'metadata only'}
-              </span>
-            )}
-            <button className="btn-secondary btn-compact" onClick={() => setPlatformPanelExpanded((prev) => !prev)}>
-              {platformPanelExpanded ? 'Hide Link' : 'Link Platform'}
-            </button>
-            <button className="btn-secondary btn-compact" onClick={() => void linkPlatformSession()} disabled={platformLinkBusy}>
-              {platformLinkBusy ? 'Syncing…' : linkedPlatform ? 'Refresh Link' : 'Sync'}
-            </button>
-          </div>
-        </div>
-        {linkedPlatform?.lastFlagSubmission?.summary && (
-          <div className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-            Last flag result: {linkedPlatform.lastFlagSubmission.summary}
-          </div>
-        )}
-        {platformPanelExpanded && (
-          <div style={{ display: 'grid', gap: '0.55rem' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr 1fr', gap: '0.55rem' }}>
-              <select value={platformTypeDraft} onChange={(e) => setPlatformTypeDraft(e.target.value)} style={{ fontSize: '0.76rem', padding: '4px 8px' }}>
-                <option value="htb">Hack The Box</option>
-                <option value="thm">TryHackMe</option>
-                <option value="ctfd">CTFd</option>
-              </select>
-              <input
-                type="text"
-                value={platformRemoteIdDraft}
-                onChange={(e) => setPlatformRemoteIdDraft(e.target.value)}
-                placeholder={platformTypeDraft === 'htb' ? 'HTB Event ID' : platformTypeDraft === 'thm' ? 'THM Room Code' : 'CTFd Challenge ID'}
-              />
-              <input
-                type="text"
-                value={platformLabelDraft}
-                onChange={(e) => setPlatformLabelDraft(e.target.value)}
-                placeholder="Optional local label"
-              />
-            </div>
-            {platformTypeDraft === 'htb' && (
-              <input
-                type="text"
-                value={platformChallengeIdDraft}
-                onChange={(e) => setPlatformChallengeIdDraft(e.target.value)}
-                placeholder="Optional HTB Challenge ID (required for flag submit)"
-              />
-            )}
-            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-              {['htb', 'thm', 'ctfd'].map((platformKey) => {
-                const capability = platformCapabilities?.[platformKey];
-                return (
-                  <span key={platformKey} className="mono" style={{
-                    fontSize: '0.68rem',
-                    padding: '2px 7px',
-                    borderRadius: '999px',
-                    border: `1px solid ${capability?.configured ? 'rgba(63,185,80,0.28)' : 'rgba(248,81,73,0.28)'}`,
-                    color: capability?.configured ? '#3fb950' : '#f85149',
-                    background: capability?.configured ? 'rgba(63,185,80,0.08)' : 'rgba(248,81,73,0.08)',
-                  }}>
-                    {formatPlatformTypeLabel(platformKey)} {capability?.configured ? 'ready' : 'not configured'}
-                  </span>
-                );
-              })}
-            </div>
-            {platformCapabilities?.[platformTypeDraft]?.reason && !platformCapabilities?.[platformTypeDraft]?.configured && (
-              <div className="mono" style={{ fontSize: '0.7rem', color: '#f85149' }}>
-                {platformCapabilities[platformTypeDraft].reason}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      <PlatformLinkPanel
+        linkedPlatform={linkedPlatform}
+        activePlatformCapability={activePlatformCapability}
+        platformPanelExpanded={platformPanelExpanded}
+        platformLinkBusy={platformLinkBusy}
+        platformTypeDraft={platformTypeDraft}
+        platformRemoteIdDraft={platformRemoteIdDraft}
+        platformLabelDraft={platformLabelDraft}
+        platformChallengeIdDraft={platformChallengeIdDraft}
+        platformCapabilities={platformCapabilities}
+        onToggleExpanded={() => setPlatformPanelExpanded((prev) => !prev)}
+        onSync={() => void linkPlatformSession()}
+        onPlatformTypeChange={setPlatformTypeDraft}
+        onPlatformRemoteIdChange={setPlatformRemoteIdDraft}
+        onPlatformLabelChange={setPlatformLabelDraft}
+        onPlatformChallengeIdChange={setPlatformChallengeIdDraft}
+        style={{ marginTop: currentSessionData?.objective ? '0.55rem' : '0.85rem' }}
+      />
 
       {/* ── New Session Modal ─────────────────────────────────────────────── */}
       {showNewSessionModal && (
@@ -3968,77 +4043,25 @@ export default function Home() {
         />
       )}
 
-      {showTargetsModal && (
-        <div className="overlay" onClick={() => setShowTargetsModal(false)}>
-          <div className="modal glass-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '760px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
-              <h3>Session Targets</h3>
-              <button className="btn-secondary" onClick={() => setShowTargetsModal(false)}>Close</button>
-            </div>
-            <div className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
-              Active target drives <code>{'{TARGET}'}</code> substitution and becomes the default link for new commands, notes, credentials, shells, and artifacts.
-            </div>
-            <div style={{ display: 'grid', gap: '0.6rem', marginBottom: '1rem' }}>
-              {currentSessionTargets.length === 0 && (
-                <div className="mono" style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                  No explicit targets saved for this session yet.
-                </div>
-              )}
-              {currentSessionTargets.map((target) => (
-                <div key={target.id || target.target} style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '0.65rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <div>
-                      <div className="mono" style={{ fontSize: '0.78rem', color: 'var(--text-main)' }}>
-                        {target.label || target.target}
-                      </div>
-                      <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
-                        {target.target} · {(target.kind || 'host').toUpperCase()}
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                      <button className="btn-secondary" onClick={() => setActiveTargetId(target.id || '')} style={{ fontSize: '0.72rem', padding: '4px 9px' }}>
-                        {activeSessionTarget?.id === target.id ? 'Active' : 'Use'}
-                      </button>
-                      <button className="btn-secondary" onClick={() => void setPrimarySessionTargetEntry(target.id)} style={{ fontSize: '0.72rem', padding: '4px 9px' }} disabled={targetsBusy || target.isPrimary}>
-                        {target.isPrimary ? 'Primary' : 'Set Primary'}
-                      </button>
-                      <button className="btn-secondary" onClick={() => void removeSessionTargetEntry(target.id)} style={{ fontSize: '0.72rem', padding: '4px 9px', color: 'var(--accent-danger)', borderColor: 'rgba(248,81,73,0.35)' }} disabled={targetsBusy}>
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                  {target.notes && (
-                    <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.4rem', whiteSpace: 'pre-wrap' }}>
-                      {target.notes}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.9rem' }}>
-              <h4 style={{ marginBottom: '0.55rem' }}>Add Target</h4>
-              <div style={{ display: 'grid', gap: '0.55rem' }}>
-                <input type="text" value={targetDraftLabel} onChange={(e) => setTargetDraftLabel(e.target.value)} placeholder="Label (e.g. Internal CIDR)" />
-                <input type="text" value={targetDraftValue} onChange={(e) => setTargetDraftValue(e.target.value)} placeholder="Target value (host, URL, CIDR)" />
-                <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: '0.55rem' }}>
-                  <select value={targetDraftKind} onChange={(e) => setTargetDraftKind(e.target.value)}>
-                    <option value="host">Host</option>
-                    <option value="url">URL</option>
-                    <option value="cidr">CIDR</option>
-                    <option value="host-port">Host:Port</option>
-                  </select>
-                  <input type="text" value={targetDraftNotes} onChange={(e) => setTargetDraftNotes(e.target.value)} placeholder="Notes (optional)" />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <button className="btn-primary" onClick={() => void createSessionTargetEntry()} disabled={targetsBusy || !targetDraftValue.trim()}>
-                    {targetsBusy ? 'Saving…' : 'Add Target'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <SessionTargetsModal
+        open={showTargetsModal}
+        onClose={() => setShowTargetsModal(false)}
+        currentSessionTargets={currentSessionTargets}
+        activeSessionTarget={activeSessionTarget}
+        targetsBusy={targetsBusy}
+        targetDraftLabel={targetDraftLabel}
+        targetDraftValue={targetDraftValue}
+        targetDraftKind={targetDraftKind}
+        targetDraftNotes={targetDraftNotes}
+        onTargetDraftLabelChange={setTargetDraftLabel}
+        onTargetDraftValueChange={setTargetDraftValue}
+        onTargetDraftKindChange={setTargetDraftKind}
+        onTargetDraftNotesChange={setTargetDraftNotes}
+        onUseTarget={setActiveTargetId}
+        onSetPrimary={setPrimarySessionTargetEntry}
+        onDeleteTarget={removeSessionTargetEntry}
+        onCreateTarget={createSessionTargetEntry}
+      />
 
       {/* ── Report Modal ──────────────────────────────────────────────────── */}
       {showReportModal && (
@@ -4047,6 +4070,23 @@ export default function Home() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
               <h3 className="dnd-title" style={{ fontSize: '1.2rem' }}>Helm&apos;s Watch Chronicle</h3>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <select value={reportPresetId} onChange={(e) => void onReportPresetChange(e.target.value)}
+                  style={{ fontSize: '0.8rem', padding: '4px 8px' }}>
+                  <option value="">Preset: manual</option>
+                  {REPORT_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+                <select value={reportAudiencePack} onChange={(e) => void onAudiencePackChange(e.target.value)}
+                  style={{ fontSize: '0.8rem', padding: '4px 8px' }}>
+                  {AUDIENCE_PACKS.map((pack) => (
+                    <option key={pack.id} value={pack.id}>
+                      {pack.label}
+                    </option>
+                  ))}
+                </select>
                 <select value={reportFormat} onChange={(e) => onFormatChange(e.target.value)}
                   style={{ fontSize: '0.8rem', padding: '4px 8px' }}>
                   <option value="lab-report">Lab Report</option>
@@ -4281,6 +4321,51 @@ export default function Home() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            <div style={{ display: 'grid', gap: '0.55rem', marginBottom: '0.75rem', padding: '0.8rem', borderRadius: '8px', border: '1px solid rgba(227,179,65,0.18)', background: 'rgba(227,179,65,0.05)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span className="mono" style={{ fontSize: '0.76rem', color: '#e3b341' }}>Wave 21 Audience Packs + Handoff</span>
+                <span className="mono" style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  {AUDIENCE_PACKS.find((pack) => pack.id === reportAudiencePack)?.description || 'Audience-specific output view'}
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(220px, 1fr) auto', gap: '0.6rem', alignItems: 'center' }}>
+                <select
+                  value={reportPresetId}
+                  onChange={(e) => void onReportPresetChange(e.target.value)}
+                  style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                >
+                  <option value="">Preset: manual composition</option>
+                  {REPORT_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={reportAudiencePack}
+                  onChange={(e) => void onAudiencePackChange(e.target.value)}
+                  style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                >
+                  {AUDIENCE_PACKS.map((pack) => (
+                    <option key={pack.id} value={pack.id}>
+                      {pack.label} audience pack
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn-secondary mono"
+                  style={{ fontSize: '0.74rem', padding: '4px 10px', color: '#e3b341', borderColor: 'rgba(227,179,65,0.55)' }}
+                  onClick={() => void downloadSysreptorHandoff()}
+                >
+                  Download SysReptor Handoff
+                </button>
+              </div>
+              <p className="mono" style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                Audience packs are alternate output views from the same Chronicle data. The SysReptor action exports a one-way handoff descriptor and package payload; it does not create a live sync.
+              </p>
             </div>
 
             <div className="report-toolbar">

@@ -63,4 +63,22 @@ describe('flags route', () => {
     const createRes = await flagsPost(createReq);
     expect(createRes.status).toBe(401);
   });
+
+  it('returns validation details for invalid payloads', async () => {
+    const session = createTestSession();
+    sessions.push(session.id);
+
+    const createReq = makeJsonRequest('/api/flags', 'POST', {
+      sessionId: session.id,
+      value: '',
+      status: 'bogus',
+    }, { auth: true });
+    const createRes = await flagsPost(createReq);
+    expect(createRes.status).toBe(400);
+    const createBody = await readJson(createRes);
+    expect(createBody.ok).toBe(false);
+    expect(createBody.error).toMatch(/Validation failed/i);
+    expect(Array.isArray(createBody.details)).toBe(true);
+    expect(createBody.details.length).toBeGreaterThan(0);
+  });
 });

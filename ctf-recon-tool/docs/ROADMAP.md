@@ -14,10 +14,10 @@ Helm's Watch is a production-grade Next.js 16 CTF reconnaissance assistant with:
 - Multi-provider AI coach (Claude, Gemini, OpenAI, plus an experimental offline provider) with streaming, cost tracking, and feedback
 - Rich CTF-specific features: session mgmt, timeline, discovery graph, credential manager, PoC recorder, AI findings, reporting, local flags, wordlist browsing, SearchSploit, and operator templates
 - Robust security: path traversal protection, rate limiting, API token rotation, CSRF enforcement, and zod validation
-- Multi-format export: PDF, DOCX, HTML, JSON, Markdown
+- Multi-format export: PDF, DOCX, HTML, JSON, Markdown, with Plotly attack-timeline visualization in HTML exports
 - Vitest test suite (Phase 2 complete)
 
-**Current gaps:** Wave 20 architecture/contracts work still needs to finish the `HomeClient` / persistence split and complete the repository migration behind the DB facade, Wave 21 needs to add report audience packs plus SysReptor handoff, Wave 22 still needs deeper shell transports and shell-driven evidence acquisition, and Waves 23-24 remain open for cross-session analysis plus collaboration/coach-quality hardening.
+**Current gaps:** Wave 22 still needs deeper shell transports and shell-driven evidence acquisition, and Waves 23-24 remain open for cross-session analysis plus collaboration/coach-quality hardening.
 
 **Product scope:** Helm's Paladin is desktop/laptop-first; tablet and mobile responsive work is intentionally out of scope.
 
@@ -225,7 +225,7 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 
 #### Wave 20 — Architecture and Contracts
 
-**Status:** In Progress (2026-03-12)
+**Status:** Implemented (2026-03-12)
 
 **Scope:** `G.7`, `G.2`, `G.5`, `G.6`
 
@@ -244,17 +244,26 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 - Added capability-driven toolbox and cheatsheet filtering via `/api/health` tool availability, so unsupported local commands such as `msfconsole` no longer surface in the operator UI by default.
 - Started the repository split with report, session, and timeline repositories, and migrated writeup/session/platform/report-template flows plus writeup suggestion orchestration onto those wrappers.
 - Redirected `HomeClient` reporting imports toward domain entrypoints so the reporting domain can keep moving out of the composition root without breaking compatibility.
+- Extracted the session/platform linkage surface into domain components so the platform link panel and session-target modal no longer live inline inside `HomeClient`.
+- Migrated `/api/flags` and platform flag submission onto the shared contract/repository path, eliminating the last ad hoc validation and direct DB imports in the Wave 20 session/platform flows.
 
 #### Wave 21 — Reporting Handoff and Audience Packs
 
-**Status:** Planned
+**Status:** Implemented (2026-03-12)
 
-**Scope:** `R.15`, `D.9`, `R.16`
+**Scope:** `R.15`, `R.16` on top of the existing `D.9` CVSS severity foundation
 
 **Outcome:**
-- Add SysReptor handoff so Chronicle/report output can move into a dedicated downstream reporting platform.
-- Add report format presets, CVSS-linked severity workflow, and audience-specific output packs driven by the same Chronicle/report model.
-- Keep reporting data single-sourced so executive, technical, and certification-oriented views do not fork the evidence base.
+- Added audience-pack views (`executive`, `technical`, `certification`) and reusable report presets from the same Chronicle/report model instead of forking report state.
+- Added one-way SysReptor handoff generation so operators can move report output into a downstream reporting platform without introducing bi-directional sync or a second editor.
+- Kept CVSS-linked severity as the severity source of truth across report generation, export bundles, and SysReptor handoff payloads.
+
+**Implemented:**
+- Added shared report-view resolution so `/api/report` and all export routes can resolve audience packs and presets to one normalized output view.
+- Added audience-pack and preset metadata to report/export responses and the report modal, including new Chronicle controls for preset selection, audience switching, and direct SysReptor handoff download.
+- Added `POST /api/report/handoff/sysreptor`, which returns a one-way package descriptor containing a manifest, markdown report, findings JSON, and targets JSON.
+- Added OpenAPI coverage plus route/unit tests for audience-pack resolution, preset-based exports, and CVSS-linked SysReptor finding severity mapping.
+- HTML exports now embed a Plotly-powered attack timeline view derived from persisted session events, with explicit short-window rendering for single-timestamp evidence.
 
 #### Wave 22 — Shell Depth and Evidence Acquisition
 
@@ -311,7 +320,7 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 - Wave 19A: additive experimental offline-provider support plus review-first writeup suggestion APIs behind explicit runtime flags.
 - Wave 19B: additive adversarial challenge coaching behind explicit runtime flags and constrained to the existing coach workflow.
 - Wave 20: primarily internal architecture work across extracted client modules, constants, route schemas, and consistent error contracts.
-- Wave 21: additive report presets, audience-pack outputs, CVSS-linked severity workflow, and SysReptor handoff on top of the existing Chronicle/report pipeline.
+- Wave 21: implemented audience-pack outputs, preset-aware report/export views, and one-way SysReptor handoff on top of the existing Chronicle/report pipeline.
 - Wave 22: additive shell transport depth, shell-driven artifact pull, and shell/history ergonomics without replacing the current transcript/session model.
 - Wave 23: additive cross-session indexing, comparison, tagging, and scheduled execution on top of the existing multi-target session model.
 - Wave 24: additive collaboration and coach-quality controls after the product/runtime surface is structurally stable.
@@ -331,7 +340,7 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 - Wave 19A: offline AI and auto-writeup stay opt-in, bounded, and review-first so they do not silently mutate core evidence or reporting state.
 - Wave 19B: adversarial challenge guidance remains isolated from the core execution, evidence, and reporting paths.
 - Wave 20: extracted modules, route schemas, shared constants, and error envelopes reduce change risk across execute, graph, report, credential, shell, and artifact flows.
-- Wave 21: one Chronicle/report source can produce audience-specific outputs, CVSS-linked severity context, and SysReptor-ready handoff payloads without duplicate report models.
+- Wave 21: implemented one Chronicle/report source that now produces audience-specific outputs, CVSS-linked severity context, and SysReptor-ready handoff payloads without duplicate report models.
 - Wave 22: shell work is no longer limited to reverse-shell/webshell v1, and shell-pulled evidence retains transcript/session provenance inside the artifact store.
 - Wave 23: operators can search, compare, tag, and schedule across sessions without losing target or evidence context.
 - Wave 24: collaboration conflicts stay manageable, and coach trust improves through validation, comparison, feedback, and confidence signals without degrading the existing coach workflow.
@@ -384,10 +393,10 @@ All currently tracked GitHub / CI-CD items are completed through Wave 9.
 | R.9 | Report filtering: generate subset by severity, date range, or tag | Med | M |
 | R.10 | Before/after session comparison report (delta: new/remediated/changed findings) | Med | M |
 | R.11 | Finding deduplication + relationship tracking (`relatedFindingIds`) | Med | M |
-| D.9 | CVSS score integration (link calculator + persist severity ratings) | Low-Med | M |
+| D.9 | CVSS score integration (link calculator + persist severity ratings) | Implemented | M |
 | D.10 | Report format presets (Pentest / CTF / Bug Bounty) | Implemented | S |
-| R.15 | SysReptor bridge — hand off Chronicle/report output into SysReptor workflows using its reporting platform and certification-oriented templates | Med | H |
-| R.16 | Audience pack outputs — executive, technical, and certification-oriented report views from one Chronicle/report model | Med | M |
+| R.15 | SysReptor bridge — hand off Chronicle/report output into SysReptor workflows using its reporting platform and certification-oriented templates | Implemented | H |
+| R.16 | Audience pack outputs — executive, technical, and certification-oriented report views from one Chronicle/report model | Implemented | M |
 
 ### Execution Engine (NEW)
 
@@ -554,7 +563,7 @@ All currently tracked ops/infrastructure items are completed through Wave 10.5.
 - R.3 Auto-generated severity summary table in every report and export
 - R.7 Reusable report cover/header metadata block across modal and all export formats
 - R.12 Deterministic findings auto-tagging endpoint and editable finding tags
-- R.13 Responsive HTML export CSS media queries for mobile/tablet readability
+- R.13 Responsive HTML export CSS media queries for mobile/tablet readability, plus Plotly attack-timeline visualization in HTML exports
 - EX.5 Output pagination for large command results in the timeline UI
 - EX.7 Session env vars injected into child processes (`CTF_TARGET`, `CTF_SESSION_ID`, `CTF_WORDLIST_DIR`)
 - EX.8 Stderr progress parsing to `progress_pct` with running command progress bars
@@ -608,7 +617,7 @@ All currently tracked ops/infrastructure items are completed through Wave 10.5.
 - Mermaid diagram export (`GET /api/graph?mermaid=1`)
 - `app/lib/graph-derive.js` — pure regex extraction from timeline events
 - Vitest test infrastructure (Phase 1): unit tests for `findings`, `report-formats`, integration tests for findings routes
-- Multi-format export: DOCX (`docx` library), HTML (semantic template), JSON (structured)
+- Multi-format export: DOCX (`docx` library), HTML (semantic template + Plotly timeline chart), JSON (structured)
 - Findings tag editing and deterministic auto-tagging endpoint
 - SearchSploit runtime support in Docker with toolbox/cheatsheet integration
 - Wordlist browser and local flag tracking workflows in the sidebar

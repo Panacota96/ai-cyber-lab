@@ -77,4 +77,36 @@ describe('export bundle findings integration', () => {
     expect(html).toContain('@media (max-width: 768px)');
     expect(html).toContain('@media (max-width: 520px)');
   });
+
+  it('renders a Plotly attack timeline section when timeline events are provided', () => {
+    const html = buildStandaloneHtmlDocument({
+      title: 'Session Report',
+      session: { name: 'default' },
+      format: 'technical-walkthrough',
+      analystName: 'Tester',
+      markdown: '# Report\n\nSample text.',
+      reportMeta: { generatedAtIso: '2026-03-10T00:00:00.000Z' },
+      timeline: [
+        {
+          id: 'evt-1',
+          type: 'command',
+          command: 'nmap -Pn 10.10.10.10',
+          status: 'success',
+          timestamp: '2026-03-10T00:00:00.000Z',
+        },
+        {
+          id: 'evt-2',
+          type: 'note',
+          content: 'Confirmed SMB exposure.',
+          status: 'success',
+          timestamp: '2026-03-10T00:03:00.000Z',
+        },
+      ],
+    });
+
+    expect(html).toContain('Attack Timeline');
+    expect(html).toContain('attack-timeline-chart');
+    expect(html).toContain('cdn.plot.ly/plotly-2.35.2.min.js');
+    expect(html).toContain('nmap -Pn 10.10.10.10');
+  });
 });

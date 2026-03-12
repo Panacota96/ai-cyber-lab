@@ -2,34 +2,36 @@ import { NextResponse } from 'next/server';
 import { apiError } from '@/lib/api-error';
 import {
   buildExportBundle,
-  normalizeBoolean,
   sanitizeDownloadToken,
 } from '@/lib/export-utils';
 import { buildDocxReportBuffer } from '@/lib/export-docx';
-import { isValidSessionId } from '@/lib/security';
-import { normalizeAnalystName } from '@/lib/text-sanitize';
+import { readValidatedJsonBody } from '@/lib/api-route';
+import { ExportBundleRequestSchema } from '@/lib/route-contracts';
 
 export const runtime = 'nodejs';
 
 export async function POST(request) {
   try {
-    const payload = await request.json();
-    const sessionId = String(payload?.sessionId || '').trim();
-    const format = String(payload?.format || 'technical-walkthrough');
-    const analystName = normalizeAnalystName(payload?.analystName);
-    const inlineImages = normalizeBoolean(payload?.inlineImages, true);
-    const includeAppendix = normalizeBoolean(payload?.includeAppendix, true);
-    const reportFilters = payload?.reportFilters || {};
-
-    if (!sessionId || !isValidSessionId(sessionId)) {
-      return apiError('sessionId is required', 400);
-    }
+    const parsed = await readValidatedJsonBody(request, ExportBundleRequestSchema);
+    if (!parsed.success) return parsed.response;
+    const {
+      sessionId,
+      format,
+      audiencePack,
+      presetId,
+      analystName,
+      inlineImages = true,
+      includeAppendix = true,
+      reportFilters,
+    } = parsed.data;
 
     const bundle = buildExportBundle({
       sessionId,
       format,
+      audiencePack,
+      presetId,
       analystName,
-      inlineImages,
+      inlineImages: inlineImages !== false,
       reportFilters,
     });
     if (!bundle) {
@@ -44,8 +46,8 @@ export async function POST(request) {
       markdown: bundle.reportMarkdown,
       timeline: bundle.timeline,
       pocSteps: bundle.pocSteps,
-      includeAppendix,
-      inlineImages,
+      includeAppendix: includeAppendix !== false,
+      inlineImages: inlineImages !== false,
     });
 
     const sessionToken = sanitizeDownloadToken(bundle.session.name || sessionId, sessionId);

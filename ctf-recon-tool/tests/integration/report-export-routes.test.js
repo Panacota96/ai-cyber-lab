@@ -1,4 +1,5 @@
 import { GET as reportGet } from '@/api/report/route';
+import { POST as exportHtmlPost } from '@/api/export/html/route';
 import { POST as exportJsonPost } from '@/api/export/json/route';
 import { addTimelineEvent, createFinding } from '@/lib/db';
 import {
@@ -150,6 +151,38 @@ describe('report and export routes findings integration', () => {
     expect(body.meta.sessionName).toBe(session.name);
     expect(body.meta.formatLabel).toBeTruthy();
     expect(body.meta.includedFindingCount).toBe(1);
+  });
+
+  it('embeds a Plotly attack timeline section in HTML export', async () => {
+    const session = createTestSession();
+    sessions.push(session.id);
+
+    addTimelineEvent(session.id, {
+      type: 'command',
+      command: 'nmap -Pn 10.10.10.10',
+      output: 'Host is up',
+      status: 'success',
+    });
+    addTimelineEvent(session.id, {
+      type: 'note',
+      content: 'Confirmed SMB exposure after banner review.',
+      status: 'success',
+    });
+
+    const req = makeJsonRequest('/api/export/html', 'POST', {
+      sessionId: session.id,
+      format: 'technical-walkthrough',
+      analystName: 'Tester',
+      inlineImages: false,
+    });
+    const res = await exportHtmlPost(req);
+    expect(res.status).toBe(200);
+
+    const html = await res.text();
+    expect(html).toContain('Attack Timeline');
+    expect(html).toContain('attack-timeline-chart');
+    expect(html).toContain('cdn.plot.ly/plotly-2.35.2.min.js');
+    expect(html).toContain('nmap -Pn 10.10.10.10');
   });
 
   it('sanitizes analystName as plain text in generated reports', async () => {

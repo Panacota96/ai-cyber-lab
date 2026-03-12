@@ -34,8 +34,8 @@ format: knowledge-sync compatible
 ### Post-19B Wave Set — Waves 20-24 Planned
 **Status:** Active (2026-03-12)
 
-- **Wave 20 — Architecture and Contracts:** In progress with `G.7`, `G.2`, `G.5`, `G.6`.
-- **Wave 21 — Reporting Handoff and Audience Packs:** Planned with `R.15`, `D.9`, `R.16`.
+- **Wave 20 — Architecture and Contracts:** Implemented with `G.7`, `G.2`, `G.5`, `G.6`.
+- **Wave 21 — Reporting Handoff and Audience Packs:** Implemented with `R.15`, `R.16` on top of the existing `D.9` CVSS severity foundation.
 - **Wave 22 — Shell Depth and Evidence Acquisition:** Planned with `EX.13`, `CTF.15`, `C.8`.
 - **Wave 23 — Search and Cross-Session Analysis:** Planned with `C.3`, `C.4`, `C.9`, `C.10`.
 - **Wave 24 — Collaboration and Coach Quality:** Planned with `C.5`, `E.4`, `E.6`, `E.7`.
@@ -119,7 +119,7 @@ format: knowledge-sync compatible
 - The mode stays single-provider and compare-disabled so the experimental behavior is easier to reason about and remains isolated from the core operator workflow.
 
 ### Wave 20 — Architecture and Contracts
-**Status:** In Progress (2026-03-12)
+**Status:** Implemented (2026-03-12)
 
 - `G.7`, `G.2`, `G.5`, `G.6` will finish the `HomeClient` / persistence split, push extracted modules and route contracts further into TypeScript, and standardize route schemas plus error envelopes on top of the already-landed constants/CSS cleanup.
 - This wave is intentionally structural: it should reduce core-change risk before adding more operator-facing breadth.
@@ -130,12 +130,16 @@ format: knowledge-sync compatible
 - Reporting block helpers now live behind the reporting domain compatibility layer so auto-writeup suggestion flows no longer depend on stale report-block exports.
 - Toolbox and cheatsheet catalog entries now declare runtime requirements, `/api/health` exposes tool availability, and unsupported local commands like `msfconsole` are hidden instead of surfacing dead templates.
 - The first repository wrappers (`report`, `session`, `timeline`) are now in use for writeup/session/platform/report-template flows and writeup suggestion orchestration.
+- The session/platform surface is now split into `app/domains/session-targets-platform`, with the platform link panel and session-target modal extracted out of the `HomeClient` composition root.
+- `/api/flags` now uses the shared route-contract/error path, and platform flag submission reads through repository wrappers instead of direct DB imports.
 
 ### Wave 21 — Reporting Handoff and Audience Packs
-**Status:** Planned
+**Status:** Implemented (2026-03-12)
 
-- `R.15` will add SysReptor handoff from Chronicle/report output into a downstream reporting platform.
-- `D.9` and `R.16` will add CVSS-linked severity workflow and audience-pack outputs from the same Chronicle/report data instead of forking report state.
+- `R.15` now adds a one-way SysReptor handoff route and package descriptor built from the existing Chronicle/report/export bundle.
+- `R.16` now adds audience-pack report views plus preset-aware export metadata from the same Chronicle/report source instead of forking report state.
+- The Wave 16 `D.9` CVSS severity foundation is now reused directly in audience-pack outputs and SysReptor finding severity mapping rather than duplicated in a second severity model.
+- HTML export now embeds a Plotly-powered attack timeline visualization built from persisted session events, with explicit short-window rendering for single-timestamp evidence.
 
 ### Wave 22 — Shell Depth and Evidence Acquisition
 **Status:** Planned
@@ -182,7 +186,7 @@ format: knowledge-sync compatible
 ### Wave 8 — Deferred Small Item
 **Status:** Implemented (2026-03-10)
 
-- `R.13` HTML export now applies responsive CSS media queries (`1024px`, `768px`, `520px`) for tablet/mobile readability, including safer wrapping for metadata chips, code blocks, images, and tables.
+- `R.13` HTML export now applies responsive CSS media queries (`1024px`, `768px`, `520px`) for tablet/mobile readability, including safer wrapping for metadata chips, code blocks, images, and tables, and now embeds a Plotly attack-timeline chart ahead of the report body.
 
 ### Wave 7 — Repository and Ops Hygiene
 **Status:** Implemented (2026-03-10)
@@ -511,6 +515,7 @@ format: knowledge-sync compatible
 **What:** Link to CVSS calculator; store severity ratings in findings.
 **Files:** `app/HomeClient.js`, `app/lib/db.js`
 **Difficulty:** Medium | **Impact:** Low-Med
+**Status:** Implemented (2026-03-11). Persisted `cvssScore`/`cvssVector` now drive report severity context, risk scoring, and downstream audience-pack / SysReptor handoff severity mapping.
 
 ### D.10 — Report Format Presets
 **What:** Pre-built templates for Pentest, CTF, Bug Bounty engagement types.
@@ -522,13 +527,15 @@ format: knowledge-sync compatible
 **What:** Export or hand off Chronicle/report output into SysReptor so operators can continue inside a dedicated reporting platform after evidence collection and first-pass writeup work in Helm's Watch.
 **Why:** SysReptor is a strong downstream fit for certification- and client-facing reporting, especially for HTB-style workflows and structured report designs.
 **References:** https://docs.sysreptor.com/ · https://docs.sysreptor.com/htb-reporting-with-sysreptor/
-**Files:** `app/lib/export-utils.js`, `app/api/export/*`, future `app/api/report/sysreptor/*`
+**Files:** `app/lib/export-utils.js`, `app/lib/report-handoff.js`, `app/api/report/handoff/sysreptor/route.js`, `app/HomeClient.js`
 **Difficulty:** Hard | **Impact:** Medium
+**Status:** Implemented (2026-03-12). Added a one-way SysReptor handoff generator that emits a manifest, markdown report, findings JSON, and targets JSON from the existing report/export bundle.
 
 ### R.16 — Audience Pack Outputs
 **What:** Generate executive, technical, and certification-oriented report views from the same Chronicle/report data instead of maintaining separate report branches.
-**Files:** `app/lib/report-formats.js`, `app/lib/export-utils.js`, `app/api/report/route.js`, `app/api/export/*`, `app/HomeClient.js`
+**Files:** `app/lib/report-views.js`, `app/lib/export-utils.js`, `app/api/report/route.js`, `app/api/export/*`, `app/HomeClient.js`
 **Difficulty:** Medium | **Impact:** Medium
+**Status:** Implemented (2026-03-12). Added normalized audience-pack and preset resolution across `/api/report`, Markdown/HTML/JSON/DOCX exports, and the Chronicle report modal.
 
 ---
 
@@ -754,7 +761,7 @@ format: knowledge-sync compatible
 | 2026-03-10 | Wave 3 execution workflow completed — `UX.7`, `EX.7`, `EX.5`, `EX.9`, `EX.8`, `EX.11`, `UX.9`, `UX.10`, `R.14` delivered with grouped command history, retry API, progress bars, output pagination, report autosave, screenshot bulk selection polish, and screenshot caption/context metadata |
 | 2026-03-10 | Wave 6 UX polish completed — `UX.8`, `UX.4`, `UX.1`, `UX.2`, `UX.6`, `UX.12` delivered with persisted terminal/graph view, `G` + `?` shortcuts, shortcut reference modal, always-visible session breadcrumb target, richer empty-session onboarding, and class-based expanded/collapsed timeline visual indicators |
 | 2026-03-10 | Wave 7 repository and ops hygiene completed — Dependabot, reviewdog ESLint PR annotations, issue/PR templates, CODEOWNERS, MIT license, README badges, coverage badge workflow, Docker HEALTHCHECK, and Compose resource limits |
-| 2026-03-10 | Wave 8 deferred Small item completed — `R.13` responsive HTML export CSS media-query support for smaller screens |
+| 2026-03-10 | Wave 8 deferred Small item completed — `R.13` responsive HTML export CSS media-query support for smaller screens; later extended with Plotly attack-timeline visualization in the standalone HTML report |
 | 2026-03-11 | Wave 9 release delivery backbone completed — `GH.3`, `GH.9`, `GH.13`, `B.1` implemented with stable semver GHCR publishing, changelog-enforced GitHub releases, MkDocs Pages deployment, and multi-stage standalone Docker runtime |
 | 2026-03-11 | Wave 10 runtime/API consistency completed — `EX.6`, `CQ.3`, `G.1 (Phase 2)` delivered with bounded command queueing (`MAX_CONCURRENT_COMMANDS`), shared API middleware rollout, and expanded execute/security test coverage |
 | 2026-03-11 | Wave 10.5 runtime foundation completed — `EX.1`, `CTF.1`, `SEC.2`, `B.7` delivered with SSE execution streaming, session credential management, CSRF enforcement, and structured JSON logging |

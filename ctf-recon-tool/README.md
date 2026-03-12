@@ -51,10 +51,13 @@ The current product name is **Helm's Watch**. Some runtime identifiers still use
 - Structured findings storage with severity, remediation, and linked evidence.
 - Deterministic finding auto-tagging plus editable finding tags.
 - Executive-summary drafting, remediation suggestion helpers, and before/after session comparison reports in the Chronicle workflow.
+- Audience-pack reporting views (`executive`, `technical`, `certification`) and reusable report presets from the same Chronicle/report model.
 - PoC step recorder with ordering and export integration.
 - Session artifact manager for operator uploads and saved transcript output, with preview/download routes and report insertion hooks.
 - Read-only share-link snapshots for reports via unique `/share/[token]` URLs with operator-side revoke controls.
+- One-way SysReptor handoff export for downstream report-platform continuation without creating a second in-app report model.
 - Export targets: Markdown, PDF, HTML, JSON, and DOCX.
+- HTML exports now include an interactive Plotly-based attack timeline generated from persisted session events.
 - PDF themes: `terminal-dark`, `professional`, `minimal`, and `htb-professional`.
 - Report outputs now include reusable session cover metadata and severity summary tables.
 
@@ -76,7 +79,7 @@ The current product name is **Helm's Watch**. Some runtime identifiers still use
 - Security controls for command execution, admin APIs, API token enforcement, CSRF enforcement, and CSP headers.
 - Structured JSON logging is available via `LOG_FORMAT=json`.
 - Repo-level GitHub Actions for CI, tests, security scanning, CodeQL, and changelog enforcement.
-- Bundled operator tooling includes SearchSploit in Docker, with Exploit-DB references and capability-gated local tool templates exposed in the toolbox/cheatsheet.
+- Bundled operator tooling includes SearchSploit in Docker, with Exploit-DB references and capability-gated local tool templates exposed in the toolbox/cheatsheet only when the runtime provides the required binary.
 - Docker runtime also bundles `john` and `hashcat` for the credential hash-identification workflow.
 
 ## Stack
@@ -185,6 +188,7 @@ Copy `.env.example` to `.env` when you want explicit local configuration.
 - Backend reference: [../docs/backend/API_REFERENCE.md](../docs/backend/API_REFERENCE.md)
 - OpenAPI JSON: `/api/docs`
 - Swagger UI: `/api/docs?ui=1`
+- SysReptor handoff route: `POST /api/report/handoff/sysreptor`
 - Product roadmap: [./docs/ROADMAP.md](./docs/ROADMAP.md)
 - Improvement backlog: [./docs/improvement-backlog.md](./docs/improvement-backlog.md)
 
@@ -217,18 +221,23 @@ Use the codebase by subsystem rather than the older single-file MVP model:
 - `app/page.js` - thin Next.js page wrapper
 - `app/HomeClient.js` - primary desktop UI shell and composition root
 - `app/components/` - extracted UI modules such as sidebar panels
+- `app/domains/` - domain-owned components, hooks, and helpers for reporting, toolbox, and session/platform surfaces
 - `app/hooks/` - client hooks for API access, execution streaming, shell state, artifacts, and focused state
 - `app/api/` - session, timeline, execute, shell, artifact, report, export, findings, PoC, coach, media, admin, and docs routes
-- `app/lib/` - DB access, repository/services for shells and artifacts, report formats, export builders, runtime helpers, validation, graph schemas, and security utilities
+- `app/lib/` - DB access, repositories/services, report formats, export builders, runtime helpers, validation, graph schemas, and security utilities
+- `app/lib/repositories/` - compatibility-first repository layer extracted from the DB facade
 - `docs/` - roadmap and improvement backlog for the app
 - `templates/` - operator templates and scaffolds
 - `examples/` - reference report material
 
 ## Current export and report behavior
+- Audience packs (`executive`, `technical`, `certification`) and report presets resolve from one Chronicle/report source instead of duplicating report state.
 - `technical-walkthrough` and `pentest` can include findings and PoC sections.
 - All report formats include cover/header metadata, and findings-backed severity summaries render when findings exist.
+- SysReptor handoff packages include a manifest, markdown report, findings JSON, and targets JSON for downstream import/mapping work.
 - JSON exports include session metadata, generated report markdown, timeline, findings, PoC steps, credentials, shell sessions/transcripts, artifacts, and writeup content.
 - HTML and DOCX exports use the shared report-generation bundle so they stay aligned with Markdown and PDF output.
+- The HTML report embeds a Plotly attack-timeline section ahead of the report body. The chart uses the pinned Plotly CDN and renders single-timestamp events as short visibility windows instead of true measured durations.
 
 ## Testing and delivery guardrails
 - Vitest is configured for isolated local test execution with a temporary data directory.

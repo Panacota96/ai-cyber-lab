@@ -710,11 +710,40 @@ const SPEC = {
         operationId: 'generateReport',
         parameters: [
           { name: 'sessionId', in: 'query', required: true, schema: { type: 'string' } },
-          { name: 'format', in: 'query', schema: { type: 'string', enum: ['lab-report', 'executive-summary', 'technical-walkthrough', 'ctf-solution', 'bug-bounty', 'pentest'], default: 'technical-walkthrough' } },
+          { name: 'format', in: 'query', schema: { type: 'string', enum: ['lab-report', 'executive-summary', 'technical-walkthrough', 'ctf-solution', 'bug-bounty', 'pentest'] } },
+          { name: 'audiencePack', in: 'query', schema: { type: 'string', enum: ['executive', 'technical', 'certification'] } },
+          { name: 'presetId', in: 'query', schema: { type: 'string', enum: ['executive-brief', 'technical-deep-dive', 'certification-writeup'] } },
           { name: 'analystName', in: 'query', schema: { type: 'string' } },
+          { name: 'minimumSeverity', in: 'query', schema: { type: 'string' } },
+          { name: 'tag', in: 'query', schema: { type: 'string' } },
+          { name: 'techniqueId', in: 'query', schema: { type: 'string' } },
+          { name: 'includeDuplicates', in: 'query', schema: { type: 'boolean' } },
         ],
         responses: {
-          '200': { description: 'Markdown report', content: { 'application/json': { schema: { type: 'object', properties: { report: { type: 'string' } } } } } },
+          '200': {
+            description: 'Markdown report',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    report: { type: 'string' },
+                    reportFilters: { type: 'object', additionalProperties: true },
+                    view: {
+                      type: 'object',
+                      properties: {
+                        format: { type: 'string' },
+                        audiencePack: { type: 'string' },
+                        audienceLabel: { type: 'string' },
+                        presetId: { type: 'string', nullable: true },
+                        presetLabel: { type: 'string', nullable: true },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -947,7 +976,23 @@ const SPEC = {
         operationId: 'exportMarkdown',
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' }, format: { type: 'string' }, analystName: { type: 'string' }, inlineImages: { type: 'boolean', default: true } } } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  format: { type: 'string' },
+                  audiencePack: { type: 'string', enum: ['executive', 'technical', 'certification'] },
+                  presetId: { type: 'string', enum: ['executive-brief', 'technical-deep-dive', 'certification-writeup'] },
+                  analystName: { type: 'string' },
+                  inlineImages: { type: 'boolean', default: true },
+                  reportFilters: { type: 'object', additionalProperties: true },
+                },
+              },
+            },
+          },
         },
         responses: { '200': { description: 'Markdown file download' } },
       },
@@ -958,7 +1003,23 @@ const SPEC = {
         operationId: 'exportHtml',
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' }, format: { type: 'string' }, analystName: { type: 'string' }, inlineImages: { type: 'boolean', default: true } } } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  format: { type: 'string' },
+                  audiencePack: { type: 'string', enum: ['executive', 'technical', 'certification'] },
+                  presetId: { type: 'string', enum: ['executive-brief', 'technical-deep-dive', 'certification-writeup'] },
+                  analystName: { type: 'string' },
+                  inlineImages: { type: 'boolean', default: true },
+                  reportFilters: { type: 'object', additionalProperties: true },
+                },
+              },
+            },
+          },
         },
         responses: { '200': { description: 'HTML file download', content: { 'text/html': {} } } },
       },
@@ -969,7 +1030,23 @@ const SPEC = {
         operationId: 'exportJsonBundle',
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['sessionId'], properties: { sessionId: { type: 'string' }, format: { type: 'string' }, analystName: { type: 'string' }, inlineImages: { type: 'boolean', default: false } } } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  format: { type: 'string' },
+                  audiencePack: { type: 'string', enum: ['executive', 'technical', 'certification'] },
+                  presetId: { type: 'string', enum: ['executive-brief', 'technical-deep-dive', 'certification-writeup'] },
+                  analystName: { type: 'string' },
+                  inlineImages: { type: 'boolean', default: false },
+                  reportFilters: { type: 'object', additionalProperties: true },
+                },
+              },
+            },
+          },
         },
         responses: { '200': { description: 'JSON bundle file download', content: { 'application/json': {} } } },
       },
@@ -988,9 +1065,12 @@ const SPEC = {
                 properties: {
                   sessionId: { type: 'string' },
                   format: { type: 'string' },
+                  audiencePack: { type: 'string', enum: ['executive', 'technical', 'certification'] },
+                  presetId: { type: 'string', enum: ['executive-brief', 'technical-deep-dive', 'certification-writeup'] },
                   analystName: { type: 'string' },
                   inlineImages: { type: 'boolean', default: true },
                   includeAppendix: { type: 'boolean', default: true },
+                  reportFilters: { type: 'object', additionalProperties: true },
                 },
               },
             },
@@ -1001,6 +1081,39 @@ const SPEC = {
             description: 'DOCX file download',
             content: { 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': {} },
           },
+        },
+      },
+    },
+    '/report/handoff/sysreptor': {
+      post: {
+        summary: 'Generate a one-way SysReptor handoff package descriptor',
+        operationId: 'generateSysreptorHandoff',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  format: { type: 'string' },
+                  audiencePack: { type: 'string', enum: ['executive', 'technical', 'certification'] },
+                  presetId: { type: 'string', enum: ['executive-brief', 'technical-deep-dive', 'certification-writeup'] },
+                  analystName: { type: 'string' },
+                  inlineImages: { type: 'boolean', default: false },
+                  reportFilters: { type: 'object', additionalProperties: true },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'SysReptor handoff descriptor and file payloads' },
+          '400': { description: 'Validation failed' },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Session not found' },
         },
       },
     },

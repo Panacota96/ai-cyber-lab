@@ -6,6 +6,7 @@ import { apiError } from '@/lib/api-error';
 import { readValidatedSearchParams, withErrorHandler } from '@/lib/api-route';
 import { logger } from '@/lib/logger';
 import { ReportQuerySchema } from '@/lib/route-contracts';
+import { resolveReportView } from '@/lib/report-views';
 import { normalizeAnalystName } from '@/lib/text-sanitize';
 
 const FORMATS = {
@@ -32,7 +33,9 @@ export const GET = withErrorHandler(async (request) => {
 
   const {
     sessionId,
-    format = 'technical-walkthrough',
+    format,
+    audiencePack,
+    presetId,
     analystName: rawAnalystName,
     minimumSeverity,
     tag,
@@ -41,11 +44,17 @@ export const GET = withErrorHandler(async (request) => {
   } = parsed.data;
   const analystName = normalizeAnalystName(rawAnalystName);
   const generatedAt = new Date();
-  const reportFilters = normalizeReportFilters({
+  const requestedFilters = normalizeReportFilters({
     minimumSeverity,
     tag,
     techniqueId,
     includeDuplicates: parseBoolean(includeDuplicates, false),
+  });
+  const view = resolveReportView({
+    format,
+    audiencePack,
+    presetId,
+    reportFilters: requestedFilters,
   });
 
   try {
@@ -55,23 +64,33 @@ export const GET = withErrorHandler(async (request) => {
     }
 
     const events = getTimelineEvents(sessionId);
-    const formatNeedsPoc = format === 'technical-walkthrough' || format === 'pentest';
-    const pocSteps = formatNeedsPoc
-      ? listPocSteps(sessionId)
-      : [];
+    const resolvedFormat = view.format;
+    const resolvedFilters = view.reportFilters;
+    const formatNeedsResolvedPoc = resolvedFormat === 'technical-walkthrough' || resolvedFormat === 'pentest';
+    const pocSteps = formatNeedsResolvedPoc ? listPocSteps(sessionId) : [];
     const findings = listFindings(sessionId);
     const credentials = listCredentials(sessionId);
-    const generator = FORMATS[format] || labReport;
+    const generator = FORMATS[resolvedFormat] || labReport;
     const report = generator(session, events, analystName, {
       pocSteps,
       findings,
       allFindings: findings,
-      reportFilters,
+      reportFilters: resolvedFilters,
       credentials,
       generatedAt,
     });
 
-    return NextResponse.json({ report, reportFilters });
+    return NextResponse.json({
+      report,
+      reportFilters: resolvedFilters,
+      view: {
+        format: view.format,
+        audiencePack: view.audiencePack,
+        audienceLabel: view.audienceDefinition?.label || view.audiencePack,
+        presetId: view.presetId || null,
+        presetLabel: view.presetDefinition?.label || null,
+      },
+    });
   } catch (error) {
     logger.error('Report generation failed', error);
     return apiError('Internal Server Error', 500);

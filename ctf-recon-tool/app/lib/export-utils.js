@@ -25,6 +25,7 @@ import {
   pentestReport,
   buildReportMeta,
 } from '@/lib/report-formats';
+import { resolveReportView } from '@/lib/report-views';
 import { detectImageFormat, imageFormatToMime } from '@/lib/image-sniff';
 import { isValidSessionId, requireSafeFilename, resolvePathWithin } from '@/lib/security';
 import { normalizeAnalystName } from '@/lib/text-sanitize';
@@ -58,6 +59,113 @@ export function sanitizeDownloadToken(value, fallback = 'report') {
     .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/(^-|-$)/g, '');
   return cleaned || fallback;
+}
+
+const TIMELINE_CHART_COLORS = {
+  command: '#00f5ff',
+  note: '#ff8ee4',
+  screenshot: '#7dfc00',
+  flag: '#ffb347',
+  credential: '#9ee8ff',
+  default: '#89a8b8',
+};
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function parseTimelineTimestamp(value) {
+  const timestamp = Date.parse(String(value || ''));
+  if (!Number.isFinite(timestamp)) return null;
+  return timestamp;
+}
+
+function truncateTimelineLabel(value, maxLength = 72) {
+  const normalized = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!normalized) return 'Timeline event';
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function summarizeTimelineEvent(event = {}) {
+  const type = String(event.type || '').trim().toLowerCase();
+  if (type === 'command') return truncateTimelineLabel(event.command || 'Command');
+  if (type === 'note') return truncateTimelineLabel(event.content || event.tag || 'Analyst note');
+  if (type === 'screenshot') return truncateTimelineLabel(event.name || event.filename || 'Screenshot captured');
+  if (type === 'flag') return truncateTimelineLabel(event.content || event.name || 'Flag captured');
+  if (type === 'credential') return truncateTimelineLabel(event.content || event.name || 'Credential recorded');
+  return truncateTimelineLabel(event.content || event.command || event.name || type || 'Timeline event');
+}
+
+function describeTimelineEventType(type) {
+  const normalized = String(type || '').trim().toLowerCase();
+  if (!normalized) return 'Event';
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function getTimelineChartColor(type) {
+  const normalized = String(type || '').trim().toLowerCase();
+  return TIMELINE_CHART_COLORS[normalized] || TIMELINE_CHART_COLORS.default;
+}
+
+function getTimelineChartDurationMs(event, nextTimestampMs) {
+  const type = String(event?.type || '').trim().toLowerCase();
+  const baseDurationMs = type === 'command' ? 120000 : 60000;
+  const minDurationMs = type === 'command' ? 30000 : 20000;
+  const maxDurationMs = type === 'command' ? 300000 : 120000;
+  if (!Number.isFinite(nextTimestampMs)) {
+    return baseDurationMs;
+  }
+  return clamp(nextTimestampMs - parseTimelineTimestamp(event?.timestamp), minDurationMs, maxDurationMs);
+}
+
+export function buildTimelineChartData(events = []) {
+  const source = Array.isArray(events) ? events : [];
+  const normalized = source
+    .map((event) => {
+      const timestampMs = parseTimelineTimestamp(event?.timestamp);
+      if (!Number.isFinite(timestampMs)) return null;
+      return { event, timestampMs };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.timestampMs - right.timestampMs);
+
+  if (normalized.length === 0) return null;
+
+  const entries = normalized.map(({ event, timestampMs }, index) => {
+    const nextTimestampMs = normalized[index + 1]?.timestampMs;
+    const durationMs = getTimelineChartDurationMs(event, nextTimestampMs);
+    const endTimestampMs = timestampMs + durationMs;
+    const startedAt = new Date(timestampMs);
+    const endedAt = new Date(endTimestampMs);
+    const summary = summarizeTimelineEvent(event);
+    const typeLabel = describeTimelineEventType(event?.type);
+    const statusLabel = String(event?.status || 'recorded').trim() || 'recorded';
+    const timeLabel = startedAt.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    return {
+      id: String(event?.id || `timeline-${index}`),
+      label: `${timeLabel} · ${summary}`,
+      summary,
+      type: String(event?.type || '').trim().toLowerCase() || 'event',
+      typeLabel,
+      statusLabel,
+      start: startedAt.toISOString(),
+      end: endedAt.toISOString(),
+      startDisplay: startedAt.toLocaleString(),
+      endDisplay: endedAt.toLocaleString(),
+      durationMs,
+      color: getTimelineChartColor(event?.type),
+    };
+  });
+
+  return {
+    entries,
+    caption: 'Timeline events are stored with a single timestamp; single-point events are rendered as short windows for chart visibility.',
+  };
 }
 
 function parseMediaPath(rawUrl) {
@@ -172,7 +280,9 @@ function parseWriteupSnapshot(writeup) {
 
 export function buildExportBundle({
   sessionId,
-  format = 'technical-walkthrough',
+  format = '',
+  audiencePack = '',
+  presetId = '',
   analystName = 'Unknown',
   inlineImages = false,
   reportFilters = {},
@@ -186,7 +296,13 @@ export function buildExportBundle({
   const timeline = getTimeline(sessionId);
   const pocSteps = listPocSteps(sessionId);
   const findings = listFindings(sessionId);
-  const normalizedReportFilters = normalizeReportFilters(reportFilters);
+  const view = resolveReportView({
+    format,
+    audiencePack,
+    presetId,
+    reportFilters,
+  });
+  const normalizedReportFilters = view.reportFilters;
   const reportFindings = filterFindings(findings, normalizedReportFilters);
   const findingIntelligence = {
     riskMatrix: buildRiskMatrix(reportFindings),
@@ -202,8 +318,8 @@ export function buildExportBundle({
   );
   const artifacts = listArtifacts(sessionId);
   const generatedAt = new Date();
-  const formatGenerator = FORMATS[format] || technicalWalkthrough;
-  const reportMeta = buildReportMeta(session, format, safeAnalystName, generatedAt);
+  const formatGenerator = FORMATS[view.format] || technicalWalkthrough;
+  const reportMeta = buildReportMeta(session, view.format, safeAnalystName, generatedAt);
   const reportMarkdownRaw = formatGenerator(session, timeline, safeAnalystName, {
     pocSteps,
     findings: reportFindings,
@@ -221,7 +337,10 @@ export function buildExportBundle({
 
   return {
     session,
-    format,
+    format: view.format,
+    audiencePack: view.audiencePack,
+    presetId: view.presetId,
+    view,
     analystName: safeAnalystName,
     reportMeta,
     reportMarkdown,
@@ -250,6 +369,13 @@ function escapeHtml(text) {
 
 function escapeAttr(text) {
   return escapeHtml(text).replace(/`/g, '&#96;');
+}
+
+function serializeJsonForScript(value) {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
 }
 
 function renderInline(text) {
@@ -406,6 +532,7 @@ export function buildStandaloneHtmlDocument({
   analystName,
   markdown,
   reportMeta,
+  timeline = [],
 }) {
   const contentHtml = markdownToHtmlContent(markdown);
   const generatedAt = reportMeta?.generatedAtIso || new Date().toISOString();
@@ -413,6 +540,73 @@ export function buildStandaloneHtmlDocument({
   const target = session?.target ? `<span class="meta-chip">Target: ${escapeHtml(session.target)}</span>` : '';
   const difficulty = session?.difficulty ? `<span class="meta-chip">Difficulty: ${escapeHtml(String(session.difficulty).toUpperCase())}</span>` : '';
   const objective = session?.objective ? `<span class="meta-chip">Objective: ${escapeHtml(session.objective)}</span>` : '';
+  const timelineChart = buildTimelineChartData(timeline);
+  const timelinePanel = timelineChart
+    ? `
+    <section class="timeline-panel">
+      <div class="timeline-head">
+        <h2>Attack Timeline</h2>
+        <p class="timeline-caption">${escapeHtml(timelineChart.caption)}</p>
+      </div>
+      <div id="attack-timeline-chart" class="timeline-chart" aria-label="Attack timeline gantt chart"></div>
+    </section>`
+    : '';
+  const timelineScript = timelineChart
+    ? `
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script>
+    (function () {
+      const timelineChart = ${serializeJsonForScript(timelineChart)};
+      if (!timelineChart || !Array.isArray(timelineChart.entries) || timelineChart.entries.length === 0 || !window.Plotly) {
+        return;
+      }
+      const entries = timelineChart.entries;
+      const trace = {
+        type: 'bar',
+        orientation: 'h',
+        base: entries.map((entry) => entry.start),
+        x: entries.map((entry) => entry.durationMs),
+        y: entries.map((entry) => entry.label),
+        marker: {
+          color: entries.map((entry) => entry.color),
+          line: {
+            color: 'rgba(6, 11, 19, 0.65)',
+            width: 1,
+          },
+        },
+        customdata: entries.map((entry) => [
+          entry.typeLabel,
+          entry.statusLabel,
+          entry.startDisplay,
+          entry.endDisplay,
+          entry.summary,
+        ]),
+        hovertemplate: '<b>%{y}</b><br>Type: %{customdata[0]}<br>Status: %{customdata[1]}<br>Start: %{customdata[2]}<br>Window end: %{customdata[3]}<br>%{customdata[4]}<extra></extra>',
+      };
+      const layout = {
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(8, 13, 21, 0.92)',
+        margin: { l: 170, r: 24, t: 18, b: 48 },
+        height: Math.max(320, entries.length * 36 + 110),
+        showlegend: false,
+        bargap: 0.28,
+        xaxis: {
+          type: 'date',
+          gridcolor: 'rgba(137, 168, 184, 0.14)',
+          tickfont: { color: '#89a8b8', size: 11 },
+          title: { text: 'Session time', font: { color: '#89a8b8', size: 12 } },
+        },
+        yaxis: {
+          autorange: 'reversed',
+          tickfont: { color: '#d4e7ee', size: 11 },
+          automargin: true,
+        },
+      };
+      const config = { responsive: true, displayModeBar: false };
+      window.Plotly.newPlot('attack-timeline-chart', [trace], layout, config);
+    })();
+  </script>`
+    : '';
 
   return `<!doctype html>
 <html lang="en">
@@ -457,6 +651,36 @@ export function buildStandaloneHtmlDocument({
       border-radius: 12px;
       padding: 1.1rem 1.2rem;
       overflow-wrap: anywhere;
+    }
+    .timeline-panel {
+      border: 1px solid var(--border);
+      background: rgba(8, 13, 21, 0.88);
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+      margin-bottom: 1rem;
+    }
+    .timeline-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.6rem;
+    }
+    .timeline-head h2 {
+      margin: 0;
+      color: var(--accent);
+      font-size: 1rem;
+    }
+    .timeline-caption {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.77rem;
+      max-width: 46rem;
+    }
+    .timeline-chart {
+      min-height: 320px;
+      width: 100%;
     }
     h1,h2,h3 { margin-top: 1rem; margin-bottom: 0.45rem; line-height: 1.3; }
     h1 { font-size: 1.42rem; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
@@ -526,15 +750,19 @@ export function buildStandaloneHtmlDocument({
       body { padding: 1.1rem; }
       .wrap { max-width: 960px; }
       .head { padding: 0.9rem 1rem; }
+      .timeline-panel { padding: 0.9rem 1rem; }
       article { padding: 1rem; }
     }
     @media (max-width: 768px) {
       body { padding: 0.85rem; line-height: 1.58; }
       .wrap { max-width: 100%; }
       .head { border-radius: 10px; padding: 0.82rem 0.86rem; }
+      .timeline-panel { border-radius: 10px; padding: 0.82rem 0.86rem; }
       .title { font-size: 1.05rem; margin-bottom: 0.3rem; }
       .meta { display: grid; grid-template-columns: 1fr; gap: 0.34rem; }
       .meta-chip { width: 100%; font-size: 0.82rem; padding: 0.24rem 0.5rem; }
+      .timeline-head { align-items: flex-start; }
+      .timeline-chart { min-height: 280px; }
       article { border-radius: 10px; padding: 0.86rem 0.82rem; }
       h1 { font-size: 1.2rem; }
       h2 { font-size: 1.02rem; }
@@ -549,6 +777,7 @@ export function buildStandaloneHtmlDocument({
       body { padding: 0.62rem; }
       .title { font-size: 0.98rem; }
       .meta-chip { font-size: 0.79rem; }
+      .timeline-panel { padding: 0.72rem 0.68rem; }
       article { padding: 0.7rem 0.65rem; }
       h1 { font-size: 1.08rem; }
       p, li, blockquote { font-size: 0.9rem; }
@@ -590,11 +819,13 @@ export function buildStandaloneHtmlDocument({
         ${objective}
       </div>
     </section>
+${timelinePanel}
     <article>
 ${contentHtml}
     </article>
     <footer>Exported by Helm's Watch</footer>
   </div>
+${timelineScript}
 </body>
 </html>`;
 }

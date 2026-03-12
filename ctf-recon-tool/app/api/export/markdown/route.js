@@ -2,30 +2,32 @@ import { apiError } from '@/lib/api-error';
 import { NextResponse } from 'next/server';
 import {
   buildExportBundle,
-  normalizeBoolean,
   sanitizeDownloadToken,
 } from '@/lib/export-utils';
-import { isValidSessionId } from '@/lib/security';
-import { normalizeAnalystName } from '@/lib/text-sanitize';
+import { readValidatedJsonBody } from '@/lib/api-route';
+import { ExportBundleRequestSchema } from '@/lib/route-contracts';
 
 export async function POST(request) {
   try {
-    const payload = await request.json();
-    const sessionId = String(payload?.sessionId || '').trim();
-    const format = payload?.format || 'technical-walkthrough';
-    const analystName = normalizeAnalystName(payload?.analystName);
-    const inlineImages = normalizeBoolean(payload?.inlineImages, true);
-    const reportFilters = payload?.reportFilters || {};
-
-    if (!sessionId || !isValidSessionId(sessionId)) {
-      return apiError('sessionId is required', 400);
-    }
+    const parsed = await readValidatedJsonBody(request, ExportBundleRequestSchema);
+    if (!parsed.success) return parsed.response;
+    const {
+      sessionId,
+      format,
+      audiencePack,
+      presetId,
+      analystName,
+      inlineImages = true,
+      reportFilters,
+    } = parsed.data;
 
     const bundle = buildExportBundle({
       sessionId,
       format,
+      audiencePack,
+      presetId,
       analystName,
-      inlineImages,
+      inlineImages: inlineImages !== false,
       reportFilters,
     });
 

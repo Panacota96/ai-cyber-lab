@@ -13,6 +13,9 @@ const REPORT_FORMATS = [
   'bug-bounty',
   'pentest',
 ] as const;
+const REPORT_AUDIENCE_PACKS = ['executive', 'technical', 'certification'] as const;
+const REPORT_PRESET_IDS = ['executive-brief', 'technical-deep-dive', 'certification-writeup'] as const;
+const FLAG_STATUSES = ['captured', 'submitted', 'accepted', 'rejected'] as const;
 
 function normalizeTrimmedString(value: unknown) {
   if (value === null || value === undefined) return undefined;
@@ -146,6 +149,8 @@ export const SessionTargetPatchSchema = z.object({
 export const ReportQuerySchema = z.object({
   sessionId: sessionIdSchema,
   format: z.enum(REPORT_FORMATS).optional(),
+  audiencePack: z.enum(REPORT_AUDIENCE_PACKS).optional(),
+  presetId: z.enum(REPORT_PRESET_IDS).optional(),
   analystName: optionalTrimmedString(255),
   minimumSeverity: optionalTrimmedString(32),
   tag: optionalTrimmedString(64),
@@ -221,6 +226,27 @@ export const WriteupShareCreateSchema = z.object({
   meta: metadataSchema.optional(),
 });
 
+export const ExportBundleRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  format: z.enum(REPORT_FORMATS).optional(),
+  audiencePack: z.enum(REPORT_AUDIENCE_PACKS).optional(),
+  presetId: z.enum(REPORT_PRESET_IDS).optional(),
+  analystName: optionalTrimmedString(255),
+  inlineImages: booleanLikeSchema.optional(),
+  includeAppendix: booleanLikeSchema.optional(),
+  reportFilters: reportFiltersSchema.optional().default({}),
+});
+
+export const SysreptorHandoffRequestSchema = z.object({
+  sessionId: sessionIdSchema,
+  format: z.enum(REPORT_FORMATS).optional(),
+  audiencePack: z.enum(REPORT_AUDIENCE_PACKS).optional(),
+  presetId: z.enum(REPORT_PRESET_IDS).optional(),
+  analystName: optionalTrimmedString(255),
+  inlineImages: booleanLikeSchema.optional(),
+  reportFilters: reportFiltersSchema.optional().default({}),
+});
+
 export const WriteupSharePatchSchema = z.object({
   sessionId: sessionIdSchema,
   id: requiredTrimmedString(128),
@@ -285,4 +311,32 @@ export const PlatformSessionLinkSchema = z.object({
 export const PlatformSubmitFlagSchema = z.object({
   sessionId: defaultSessionIdSchema,
   flagId: z.coerce.number().int().positive(),
+});
+
+export const FlagListQuerySchema = z.object({
+  sessionId: defaultSessionIdSchema,
+});
+
+export const FlagDeleteQuerySchema = z.object({
+  sessionId: defaultSessionIdSchema,
+  id: z.coerce.number().int().positive(),
+});
+
+export const FlagCreateSchema = z.object({
+  sessionId: defaultSessionIdSchema,
+  value: requiredTrimmedString(255),
+  status: z.enum(FLAG_STATUSES).optional().default('captured'),
+  notes: z.preprocess((value) => (value === undefined || value === null ? '' : String(value)), z.string()).optional().default(''),
+  metadata: metadataSchema.optional(),
+  submittedAt: nullableTrimmedString(128),
+});
+
+export const FlagPatchSchema = z.object({
+  sessionId: defaultSessionIdSchema,
+  id: z.coerce.number().int().positive(),
+  value: optionalTrimmedString(255),
+  status: z.enum(FLAG_STATUSES).optional(),
+  notes: z.preprocess((value) => (value === undefined ? undefined : value === null ? '' : String(value)), z.string().optional()),
+  metadata: metadataSchema.optional(),
+  submittedAt: nullableTrimmedString(128),
 });

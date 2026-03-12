@@ -2,11 +2,10 @@ import { NextResponse } from 'next/server';
 import { apiError } from '@/lib/api-error';
 import {
   buildExportBundle,
-  normalizeBoolean,
   sanitizeDownloadToken,
 } from '@/lib/export-utils';
-import { isValidSessionId } from '@/lib/security';
-import { normalizeAnalystName } from '@/lib/text-sanitize';
+import { readValidatedJsonBody } from '@/lib/api-route';
+import { ExportBundleRequestSchema } from '@/lib/route-contracts';
 
 function getAppVersion() {
   return process.env.NEXT_PUBLIC_APP_VERSION || 'unknown';
@@ -14,22 +13,25 @@ function getAppVersion() {
 
 export async function POST(request) {
   try {
-    const payload = await request.json();
-    const sessionId = String(payload?.sessionId || '').trim();
-    const format = String(payload?.format || 'technical-walkthrough');
-    const analystName = normalizeAnalystName(payload?.analystName);
-    const inlineImages = normalizeBoolean(payload?.inlineImages, false);
-    const reportFilters = payload?.reportFilters || {};
-
-    if (!sessionId || !isValidSessionId(sessionId)) {
-      return apiError('sessionId is required', 400);
-    }
+    const parsed = await readValidatedJsonBody(request, ExportBundleRequestSchema);
+    if (!parsed.success) return parsed.response;
+    const {
+      sessionId,
+      format,
+      audiencePack,
+      presetId,
+      analystName,
+      inlineImages = false,
+      reportFilters,
+    } = parsed.data;
 
     const bundle = buildExportBundle({
       sessionId,
       format,
+      audiencePack,
+      presetId,
       analystName,
-      inlineImages,
+      inlineImages: inlineImages === true,
       reportFilters,
     });
     if (!bundle) {
@@ -41,6 +43,10 @@ export async function POST(request) {
         exportedAt: new Date().toISOString(),
         appVersion: getAppVersion(),
         format: bundle.format,
+        audiencePack: bundle.audiencePack,
+        audienceLabel: bundle.view?.audienceDefinition?.label || bundle.audiencePack,
+        presetId: bundle.presetId || null,
+        presetLabel: bundle.view?.presetDefinition?.label || null,
         analystName: bundle.analystName,
         sessionName: bundle.reportMeta?.sessionName || bundle.session.name,
         target: bundle.reportMeta?.target || bundle.session.target || null,

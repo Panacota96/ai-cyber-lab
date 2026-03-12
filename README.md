@@ -9,7 +9,7 @@
 
 AI Cyber Lab is the repository that houses Helm's Watch, a desktop-first cyber lab workspace for CTF, lab, and pentest documentation.
 
-Current application release: **v0.3.0**
+Current application release: **v0.4.0**
 
 ## Start Here
 - [Application README](./ctf-recon-tool/README.md)
@@ -35,6 +35,7 @@ Helm's Watch is the current operator workspace in this repo. It combines:
 - timeline-first session tracking for commands, notes, screenshots, findings, and PoC steps
 - AI Coach and AI Reporter workflows
 - report generation in six formats with Markdown, PDF, HTML, JSON, and DOCX exports
+- interactive Plotly attack-timeline visualization inside HTML report exports
 - SQLite-backed persistence and Docker-first operation
 
 For implementation details, setup, and current feature coverage, use the [application README](./ctf-recon-tool/README.md).
