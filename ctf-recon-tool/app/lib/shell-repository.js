@@ -1,6 +1,7 @@
 import { getDbConnection, resolveSessionTargetId } from '@/lib/db';
 import { requireValidSessionId } from '@/lib/security';
 import { normalizePlainText, stripAnsiAndControl } from '@/lib/text-sanitize';
+import crypto from 'crypto';
 
 const db = getDbConnection();
 
@@ -61,7 +62,8 @@ for (const sql of [
 }
 
 function makeShellSessionId() {
-  return `shell-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const randomPart = crypto.randomBytes(6).toString('base64url');
+  return `shell-${Date.now().toString(36)}-${randomPart}`;
 }
 
 function parseOptionalJson(value, fallback = null) {
