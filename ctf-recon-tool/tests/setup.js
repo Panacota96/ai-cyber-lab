@@ -78,6 +78,12 @@ afterEach(async () => {
   } catch (_) {
     // ignore cleanup issues when shell runtime is not loaded
   }
+  try {
+    const { clearScheduleRuntimeForTests } = await import('@/lib/schedule-runtime');
+    clearScheduleRuntimeForTests();
+  } catch (_) {
+    // ignore cleanup issues when schedule runtime is not loaded
+  }
 });
 
 if (!globalThis.__helmsVitestTeardownRegistered) {

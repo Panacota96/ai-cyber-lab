@@ -13,6 +13,7 @@ import CommandEventCard from '@/components/timeline/CommandEventCard';
 import TimelineFilterBar from '@/components/timeline/TimelineFilterBar';
 import PlatformLinkPanel from '@/domains/session-targets-platform/components/PlatformLinkPanel';
 import SessionTargetsModal from '@/domains/session-targets-platform/components/SessionTargetsModal';
+import SessionAnalysisModal from '@/domains/session-analysis/components/SessionAnalysisModal';
 import {
   derivePlatformDraftState,
   formatPlatformTypeLabel,
@@ -74,7 +75,7 @@ import {
   parseTimelineMutationResponse,
   sanitizeTimelineEvents,
 } from '@/lib/timeline-client';
-import { chooseReportDraftSource } from '@/lib/report-autosave';
+import { buildReportAutosaveKey, chooseReportDraftSource } from '@/lib/report-autosave';
 import { getTimelineScrollState, shouldFollowTimeline } from '@/lib/timeline-scroll';
 
 // Lazy-load DiscoveryGraph (React Flow requires client-only; no SSR)
@@ -542,6 +543,9 @@ export default function Home() {
   // Session modal state
   const [showNewSessionModal, setShowNewSessionModal] = useState(false);
   const [showTargetsModal, setShowTargetsModal] = useState(false);
+  const [showAnalysisModal, setShowAnalysisModal] = useState(false);
+  const [analysisModalTab, setAnalysisModalTab] = useState('search');
+  const [analysisSchedulePrefill, setAnalysisSchedulePrefill] = useState('');
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [commandPaletteQuery, setCommandPaletteQuery] = useState('');
@@ -743,6 +747,8 @@ export default function Home() {
     resizeSession: resizeShellSession,
     disconnectSession: disconnectShellSession,
     clearLocalTabState: clearLocalShellTabState,
+    searchTranscript,
+    diffTranscriptChunks,
   } = shellHub;
   const {
     artifacts,
@@ -753,7 +759,7 @@ export default function Home() {
     error: artifactsError,
     selectArtifact,
     uploadArtifact,
-    createArtifactFromTranscript,
+    createArtifactFromShell,
     deleteArtifact: deleteArtifactById,
   } = artifactsState;
   const currentSessionData = sessions.find((session) => session.id === currentSession);
@@ -792,6 +798,12 @@ export default function Home() {
   const closeCommandPalette = useCallback(() => {
     setShowCommandPalette(false);
     setCommandPaletteQuery('');
+  }, []);
+
+  const openAnalysisModal = useCallback((tab = 'search', { scheduleCommand = '' } = {}) => {
+    setAnalysisModalTab(tab);
+    setAnalysisSchedulePrefill(scheduleCommand);
+    setShowAnalysisModal(true);
   }, []);
 
   const syncTimelineScrollFlags = useCallback(() => {
@@ -1087,6 +1099,7 @@ export default function Home() {
 
   const {
     reportTemplates,
+    selectedReportTemplate,
     selectedReportTemplateId,
     setSelectedReportTemplateId,
     reportTemplateName,
@@ -1508,6 +1521,7 @@ export default function Home() {
   useEffect(() => {
     const isModalOverlayOpen =
       showNewSessionModal ||
+      showAnalysisModal ||
       showReportModal ||
       showVersionHistory ||
       showDiffModal ||
@@ -1588,7 +1602,7 @@ export default function Home() {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [showNewSessionModal, showReportModal, showVersionHistory, showDiffModal, showDbModal, showShortcutsModal, showCommandPalette, shellHubEnabled, viewportWidth, clearTimelineFilters, closeCommandPalette, inputType, inputVal, openCommandPalette]);
+  }, [showNewSessionModal, showAnalysisModal, showReportModal, showVersionHistory, showDiffModal, showDbModal, showShortcutsModal, showCommandPalette, shellHubEnabled, viewportWidth, clearTimelineFilters, closeCommandPalette, inputType, inputVal, openCommandPalette]);
 
   useEffect(() => {
     if (viewportWidth < 1200) {
@@ -1786,6 +1800,114 @@ export default function Home() {
       };
     }));
   }, [currentSession]);
+
+  const updateSessionRecordLocal = useCallback((nextSession) => {
+    if (!nextSession?.id) return;
+    setSessions((prev) => {
+      const exists = prev.some((session) => session.id === nextSession.id);
+      if (!exists) return [nextSession, ...prev];
+      return prev.map((session) => (session.id === nextSession.id ? nextSession : session));
+    });
+  }, []);
+
+  const openSessionFromAnalysis = useCallback((sessionId) => {
+    if (!sessionId) return;
+    setCurrentSession(sessionId);
+    setShowAnalysisModal(false);
+  }, []);
+
+  const searchAcrossSessions = useCallback(async ({ query, sessionId = null } = {}) => {
+    const params = new URLSearchParams({ q: String(query || '').trim() });
+    if (sessionId) params.set('sessionId', sessionId);
+    const res = await apiFetch(`/api/search?${params.toString()}`);
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data?.error || 'Search failed.');
+    }
+    return Array.isArray(data?.results) ? data.results : [];
+  }, [apiFetch]);
+
+  const compareSessionData = useCallback(async ({ beforeSessionId, afterSessionId }) => {
+    const params = new URLSearchParams({
+      beforeSessionId: String(beforeSessionId || ''),
+      afterSessionId: String(afterSessionId || ''),
+    });
+    const res = await apiFetch(`/api/sessions/compare?${params.toString()}`);
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data?.error || 'Comparison failed.');
+    }
+    return data;
+  }, [apiFetch]);
+
+  const saveCurrentSessionMetadata = useCallback(async ({ tags = [], customFields = {} } = {}) => {
+    const res = await apiFetch('/api/sessions', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: currentSession,
+        tags,
+        customFields,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data?.error || 'Session update failed.');
+    }
+    updateSessionRecordLocal(data);
+    pushToast({ title: 'Session metadata updated', tone: 'success', description: `${data?.name || currentSession} tags and custom fields saved.` });
+    return data;
+  }, [apiFetch, currentSession, pushToast, updateSessionRecordLocal]);
+
+  const fetchSchedules = useCallback(async () => {
+    const res = await apiFetch(`/api/schedules?sessionId=${encodeURIComponent(currentSession)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to load schedules.');
+    }
+    return Array.isArray(data?.schedules) ? data.schedules : [];
+  }, [apiFetch, currentSession]);
+
+  const createScheduledCommandEntry = useCallback(async (payload = {}) => {
+    const res = await apiFetch('/api/schedules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: currentSession,
+        ...payload,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to create schedule.');
+    }
+    pushToast({
+      title: 'Scheduled command created',
+      tone: 'success',
+      description: new Date(payload.runAt).toLocaleString(),
+    });
+    return Array.isArray(data?.schedules) ? data.schedules : [];
+  }, [apiFetch, currentSession, pushToast]);
+
+  const cancelScheduledCommandEntry = useCallback(async (scheduleId) => {
+    const params = new URLSearchParams({
+      sessionId: currentSession,
+      id: String(scheduleId || ''),
+    });
+    const res = await apiFetch(`/api/schedules?${params.toString()}`, {
+      method: 'DELETE',
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to cancel schedule.');
+    }
+    pushToast({
+      title: 'Scheduled command cancelled',
+      tone: 'warning',
+      description: String(scheduleId || ''),
+    });
+    return Array.isArray(data?.schedules) ? data.schedules : [];
+  }, [apiFetch, currentSession, pushToast]);
 
   const createSessionTargetEntry = useCallback(async () => {
     if (!targetDraftValue.trim()) return;
@@ -2591,6 +2713,19 @@ export default function Home() {
     setSelectedReportBlocks([]);
   };
 
+  const openReportStudio = useCallback(() => {
+    try {
+      localStorage.setItem(buildReportAutosaveKey(currentSession, reportFormat), JSON.stringify({
+        savedAt: new Date().toISOString(),
+        blocks: reportBlocks,
+      }));
+    } catch {
+      // localStorage unavailable
+    }
+    const url = `/sessions/${encodeURIComponent(currentSession)}/report-studio?format=${encodeURIComponent(reportFormat)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }, [currentSession, reportBlocks, reportFormat]);
+
   const insertExecutiveSummary = async () => {
     try {
       setExecutiveSummaryBusy(true);
@@ -3294,24 +3429,24 @@ export default function Home() {
     }
   }, [apiFetch, currentSession, pushToast]);
 
-  const handleCreateTranscriptArtifact = useCallback(async (payload) => {
+  const handleCreateShellArtifact = useCallback(async (payload) => {
     try {
-      const artifact = await createArtifactFromTranscript(payload);
+      const artifact = await createArtifactFromShell(payload);
       if (artifact?.id) {
         setSidebarTab('artifacts');
         pushToast({
           tone: 'success',
-          title: 'Artifact saved',
-          message: artifact.filename || artifact.kind || 'Transcript output saved as an artifact.',
+          title: 'Shell artifact saved',
+          message: artifact.filename || artifact.kind || 'Shell evidence saved as an artifact.',
           durationMs: 2800,
         });
       }
       return artifact;
     } catch (error) {
-      alert(error?.message || 'Failed to save transcript artifact');
+      alert(error?.message || 'Failed to save shell artifact');
       return null;
     }
-  }, [createArtifactFromTranscript, pushToast]);
+  }, [createArtifactFromShell, pushToast]);
 
   const handleArtifactUpload = useCallback(async (payload) => {
     const artifact = await uploadArtifact(payload);
@@ -3880,6 +4015,7 @@ export default function Home() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
             <button className="btn-secondary btn-compact" onClick={() => setShowNewSessionModal(true)} title="New Session">+</button>
             <button className="btn-secondary btn-compact" onClick={() => setShowTargetsModal(true)} title="Manage Targets">Targets</button>
+            <button className="btn-secondary btn-compact" onClick={() => openAnalysisModal('search')} title="Search, compare, metadata, schedules">Analyze</button>
             {currentSession !== 'default' && (
               <button className="btn-compact" onClick={deleteSession} title="Delete Session"
                 style={{ color: 'var(--accent-danger, #f85149)', border: '1px solid var(--accent-danger, #f85149)', borderRadius: '6px', background: 'transparent' }}>✕</button>
@@ -4063,6 +4199,25 @@ export default function Home() {
         onCreateTarget={createSessionTargetEntry}
       />
 
+      <SessionAnalysisModal
+        open={showAnalysisModal}
+        initialTab={analysisModalTab}
+        onClose={() => setShowAnalysisModal(false)}
+        currentSession={currentSessionData}
+        currentSessionId={currentSession}
+        sessions={sessions}
+        currentSessionTargets={currentSessionTargets}
+        activeTargetId={activeTargetId}
+        scheduleCommandPrefill={analysisSchedulePrefill}
+        onOpenSession={openSessionFromAnalysis}
+        onSearch={searchAcrossSessions}
+        onCompare={compareSessionData}
+        onSaveSessionMetadata={saveCurrentSessionMetadata}
+        onListSchedules={fetchSchedules}
+        onCreateSchedule={createScheduledCommandEntry}
+        onCancelSchedule={cancelScheduledCommandEntry}
+      />
+
       {/* ── Report Modal ──────────────────────────────────────────────────── */}
       {showReportModal && (
         <div className="overlay">
@@ -4106,6 +4261,7 @@ export default function Home() {
                   <option value="cyber-matrix-terminal">Cyber Matrix Terminal</option>
                   <option value="htb-professional">HTB Professional</option>
                 </select>
+                <button className="btn-secondary mono" onClick={openReportStudio}>Open Studio</button>
                 <button className="btn-secondary" onClick={() => setShowReportModal(false)}>Close</button>
               </div>
             </div>
@@ -4252,9 +4408,9 @@ export default function Home() {
                       Apply
                     </button>
                     <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--accent-secondary)', borderColor: 'var(--accent-secondary)' }} disabled={reportTemplateBusy} onClick={() => void saveReportTemplate()}>
-                      {reportTemplateBusy ? 'Saving…' : selectedReportTemplateId ? 'Update' : 'Save Current'}
+                      {reportTemplateBusy ? 'Saving…' : selectedReportTemplate?.scope === 'user' ? 'Update' : 'Save Current'}
                     </button>
-                    <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--accent-danger)', borderColor: 'var(--accent-danger)' }} disabled={!selectedReportTemplateId || reportTemplateBusy} onClick={() => void deleteSelectedReportTemplate()}>
+                    <button type="button" className="btn-secondary mono" style={{ fontSize: '0.72rem', padding: '3px 8px', color: 'var(--accent-danger)', borderColor: 'var(--accent-danger)' }} disabled={!selectedReportTemplateId || reportTemplateBusy || selectedReportTemplate?.scope === 'system'} onClick={() => void deleteSelectedReportTemplate()}>
                       Delete
                     </button>
                   </div>
@@ -6115,6 +6271,15 @@ export default function Home() {
               )}
               <div className="input-extras">
                 <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} accept="image/*" />
+                {inputType === 'command' && (
+                  <button
+                    type="button"
+                    className="upload-btn mono"
+                    onClick={() => openAnalysisModal('schedules', { scheduleCommand: inputVal })}
+                  >
+                    [+] Schedule
+                  </button>
+                )}
                 <button type="button" className="upload-btn mono" onClick={() => fileInputRef.current?.click()}>
                   [+] Screenshot
                 </button>
@@ -6266,7 +6431,9 @@ export default function Home() {
                 onResizeShell={resizeShellSession}
                 onDisconnectShell={handleDisconnectShellSession}
                 onClearLocalShell={clearLocalShellTabState}
-                onCreateTranscriptArtifact={handleCreateTranscriptArtifact}
+                onSearchTranscript={searchTranscript}
+                onDiffTranscriptChunks={diffTranscriptChunks}
+                onCreateShellArtifact={handleCreateShellArtifact}
               />
             </div>
           )}

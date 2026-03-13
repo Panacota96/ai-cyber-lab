@@ -1,6 +1,7 @@
 import { buildEstimatedUsage } from '@/lib/ai-cost';
 import { completeProviderText } from '@/lib/ai-provider-runtime';
 import { recordAiUsage } from '@/lib/db';
+import { sectionActionPromptSuffix } from '@/domains/reporting/lib/report-studio';
 
 export const WRITEUP_SKILL_PROMPTS = {
   enhance: `You are an expert CTF (Capture The Flag) security analyst and technical writer.
@@ -140,6 +141,7 @@ export async function generateWriteupSectionPatches({
   skill = 'writeup-refiner',
   reportBlocks = [],
   selectedSectionIds = [],
+  sectionAction = 'refine',
   evidenceContext = '',
   endpoint = '/api/writeup/enhance',
   metadata = {},
@@ -181,6 +183,7 @@ Rules:
 - Keep sectionId unchanged and match provided IDs.
 - Preserve technical accuracy and reproducibility.
 - Include evidenceRefs for each patch.
+- Apply this editor action: ${sectionActionPromptSuffix(sectionAction)}
 - Do not include markdown code fences around JSON.
 
 Selected blocks:
@@ -213,6 +216,7 @@ ${evidenceContext || '(none provided)'}`;
       endpoint,
       mode: 'section-patch',
       skill,
+      sectionAction,
       selectedSections: selected.length,
       patchedSections: patches.length,
       backend: result?.metadata?.backend || null,

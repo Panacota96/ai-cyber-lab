@@ -3,7 +3,8 @@ import { apiError } from '@/lib/api-error';
 import {
   createReportTemplate,
   deleteReportTemplate,
-  listReportTemplates,
+  isReadOnlyReportTemplate,
+  listAvailableReportTemplates,
   updateReportTemplate,
 } from '@/lib/repositories/report-repository';
 import {
@@ -25,7 +26,7 @@ export const GET = withErrorHandler(
     if (!parsed.success) return parsed.response;
     const { sessionId, format } = parsed.data;
     return NextResponse.json({
-      templates: listReportTemplates({
+      templates: listAvailableReportTemplates({
         sessionId: sessionId || null,
         format: format || null,
       }),
@@ -52,6 +53,9 @@ export const PATCH = withErrorHandler(
     const parsed = await readValidatedJsonBody(request, ReportTemplatePatchSchema);
     if (!parsed.success) return parsed.response;
     const { id, ...updates } = parsed.data;
+    if (isReadOnlyReportTemplate(id)) {
+      return apiError('Built-in template packs are read-only.', 403);
+    }
     const template = updateReportTemplate(id, updates);
     if (!template) {
       return apiError('Failed to update report template', 400);
@@ -66,6 +70,9 @@ export const DELETE = withErrorHandler(
     const parsed = readValidatedSearchParams(request, ReportTemplateDeleteQuerySchema);
     if (!parsed.success) return parsed.response;
     const { id } = parsed.data;
+    if (isReadOnlyReportTemplate(id)) {
+      return apiError('Built-in template packs are read-only.', 403);
+    }
     const ok = deleteReportTemplate(id);
     if (!ok) return apiError('Template not found', 404);
     return NextResponse.json({ success: true });

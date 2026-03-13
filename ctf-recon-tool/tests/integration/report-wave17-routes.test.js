@@ -99,7 +99,7 @@ describe('Wave 17 reporting routes', () => {
 
     const listRes = await templatesGet(makeJsonRequest(`/api/report/templates?sessionId=${session.id}&format=executive-summary`, 'GET', null, { auth: true }));
     const listBody = await readJson(listRes);
-    expect(listBody.templates).toHaveLength(1);
+    expect(listBody.templates.some((template) => template.id === createBody.template.id && template.scope === 'user')).toBe(true);
 
     const patchRes = await templatesPatch(makeJsonRequest('/api/report/templates', 'PATCH', {
       id: createBody.template.id,
@@ -112,6 +112,30 @@ describe('Wave 17 reporting routes', () => {
 
     const deleteRes = await templatesDelete(makeJsonRequest(`/api/report/templates?id=${createBody.template.id}`, 'DELETE', null, { auth: true }));
     expect(deleteRes.status).toBe(200);
+  });
+
+  it('keeps built-in template packs read-only', async () => {
+    const session = createTestSession();
+    sessions.push(session.id);
+
+    const listRes = await templatesGet(makeJsonRequest(`/api/report/templates?sessionId=${session.id}&format=technical-walkthrough`, 'GET', null, { auth: true }));
+    const listBody = await readJson(listRes);
+    const systemTemplate = listBody.templates.find((template) => template.scope === 'system');
+
+    expect(systemTemplate).toBeTruthy();
+
+    const patchRes = await templatesPatch(makeJsonRequest('/api/report/templates', 'PATCH', {
+      id: systemTemplate.id,
+      name: 'Do not mutate',
+    }, { auth: true }));
+    const patchBody = await readJson(patchRes);
+    expect(patchRes.status).toBe(403);
+    expect(patchBody.error).toContain('read-only');
+
+    const deleteRes = await templatesDelete(makeJsonRequest(`/api/report/templates?id=${encodeURIComponent(systemTemplate.id)}`, 'DELETE', null, { auth: true }));
+    const deleteBody = await readJson(deleteRes);
+    expect(deleteRes.status).toBe(403);
+    expect(deleteBody.error).toContain('read-only');
   });
 
   it('rejects invalid report template list queries with validation details', async () => {

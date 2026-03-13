@@ -29,8 +29,65 @@ export function newCodeBlock(title = 'Code Snippet', content = '', language = 'b
   return { id: makeReportBlockId('code'), blockType: 'code', title, content, language };
 }
 
-export function newImageBlock(title = 'Screenshot Evidence', imageUrl = '', alt = 'Screenshot', caption = '', content = '') {
-  return { id: makeReportBlockId('img'), blockType: 'image', title, imageUrl, alt, caption, content };
+export function newImageBlock(
+  title = 'Screenshot Evidence',
+  imageUrl = '',
+  alt = 'Screenshot',
+  caption = '',
+  content = '',
+  options = {},
+) {
+  return {
+    id: makeReportBlockId('img'),
+    blockType: 'image',
+    title,
+    imageUrl,
+    alt,
+    caption,
+    content,
+    artifactId: options?.artifactId ? String(options.artifactId) : null,
+    linkedSectionId: options?.linkedSectionId ? String(options.linkedSectionId) : null,
+    layout: ['split-left', 'split-right'].includes(String(options?.layout || ''))
+      ? String(options.layout)
+      : 'full',
+  };
+}
+
+export function reorderReportBlocks(blocks = [], fromIndex, toIndex) {
+  const source = parseWriteupBlocks(blocks);
+  const safeFrom = Number(fromIndex);
+  const safeTo = Number(toIndex);
+  if (
+    !Number.isInteger(safeFrom)
+    || !Number.isInteger(safeTo)
+    || safeFrom < 0
+    || safeTo < 0
+    || safeFrom >= source.length
+    || safeTo >= source.length
+    || safeFrom === safeTo
+  ) {
+    return source;
+  }
+
+  const nextBlocks = [...source];
+  const [moved] = nextBlocks.splice(safeFrom, 1);
+  nextBlocks.splice(safeTo, 0, moved);
+  return nextBlocks;
+}
+
+export function duplicateReportBlock(blocks = [], blockId) {
+  const source = parseWriteupBlocks(blocks);
+  const index = source.findIndex((block) => String(block?.id || '') === String(blockId || ''));
+  if (index === -1) return source;
+  const block = cloneBlock(source[index]);
+  const duplicate = {
+    ...block,
+    id: makeReportBlockId(block.blockType === 'code' ? 'code' : block.blockType === 'image' ? 'img' : 'sec'),
+    title: block.title ? `${block.title} Copy` : 'Copy',
+  };
+  const nextBlocks = [...source];
+  nextBlocks.splice(index + 1, 0, duplicate);
+  return nextBlocks;
 }
 
 export function reportBlocksToMarkdown(blocks) {
@@ -146,7 +203,8 @@ export function markdownToReportBlocks(markdown) {
         imageMatch[2].trim(),
         (imageMatch[1] || 'Screenshot').trim(),
         caption,
-        ''
+        '',
+        {}
       ));
       pendingTitle = '';
       index += 1;
@@ -216,6 +274,14 @@ export function mergeReportPatches(blocks = [], patches = [], options = {}) {
     if (currentBlock.blockType === 'image') {
       if (patch?.caption !== undefined) currentBlock.caption = String(patch.caption || '').trim();
       if (patch?.alt !== undefined) currentBlock.alt = String(patch.alt || '').trim();
+      if (patch?.imageUrl !== undefined) currentBlock.imageUrl = String(patch.imageUrl || '').trim();
+      if (patch?.artifactId !== undefined) currentBlock.artifactId = patch.artifactId ? String(patch.artifactId) : null;
+      if (patch?.linkedSectionId !== undefined) currentBlock.linkedSectionId = patch.linkedSectionId ? String(patch.linkedSectionId) : null;
+      if (patch?.layout !== undefined) {
+        currentBlock.layout = ['split-left', 'split-right'].includes(String(patch.layout || ''))
+          ? String(patch.layout)
+          : 'full';
+      }
     }
     nextBlocks[targetIndex] = currentBlock;
   }

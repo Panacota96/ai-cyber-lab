@@ -4,6 +4,7 @@ import { isValidSessionId } from '@/lib/security';
 const SESSION_DIFFICULTIES = ['easy', 'medium', 'hard', 'insane'] as const;
 const WRITEUP_PROVIDERS = ['claude', 'openai', 'gemini', 'offline'] as const;
 const WRITEUP_ENHANCE_MODES = ['stream', 'section-patch'] as const;
+const WRITEUP_SECTION_ACTIONS = ['refine', 'summarize', 'explain-evidence', 'generate-intro', 'generate-conclusion'] as const;
 const REPORT_AI_PROVIDERS = ['claude', 'anthropic', 'openai', 'gemini'] as const;
 const REPORT_FORMATS = [
   'lab-report',
@@ -16,6 +17,9 @@ const REPORT_FORMATS = [
 const REPORT_AUDIENCE_PACKS = ['executive', 'technical', 'certification'] as const;
 const REPORT_PRESET_IDS = ['executive-brief', 'technical-deep-dive', 'certification-writeup'] as const;
 const FLAG_STATUSES = ['captured', 'submitted', 'accepted', 'rejected'] as const;
+const SHELL_TRANSCRIPT_DIRECTIONS = ['input', 'output', 'status', 'all'] as const;
+const SEARCH_SOURCE_TYPES = ['session', 'timeline', 'finding', 'credential', 'flag', 'artifact', 'writeup'] as const;
+const SCHEDULE_STATUSES = ['pending', 'dispatching', 'dispatched', 'failed', 'cancelled'] as const;
 
 function normalizeTrimmedString(value: unknown) {
   if (value === null || value === undefined) return undefined;
@@ -62,6 +66,11 @@ const defaultSessionIdSchema = z.preprocess((value) => {
 
 const metadataSchema = z.record(z.string(), z.unknown()).default({});
 const looseBlockSchema = z.object({}).passthrough();
+const sessionTagsSchema = z.array(requiredTrimmedString(64)).max(24).optional();
+const sessionCustomFieldsSchema = z.record(requiredTrimmedString(64), z.preprocess(
+  (value) => (value === undefined || value === null ? '' : String(value)),
+  z.string().max(255)
+)).optional();
 
 const booleanFromQuerySchema = z.preprocess((value) => {
   if (typeof value === 'boolean') return value;
@@ -97,6 +106,8 @@ export const SessionCreateSchema = z.object({
   target: nullableTrimmedString(2048),
   difficulty: z.enum(SESSION_DIFFICULTIES).optional(),
   objective: nullableTrimmedString(4000),
+  tags: sessionTagsSchema,
+  customFields: sessionCustomFieldsSchema,
   targets: z.array(z.object({
     id: optionalTrimmedString(128),
     label: optionalTrimmedString(255),
@@ -114,7 +125,52 @@ export const SessionPatchSchema = z.object({
   target: nullableTrimmedString(2048),
   difficulty: z.enum(SESSION_DIFFICULTIES).optional(),
   objective: nullableTrimmedString(4000),
+  tags: sessionTagsSchema,
+  customFields: sessionCustomFieldsSchema,
   metadata: metadataSchema.optional(),
+});
+
+const searchTypesSchema = z.preprocess((value) => {
+  if (value === undefined || value === null || value === '') return [];
+  const list = Array.isArray(value) ? value : [value];
+  return list
+    .flatMap((entry) => String(entry).split(','))
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}, z.array(z.enum(SEARCH_SOURCE_TYPES)).max(SEARCH_SOURCE_TYPES.length)).optional().default([]);
+
+export const SearchQuerySchema = z.object({
+  q: requiredTrimmedString(400),
+  sessionId: optionalSessionIdSchema,
+  types: searchTypesSchema,
+  limit: z.coerce.number().int().min(1).max(100).optional().default(30),
+});
+
+export const SessionCompareQuerySchema = z.object({
+  beforeSessionId: sessionIdSchema,
+  afterSessionId: sessionIdSchema,
+});
+
+const isoDateTimeSchema = requiredTrimmedString(128).refine((value) => !Number.isNaN(new Date(value).getTime()), 'Invalid date');
+
+export const ScheduleListQuerySchema = z.object({
+  sessionId: defaultSessionIdSchema,
+  status: z.enum(SCHEDULE_STATUSES).optional(),
+});
+
+export const ScheduleDeleteQuerySchema = z.object({
+  sessionId: defaultSessionIdSchema,
+  id: requiredTrimmedString(128),
+});
+
+export const ScheduleCreateSchema = z.object({
+  sessionId: defaultSessionIdSchema,
+  targetId: nullableTrimmedString(128),
+  command: requiredTrimmedString(4000),
+  runAt: isoDateTimeSchema,
+  timeout: z.coerce.number().int().min(1_000).max(1_800_000).optional().default(120000),
+  notes: optionalTrimmedString(2000),
+  tags: z.array(requiredTrimmedString(64)).max(16).optional().default([]),
 });
 
 export const SessionTargetListQuerySchema = z.object({
@@ -261,6 +317,7 @@ export const WriteupEnhanceSchema = z.object({
   mode: z.enum(WRITEUP_ENHANCE_MODES).optional().default('stream'),
   reportBlocks: z.array(looseBlockSchema).optional().default([]),
   selectedSectionIds: z.array(requiredTrimmedString(128)).optional().default([]),
+  sectionAction: z.enum(WRITEUP_SECTION_ACTIONS).optional().default('refine'),
   evidenceContext: z.preprocess((value) => (value === undefined || value === null ? '' : String(value)), z.string()).optional().default(''),
 });
 
@@ -339,4 +396,37 @@ export const FlagPatchSchema = z.object({
   notes: z.preprocess((value) => (value === undefined ? undefined : value === null ? '' : String(value)), z.string().optional()),
   metadata: metadataSchema.optional(),
   submittedAt: nullableTrimmedString(128),
+});
+
+export const ShellTranscriptListQuerySchema = z.object({
+  sessionId: defaultSessionIdSchema,
+  cursor: z.coerce.number().int().min(0).optional().default(0),
+  limit: z.coerce.number().int().min(1).max(500).optional().default(200),
+});
+
+export const ShellTranscriptSearchQuerySchema = z.object({
+  sessionId: defaultSessionIdSchema,
+  q: requiredTrimmedString(4000),
+  direction: z.enum(SHELL_TRANSCRIPT_DIRECTIONS).optional().default('all'),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+});
+
+export const ShellTranscriptDiffQuerySchema = z.object({
+  sessionId: defaultSessionIdSchema,
+  leftChunkId: z.coerce.number().int().positive(),
+  rightChunkId: z.coerce.number().int().positive(),
+});
+
+export const ShellArtifactCreateSchema = z.object({
+  sessionId: defaultSessionIdSchema,
+  targetId: nullableTrimmedString(128),
+  shellSessionId: requiredTrimmedString(128),
+  sourceTranscriptChunkId: z.coerce.number().int().positive().optional(),
+  filename: optionalTrimmedString(255),
+  mimeType: optionalTrimmedString(255),
+  content: z.preprocess((value) => (value === undefined || value === null ? undefined : String(value)), z.string().max(400000).optional()),
+  contentBase64: z.preprocess((value) => (value === undefined || value === null ? undefined : String(value)), z.string().max(1000000).optional()),
+  notes: z.preprocess((value) => (value === undefined || value === null ? '' : String(value)), z.string()).optional().default(''),
+  linkedFindingIds: z.array(z.coerce.number().int().positive()).optional().default([]),
+  linkedTimelineEventIds: z.array(requiredTrimmedString(255)).optional().default([]),
 });

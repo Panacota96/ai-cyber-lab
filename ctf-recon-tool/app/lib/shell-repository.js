@@ -140,11 +140,19 @@ export function createShellSession(sessionId, input = {}) {
   requireValidSessionId(sessionId);
   const id = normalizePlainText(input.id, 128) || makeShellSessionId();
   const targetId = resolveSessionTargetId(sessionId, input.targetId ?? input.target_id);
-  const type = normalizePlainText(input.type, 32) === 'webshell' ? 'webshell' : 'reverse';
-  const label = normalizePlainText(input.label, 255) || (type === 'webshell' ? 'Webshell Session' : 'Reverse Shell');
-  const status = type === 'webshell' ? 'ready' : 'listening';
+  const normalizedType = normalizePlainText(input.type, 32);
+  const type = normalizedType === 'webshell'
+    ? 'webshell'
+    : normalizedType === 'bind'
+      ? 'bind'
+      : 'reverse';
+  const label = normalizePlainText(input.label, 255)
+    || (type === 'webshell' ? 'Webshell Session' : type === 'bind' ? 'Bind Shell' : 'Reverse Shell');
+  const status = type === 'reverse' ? 'listening' : 'ready';
   const bindHost = normalizePlainText(input.bindHost, 255) || '127.0.0.1';
   const bindPort = normalizePort(input.bindPort);
+  const remoteHost = normalizePlainText(input.remoteHost, 255) || null;
+  const remotePort = normalizePort(input.remotePort);
   const webshellUrl = normalizePlainText(input.webshellUrl, 2048) || null;
   const webshellMethod = normalizePlainText(input.webshellMethod, 16)?.toUpperCase() || 'POST';
   const webshellHeaders = normalizeHeaders(input.webshellHeaders);
@@ -155,10 +163,10 @@ export function createShellSession(sessionId, input = {}) {
 
   db.prepare(`
     INSERT INTO shell_sessions (
-      id, session_id, target_id, label, type, status, bind_host, bind_port,
+      id, session_id, target_id, label, type, status, bind_host, bind_port, remote_host, remote_port,
       webshell_url, webshell_method, webshell_headers, webshell_body_template,
       webshell_command_field, notes, metadata, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `).run(
     id,
     sessionId,
@@ -168,6 +176,8 @@ export function createShellSession(sessionId, input = {}) {
     status,
     bindHost,
     bindPort,
+    remoteHost,
+    remotePort,
     webshellUrl,
     webshellMethod,
     JSON.stringify(webshellHeaders),
@@ -303,6 +313,50 @@ export function getShellTranscriptChunk(sessionId, chunkId) {
     WHERE session_id = ? AND id = ?
   `).get(sessionId, Number(chunkId));
   return hydrateChunkRow(row);
+}
+
+export function getShellTranscriptChunksByIds(sessionId, shellSessionId, chunkIds = []) {
+  requireValidSessionId(sessionId);
+  const normalizedIds = [...new Set(
+    (Array.isArray(chunkIds) ? chunkIds : [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0)
+  )];
+  if (normalizedIds.length === 0) return [];
+
+  const placeholders = normalizedIds.map(() => '?').join(', ');
+  const rows = db.prepare(`
+    SELECT *
+    FROM shell_transcript_chunks
+    WHERE session_id = ? AND shell_session_id = ? AND id IN (${placeholders})
+    ORDER BY seq ASC
+  `).all(sessionId, shellSessionId, ...normalizedIds);
+  return rows.map(hydrateChunkRow);
+}
+
+export function searchShellTranscript(sessionId, shellSessionId, { query = '', direction = 'all', limit = 50 } = {}) {
+  requireValidSessionId(sessionId);
+  const normalizedQuery = normalizePlainText(query, 4000) || '';
+  if (!normalizedQuery) return [];
+  const safeLimit = Number.isFinite(Number(limit)) ? Math.max(1, Math.min(200, Math.floor(Number(limit)))) : 50;
+  const normalizedDirection = normalizePlainText(direction, 32) || 'all';
+  const likePattern = `%${normalizedQuery.toLowerCase()}%`;
+  const rows = normalizedDirection !== 'all'
+    ? db.prepare(`
+      SELECT *
+      FROM shell_transcript_chunks
+      WHERE session_id = ? AND shell_session_id = ? AND direction = ? AND LOWER(content) LIKE ?
+      ORDER BY seq DESC
+      LIMIT ?
+    `).all(sessionId, shellSessionId, normalizedDirection, likePattern, safeLimit)
+    : db.prepare(`
+      SELECT *
+      FROM shell_transcript_chunks
+      WHERE session_id = ? AND shell_session_id = ? AND LOWER(content) LIKE ?
+      ORDER BY seq DESC
+      LIMIT ?
+    `).all(sessionId, shellSessionId, likePattern, safeLimit);
+  return rows.map(hydrateChunkRow);
 }
 
 export function getShellTranscriptSummary(sessionId, shellSessionId) {

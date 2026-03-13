@@ -15,6 +15,11 @@ export default function ShellTabs({
       {shellSessions.map((shellSession) => {
         const active = shellSession.id === activeShellId;
         const unread = Number(unreadByShell[shellSession.id] || 0);
+        const typeLabel = shellSession.type === 'webshell'
+          ? 'WEB'
+          : shellSession.type === 'bind'
+            ? 'BIND'
+            : 'REV';
         return (
           <button
             key={shellSession.id}
@@ -34,7 +39,7 @@ export default function ShellTabs({
               cursor: 'pointer',
             }}
           >
-            <span>{shellSession.type === 'webshell' ? 'WEB' : 'REV'}</span>
+            <span>{typeLabel}</span>
             <span>{shellSession.label || shellSession.id}</span>
             <span style={{ fontSize: '0.7rem', color: active ? 'var(--text-main)' : 'var(--text-muted)' }}>
               {shellSession.status}

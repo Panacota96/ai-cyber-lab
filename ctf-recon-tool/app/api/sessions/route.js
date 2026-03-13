@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createSession, deleteSession, listSessions, updateSession } from '@/lib/repositories/session-repository';
+import { createSession, deleteSession, getSession, listSessions, updateSession } from '@/lib/repositories/session-repository';
 import { logger } from '@/lib/logger';
 import { apiError } from '@/lib/api-error';
 import {
@@ -11,6 +11,20 @@ import {
 } from '@/lib/api-route';
 import { SessionCreateSchema, SessionPatchSchema } from '@/lib/route-contracts';
 
+function buildSessionMetadata(currentMetadata = {}, metadataPatch = {}, tags, customFields) {
+  const nextMetadata = {
+    ...(currentMetadata || {}),
+    ...(metadataPatch || {}),
+  };
+  if (tags !== undefined) {
+    nextMetadata.tags = tags;
+  }
+  if (customFields !== undefined) {
+    nextMetadata.customFields = customFields;
+  }
+  return nextMetadata;
+}
+
 export async function GET() {
   const sessions = listSessions();
   return NextResponse.json(sessions);
@@ -21,9 +35,24 @@ export const POST = withErrorHandler(
     const parsed = await readValidatedJsonBody(request, SessionCreateSchema);
     if (!parsed.success) return parsed.response;
     const body = parsed.data;
-    const { name, target, difficulty, objective, targets, metadata } = body;
+    const {
+      name,
+      target,
+      difficulty,
+      objective,
+      targets,
+      metadata,
+      tags,
+      customFields,
+    } = body;
     const id = body.id || crypto.randomUUID();
-    const session = createSession(id, name, { target, difficulty, objective, targets, metadata });
+    const session = createSession(id, name, {
+      target,
+      difficulty,
+      objective,
+      targets,
+      metadata: buildSessionMetadata({}, metadata, tags, customFields),
+    });
     if (!session) {
       return apiError('Session could not be created (possibly duplicate id)', 409);
     }
@@ -53,8 +82,15 @@ export const PATCH = withErrorHandler(
   withAuth(async (request) => {
     const parsed = await readValidatedJsonBody(request, SessionPatchSchema);
     if (!parsed.success) return parsed.response;
-    const { sessionId, ...updates } = parsed.data;
-    const updated = updateSession(sessionId, updates);
+    const { sessionId, metadata, tags, customFields, ...updates } = parsed.data;
+    const current = getSession(sessionId);
+    if (!current) {
+      return apiError('Session not found', 404);
+    }
+    const updated = updateSession(sessionId, {
+      ...updates,
+      metadata: buildSessionMetadata(current.metadata, metadata, tags, customFields),
+    });
     if (!updated) {
       return apiError('Session not found', 404);
     }

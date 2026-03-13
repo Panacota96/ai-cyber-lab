@@ -20,6 +20,11 @@ describe('sessions route contracts', () => {
       name: 'Wave 20 session',
       target: '10.10.10.10',
       difficulty: 'hard',
+      tags: ['htb', 'windows'],
+      customFields: {
+        platform: 'HTB',
+        box: 'Resolute',
+      },
       metadata: {
         source: 'test',
       },
@@ -29,10 +34,17 @@ describe('sessions route contracts', () => {
 
     expect(createRes.status).toBe(200);
     expect(created.name).toBe('Wave 20 session');
+    expect(created.metadata.tags).toEqual(['htb', 'windows']);
+    expect(created.metadata.customFields.platform).toBe('HTB');
 
     const patchRes = await PATCH(makeJsonRequest('/api/sessions', 'PATCH', {
       sessionId: created.id,
       objective: 'Validate route contracts',
+      tags: ['htb', 'active-directory'],
+      customFields: {
+        platform: 'HTB',
+        focus: 'privesc',
+      },
       metadata: {
         source: 'test',
         stage: 'wave20',
@@ -43,6 +55,8 @@ describe('sessions route contracts', () => {
     expect(patchRes.status).toBe(200);
     expect(patched.objective).toBe('Validate route contracts');
     expect(patched.metadata.stage).toBe('wave20');
+    expect(patched.metadata.tags).toEqual(['htb', 'active-directory']);
+    expect(patched.metadata.customFields.focus).toBe('privesc');
   });
 
   it('rejects invalid session payloads with validation details', async () => {
@@ -67,5 +81,8 @@ describe('sessions route contracts', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(body)).toBe(true);
     expect(body.some((entry) => entry.id === session.id)).toBe(true);
+    const hydrated = body.find((entry) => entry.id === session.id);
+    expect(Array.isArray(hydrated.metadata.tags)).toBe(true);
+    expect(hydrated.metadata.customFields).toEqual({});
   });
 });

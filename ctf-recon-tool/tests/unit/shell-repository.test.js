@@ -42,4 +42,20 @@ describe('shell repository', () => {
       cursor: 2,
     });
   });
+
+  it('persists bind shell connection metadata', () => {
+    const session = createTestSession();
+    sessions.push(session.id);
+    const shellSession = createShellSession(session.id, {
+      type: 'bind',
+      label: 'Unit Bind',
+      remoteHost: '10.10.10.10',
+      remotePort: 4444,
+    });
+
+    expect(shellSession.type).toBe('bind');
+    expect(shellSession.status).toBe('ready');
+    expect(shellSession.remoteHost).toBe('10.10.10.10');
+    expect(shellSession.remotePort).toBe(4444);
+  });
 });

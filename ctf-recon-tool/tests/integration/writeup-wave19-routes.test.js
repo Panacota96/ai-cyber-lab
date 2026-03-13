@@ -102,6 +102,7 @@ describe('wave 19 writeup routes', () => {
       reportContent: '## Findings\nInitial draft',
       skill: 'writeup-refiner',
       mode: 'section-patch',
+      sectionAction: 'summarize',
       reportBlocks: [{ id: 'find-1', blockType: 'section', title: 'Findings', content: 'Initial draft' }],
       selectedSectionIds: ['find-1'],
       evidenceContext: 'Recent evidence',

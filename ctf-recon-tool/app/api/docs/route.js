@@ -35,6 +35,26 @@ const SPEC = {
           target: { type: 'string' },
           difficulty: { type: 'string', enum: ['easy', 'medium', 'hard', 'insane'] },
           objective: { type: 'string' },
+          metadata: {
+            type: 'object',
+            additionalProperties: true,
+            properties: {
+              tags: { type: 'array', items: { type: 'string' } },
+              customFields: { type: 'object', additionalProperties: { type: 'string' } },
+            },
+          },
+        },
+      },
+      SearchResult: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          sessionId: { type: 'string' },
+          sessionName: { type: 'string' },
+          sourceType: { type: 'string', enum: ['session', 'timeline', 'finding', 'credential', 'flag', 'artifact', 'writeup'] },
+          sourceId: { type: 'string' },
+          title: { type: 'string' },
+          snippet: { type: 'string' },
           metadata: { type: 'object', additionalProperties: true },
         },
       },
@@ -110,6 +130,26 @@ const SPEC = {
           updatedAt: { type: 'string', format: 'date-time', nullable: true },
         },
       },
+      ScheduledCommand: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          sessionId: { type: 'string' },
+          targetId: { type: 'string', nullable: true },
+          command: { type: 'string' },
+          timeout: { type: 'integer' },
+          tags: { type: 'array', items: { type: 'string' } },
+          runAt: { type: 'string', format: 'date-time' },
+          status: { type: 'string', enum: ['pending', 'dispatching', 'dispatched', 'failed', 'cancelled'] },
+          notes: { type: 'string' },
+          eventId: { type: 'string', nullable: true },
+          lastError: { type: 'string', nullable: true },
+          createdAt: { type: 'string', format: 'date-time', nullable: true },
+          updatedAt: { type: 'string', format: 'date-time', nullable: true },
+          dispatchedAt: { type: 'string', format: 'date-time', nullable: true },
+          cancelledAt: { type: 'string', format: 'date-time', nullable: true },
+        },
+      },
       WordlistEntry: {
         type: 'object',
         properties: {
@@ -156,7 +196,7 @@ const SPEC = {
         security: [{ ApiToken: [] }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, target: { type: 'string' }, difficulty: { type: 'string' }, objective: { type: 'string' }, id: { type: 'string' }, metadata: { type: 'object', additionalProperties: true } } } } },
+          content: { 'application/json': { schema: { type: 'object', required: ['name'], properties: { name: { type: 'string' }, target: { type: 'string' }, difficulty: { type: 'string' }, objective: { type: 'string' }, id: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, customFields: { type: 'object', additionalProperties: { type: 'string' } }, metadata: { type: 'object', additionalProperties: true } } } } },
         },
         responses: {
           '200': { description: 'Created session', content: { 'application/json': { schema: { $ref: '#/components/schemas/Session' } } } },
@@ -182,6 +222,8 @@ const SPEC = {
                   target: { type: 'string' },
                   difficulty: { type: 'string', enum: ['easy', 'medium', 'hard', 'insane'] },
                   objective: { type: 'string' },
+                  tags: { type: 'array', items: { type: 'string' } },
+                  customFields: { type: 'object', additionalProperties: { type: 'string' } },
                   metadata: { type: 'object', additionalProperties: true },
                 },
               },
@@ -203,6 +245,141 @@ const SPEC = {
           '200': { description: 'Success' },
           '400': { description: 'Invalid id' },
           '401': { description: 'Unauthorized' },
+        },
+      },
+    },
+    '/sessions/compare': {
+      get: {
+        summary: 'Compare two sessions across targets, evidence, and writeup state',
+        operationId: 'compareSessions',
+        security: [{ ApiToken: [] }],
+        parameters: [
+          { name: 'beforeSessionId', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'afterSessionId', in: 'query', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Session comparison summary and deltas' },
+          '400': { description: 'Validation failed', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Session not found' },
+        },
+      },
+    },
+    '/search': {
+      get: {
+        summary: 'Search across indexed session data',
+        operationId: 'searchAcrossSessions',
+        security: [{ ApiToken: [] }],
+        parameters: [
+          { name: 'q', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'sessionId', in: 'query', required: false, schema: { type: 'string' } },
+          {
+            name: 'types',
+            in: 'query',
+            required: false,
+            schema: {
+              type: 'array',
+              items: { type: 'string', enum: ['session', 'timeline', 'finding', 'credential', 'flag', 'artifact', 'writeup'] },
+            },
+          },
+          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 100, default: 30 } },
+        ],
+        responses: {
+          '200': {
+            description: 'Indexed search results',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    query: { type: 'string' },
+                    sessionId: { type: 'string', nullable: true },
+                    types: { type: 'array', items: { type: 'string' } },
+                    count: { type: 'integer' },
+                    results: { type: 'array', items: { $ref: '#/components/schemas/SearchResult' } },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: 'Validation failed', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Session not found' },
+        },
+      },
+    },
+    '/schedules': {
+      get: {
+        summary: 'List scheduled commands for a session',
+        operationId: 'listSchedules',
+        security: [{ ApiToken: [] }],
+        parameters: [
+          { name: 'sessionId', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'status', in: 'query', required: false, schema: { type: 'string', enum: ['pending', 'dispatching', 'dispatched', 'failed', 'cancelled'] } },
+        ],
+        responses: {
+          '200': {
+            description: 'Scheduled commands',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    schedules: { type: 'array', items: { $ref: '#/components/schemas/ScheduledCommand' } },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: 'Validation failed', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Session not found' },
+        },
+      },
+      post: {
+        summary: 'Create a scheduled command for future execution',
+        operationId: 'createSchedule',
+        security: [{ ApiToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['sessionId', 'command', 'runAt'],
+                properties: {
+                  sessionId: { type: 'string' },
+                  targetId: { type: 'string', nullable: true },
+                  command: { type: 'string' },
+                  runAt: { type: 'string', format: 'date-time' },
+                  timeout: { type: 'integer', minimum: 1000, maximum: 1800000, default: 120000 },
+                  notes: { type: 'string' },
+                  tags: { type: 'array', items: { type: 'string' } },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '201': { description: 'Created schedule' },
+          '400': { description: 'Validation failed', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Session not found' },
+        },
+      },
+      delete: {
+        summary: 'Cancel a pending or failed scheduled command',
+        operationId: 'cancelSchedule',
+        security: [{ ApiToken: [] }],
+        parameters: [
+          { name: 'sessionId', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'id', in: 'query', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Cancelled schedule' },
+          '400': { description: 'Validation failed', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'Schedule not found or cannot be cancelled' },
         },
       },
     },

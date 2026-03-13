@@ -36,8 +36,8 @@ format: knowledge-sync compatible
 
 - **Wave 20 — Architecture and Contracts:** Implemented with `G.7`, `G.2`, `G.5`, `G.6`.
 - **Wave 21 — Reporting Handoff and Audience Packs:** Implemented with `R.15`, `R.16` on top of the existing `D.9` CVSS severity foundation.
-- **Wave 22 — Shell Depth and Evidence Acquisition:** Planned with `EX.13`, `CTF.15`, `C.8`.
-- **Wave 23 — Search and Cross-Session Analysis:** Planned with `C.3`, `C.4`, `C.9`, `C.10`.
+- **Wave 22 — Shell Depth and Evidence Acquisition:** Implemented with bind-shell transport support, transcript search/diff, and shell-derived artifact provenance.
+- **Wave 23 — Search and Cross-Session Analysis:** Implemented with `C.3`, `C.4`, `C.9`, `C.10`.
 - **Wave 24 — Collaboration and Coach Quality:** Planned with `C.5`, `E.4`, `E.6`, `E.7`.
 - Strategy rationale: finish architecture/contracts first, then reporting handoff and audience packs, then shell/evidence depth, then cross-session analysis, and only after that live collaboration plus higher-cost coach quality work.
 
@@ -142,15 +142,19 @@ format: knowledge-sync compatible
 - HTML export now embeds a Plotly-powered attack timeline visualization built from persisted session events, with explicit short-window rendering for single-timestamp evidence.
 
 ### Wave 22 — Shell Depth and Evidence Acquisition
-**Status:** Planned
+**Status:** Implemented (2026-03-12)
 
-- `EX.13` and `CTF.15` will deepen shell operations beyond reverse-shell/webshell v1 and preserve provenance when artifacts are pulled from shells into the loot store.
-- `C.8` will improve shell/history usability with output diffing on top of the already-landed fuzzy history search and bulk screenshot tooling.
+- `CTF.15` now has the first shell-derived artifact path through `/api/artifacts/from-shell`, with persisted `shellSessionId`, `sourceTranscriptChunkId`, and `targetId` provenance.
+- `C.8` now has transcript-chunk diffing and transcript search in the shell hub, plus bulk save actions for selected chunks.
+- `EX.13` now ships via a bind-shell transport on top of the same shell session/transcript runtime, so the shell hub is no longer limited to reverse-shell/webshell v1.
 
 ### Wave 23 — Search and Cross-Session Analysis
-**Status:** Planned
+**Status:** Implemented (2026-03-12)
 
-- `C.3`, `C.4`, `C.9`, and `C.10` will let operators compare sessions, tag/customize them, search across engagements, and queue scheduled execution safely.
+- `C.3` now ships through `GET /api/sessions/compare` plus a session-analysis modal that summarizes target, timeline, finding, credential, flag, artifact, and writeup deltas between two sessions.
+- `C.4` now persists normalized session `tags` and `customFields` inside `session.metadata`, and the same session-analysis modal exposes those fields without leaving the workspace.
+- `C.9` now ships through `GET /api/search`, backed by a dedicated SQLite FTS index across sessions, timeline events, findings, credentials, flags, artifacts, and writeups.
+- `C.10` now ships through `GET/POST/DELETE /api/schedules`, with persisted scheduled commands dispatched into the existing execution queue and linked back to timeline events when they start.
 
 ### Wave 24 — Collaboration and Coach Quality
 **Status:** Planned
@@ -384,11 +388,13 @@ format: knowledge-sync compatible
 **What:** Two sessions side-by-side; highlight diff in commands/findings.
 **Files:** `app/HomeClient.js`, extracted comparison view modules
 **Difficulty:** Hard | **Impact:** Low-Med
+**Status:** Implemented (2026-03-12). Added `GET /api/sessions/compare` plus a session-analysis modal that compares targets, timeline, findings, credentials, flags, artifacts, and writeup size between two sessions.
 
 ### C.4 — Session Tagging + Full-Text Search
 **What:** User-defined tags, custom fields, cross-session full-text search.
 **Files:** `app/lib/db.js`, `app/api/sessions/route.js`, `app/HomeClient.js`
 **Difficulty:** Medium | **Impact:** Medium
+**Status:** Implemented (2026-03-12). Session create/update/list flows now normalize `metadata.tags` and `metadata.customFields`, and the new session-analysis modal lets operators edit them in-app.
 
 ### C.5 — Live Collaboration (WebSocket)
 **What:** Multiple users in same session with live updates; basic conflict resolution.
@@ -411,16 +417,19 @@ format: knowledge-sync compatible
 **What:** Side-by-side diff when two similar commands produce different output.
 **Files:** `app/HomeClient.js`, extracted comparison/reporting modules
 **Difficulty:** Medium | **Impact:** Low-Med
+**Status:** Implemented (2026-03-12). Shell transcript chunks can now be diffed directly in the shells view and through the transcript diff API.
 
 ### C.9 — Global Search Across Sessions
 **What:** Search commands, notes, flags across all sessions.
-**Files:** `app/api/search/route.js`, `app/lib/db.js`, `app/HomeClient.js`
+**Files:** `app/api/search/route.js`, `app/lib/repositories/search-repository.js`, `app/HomeClient.js`
 **Difficulty:** Medium | **Impact:** Medium
+**Status:** Implemented (2026-03-12). Added a SQLite FTS-backed search index over sessions, timeline events, findings, credentials, flags, artifacts, and writeups, exposed through `GET /api/search`.
 
 ### C.10 — Scheduled Command Execution
 **What:** Queue commands to run at specific times (e.g., overnight scans).
-**Files:** New scheduler, `app/api/schedule/route.js`
+**Files:** `app/lib/schedule-runtime.js`, `app/lib/repositories/schedule-repository.js`, `app/api/schedules/route.js`, `app/HomeClient.js`
 **Difficulty:** Hard | **Impact:** Low-Med
+**Status:** Implemented (2026-03-12). Added persisted scheduled commands with background dispatch into the existing execution queue, session-analysis UI controls, and linked execution timeline events.
 
 ### EX.1 — Real-Time Output Streaming via SSE
 **What:** Replace active-command polling as the primary live-output transport with SSE events for stdout/stderr, progress, queue state, and completion while keeping polling fallback.
@@ -450,6 +459,7 @@ format: knowledge-sync compatible
 **What:** Expand the shell hub beyond reverse-shell/webshell v1 while keeping the current transcript/session model as the only runtime and provenance source of truth.
 **Files:** `app/lib/shell-runtime.js`, `app/lib/shell-repository.js`, `app/lib/shell-stream.js`, `app/api/shell/`, `app/components/shells/`, `app/hooks/useShellHub.js`
 **Difficulty:** Hard | **Impact:** High
+**Status:** Implemented (2026-03-12). Bind-shell transport now runs on the same SSE/transcript runtime as reverse shells and webshells, keeping one persistence and provenance model.
 
 ### CTF.14 — Session Artifact / Loot Manager
 **What:** Save documents and files collected from shell sessions (config dumps, loot, proofs) as session-scoped artifacts that can be previewed, downloaded, linked to notes, and referenced in reports.
@@ -461,6 +471,7 @@ format: knowledge-sync compatible
 **What:** Save files pulled directly from shell sessions into the session artifact store with provenance back to the shell session and transcript context.
 **Files:** `app/lib/artifact-repository.js`, `app/lib/artifact-utils.js`, `app/lib/shell-runtime.js`, `app/api/artifacts/`, `app/api/shell/`, `app/components/sidebar/ArtifactsPanel.js`, `app/components/shells/`
 **Difficulty:** Medium | **Impact:** High
+**Status:** Implemented (2026-03-12). Shell selections and transcript-linked output now save through `/api/artifacts/from-shell` with shell session and transcript provenance.
 
 ---
 

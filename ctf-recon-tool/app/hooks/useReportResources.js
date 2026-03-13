@@ -44,6 +44,7 @@ export function useReportResources({
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [writeupVersions, setWriteupVersions] = useState([]);
   const writeupSuggestionToastRef = useRef({ readyCount: 0, sessionId: '' });
+  const selectedReportTemplate = reportTemplates.find((entry) => entry.id === selectedReportTemplateId) || null;
 
   const fetchReportTemplates = useCallback(async () => {
     if (!sessionId) return [];
@@ -175,10 +176,11 @@ export function useReportResources({
         content: markdown,
         contentJson: reportBlocks,
       };
+      const saveMode = selectedReportTemplateId && selectedReportTemplate?.scope !== 'system' ? 'PATCH' : 'POST';
       const res = await apiFetch('/api/report/templates', {
-        method: selectedReportTemplateId ? 'PATCH' : 'POST',
+        method: saveMode,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(selectedReportTemplateId ? { id: selectedReportTemplateId, ...payload } : payload),
+        body: JSON.stringify(saveMode === 'PATCH' ? { id: selectedReportTemplateId, ...payload } : payload),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -212,12 +214,22 @@ export function useReportResources({
     reportFormat,
     reportTemplateDescription,
     reportTemplateName,
+    selectedReportTemplate,
     selectedReportTemplateId,
     sessionData?.name,
     sessionId,
   ]);
 
   const deleteSelectedReportTemplate = useCallback(async () => {
+    if (selectedReportTemplate?.scope === 'system') {
+      pushToast({
+        tone: 'info',
+        title: 'Built-in template',
+        message: 'Template packs are read-only. Save a copy if you want to customize one.',
+        durationMs: 2800,
+      });
+      return;
+    }
     if (!selectedReportTemplateId || !confirm('Delete this report template?')) return;
     try {
       setReportTemplateBusy(true);
@@ -227,7 +239,9 @@ export function useReportResources({
         alert(data.error || 'Failed to delete template');
         return;
       }
-      setSelectedReportTemplateId('');
+      if (selectedReportTemplate?.scope !== 'system') {
+        setSelectedReportTemplateId('');
+      }
       setReportTemplateName('');
       setReportTemplateDescription('');
       await fetchReportTemplates();
@@ -242,7 +256,7 @@ export function useReportResources({
     } finally {
       setReportTemplateBusy(false);
     }
-  }, [apiFetch, fetchReportTemplates, pushToast, selectedReportTemplateId]);
+  }, [apiFetch, fetchReportTemplates, pushToast, selectedReportTemplate, selectedReportTemplateId]);
 
   const createReportShare = useCallback(async () => {
     if (!sessionId) return;
@@ -417,14 +431,15 @@ export function useReportResources({
   }, [autoWriteupEnabled, pushToast, sessionId, writeupSuggestions]);
 
   useEffect(() => {
-    const template = reportTemplates.find((entry) => entry.id === selectedReportTemplateId);
+    const template = selectedReportTemplate;
     if (!template) return;
     setReportTemplateName(template.name || '');
     setReportTemplateDescription(template.description || '');
-  }, [reportTemplates, selectedReportTemplateId]);
+  }, [selectedReportTemplate]);
 
   return {
     reportTemplates,
+    selectedReportTemplate,
     selectedReportTemplateId,
     setSelectedReportTemplateId,
     reportTemplateName,

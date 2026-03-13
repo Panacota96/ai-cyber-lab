@@ -65,9 +65,41 @@ function parseOptionalJson(value, fallback = null) {
   }
 }
 
-function normalizeSessionMetadata(value) {
+function normalizeSessionTags(value) {
+  const values = Array.isArray(value)
+    ? value
+    : String(value || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  return [...new Set(values
+    .map((item) => normalizePlainText(item, 64))
+    .filter(Boolean))]
+    .slice(0, 24);
+}
+
+function normalizeSessionCustomFields(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return value;
+  return Object.entries(value).reduce((acc, [rawKey, rawValue]) => {
+    const key = normalizePlainText(rawKey, 64);
+    if (!key) return acc;
+    const normalizedValue = normalizePlainText(rawValue, 255);
+    if (!normalizedValue) return acc;
+    acc[key] = normalizedValue;
+    return acc;
+  }, {});
+}
+
+function normalizeSessionMetadata(value) {
+  const source = parseOptionalJson(value, {});
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    return { tags: [], customFields: {} };
+  }
+
+  const normalized = { ...source };
+  normalized.tags = normalizeSessionTags(normalized.tags);
+  normalized.customFields = normalizeSessionCustomFields(normalized.customFields);
+  return normalized;
 }
 
 export function closeDbConnection(reason = 'manual') {
@@ -191,6 +223,7 @@ function hydrateSessionRow(row, targetMap = null) {
   if (!row) return null;
   const targets = targetMap?.get(row.id) || listSessionTargets(row.id);
   const primaryTarget = targets.find((item) => item.isPrimary) || targets[0] || null;
+  const metadata = normalizeSessionMetadata(row.metadata);
   return {
     id: row.id,
     name: row.name,
@@ -198,7 +231,7 @@ function hydrateSessionRow(row, targetMap = null) {
     difficulty: row.difficulty || 'medium',
     objective: row.objective || null,
     created_at: row.created_at || null,
-    metadata: parseOptionalJson(row.metadata, {}) || {},
+    metadata,
     targets,
     primaryTargetId: primaryTarget?.id || null,
     primaryTarget,
@@ -1020,6 +1053,15 @@ export function deleteSession(sessionId) {
     const deleteArtifacts = tableExists('session_artifacts')
       ? db.prepare('DELETE FROM session_artifacts WHERE session_id = ?')
       : null;
+    const deleteScheduledCommands = tableExists('scheduled_commands')
+      ? db.prepare('DELETE FROM scheduled_commands WHERE session_id = ?')
+      : null;
+    const deleteSearchDocuments = tableExists('search_documents')
+      ? db.prepare('DELETE FROM search_documents WHERE session_id = ?')
+      : null;
+    const deleteSearchDocumentsFts = tableExists('search_documents_fts')
+      ? db.prepare('DELETE FROM search_documents_fts WHERE session_id = ?')
+      : null;
     const deletesess = db.prepare('DELETE FROM sessions WHERE id = ?');
     db.transaction(() => {
       deleteEvents.run(sessionId);
@@ -1040,6 +1082,9 @@ export function deleteSession(sessionId) {
       deleteShellTranscript?.run(sessionId);
       deleteShellSessions?.run(sessionId);
       deleteArtifacts?.run(sessionId);
+      deleteScheduledCommands?.run(sessionId);
+      deleteSearchDocuments?.run(sessionId);
+      deleteSearchDocumentsFts?.run(sessionId);
       deletesess.run(sessionId);
     })();
     const screenshotPath = resolvePathWithin(SESSIONS_DIR, sessionId);

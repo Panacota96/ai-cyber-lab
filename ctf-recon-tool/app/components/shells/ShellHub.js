@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ShellTabs from '@/components/shells/ShellTabs';
 import ShellTerminal from '@/components/shells/ShellTerminal';
 
@@ -20,10 +20,31 @@ const EMPTY_WEBSHELL = {
   notes: '',
 };
 
+const EMPTY_BIND = {
+  label: '',
+  remoteHost: '',
+  remotePort: '',
+  notes: '',
+};
+
 function formatTimestamp(value) {
   if (!value) return '';
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleString();
+}
+
+function formatDiffLine(change) {
+  if (!change) return '  ';
+  if (change.type === 'add') return '+ ';
+  if (change.type === 'remove') return '- ';
+  return '  ';
+}
+
+function diffColor(change) {
+  if (!change) return 'var(--text-main)';
+  if (change.type === 'add') return '#3fb950';
+  if (change.type === 'remove') return '#f85149';
+  return 'var(--text-main)';
 }
 
 export default function ShellHub({
@@ -43,16 +64,31 @@ export default function ShellHub({
   onResizeShell,
   onDisconnectShell,
   onClearLocalShell,
-  onCreateTranscriptArtifact,
+  onSearchTranscript,
+  onDiffTranscriptChunks,
+  onCreateShellArtifact,
 }) {
   const [mode, setMode] = useState('reverse');
   const [reverseDraft, setReverseDraft] = useState(EMPTY_REVERSE);
   const [webshellDraft, setWebshellDraft] = useState(EMPTY_WEBSHELL);
+  const [bindDraft, setBindDraft] = useState(EMPTY_BIND);
   const [inputValue, setInputValue] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchDirection, setSearchDirection] = useState('all');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [searchPerformed, setSearchPerformed] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [selectedChunkIds, setSelectedChunkIds] = useState([]);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffResult, setDiffResult] = useState(null);
+  const [diffError, setDiffError] = useState('');
   const terminalApiRef = useRef(null);
+
   const registerTerminalApi = useCallback((api) => {
     terminalApiRef.current = api;
   }, []);
+
   const handleTerminalResize = useCallback((dims) => {
     if (!activeShellId) return;
     void onResizeShell?.(activeShellId, dims);
@@ -60,6 +96,29 @@ export default function ShellHub({
 
   const transcriptChunks = activeShellId ? (transcriptsByShell[activeShellId] || []) : [];
   const latestOutputChunk = [...transcriptChunks].reverse().find((chunk) => chunk.direction !== 'input') || null;
+  const visibleChunks = searchPerformed && searchQuery.trim()
+    ? searchResults
+    : [...transcriptChunks].reverse().slice(0, 20);
+
+  const resolveChunkById = (chunkId) => {
+    if (!chunkId) return null;
+    return transcriptChunks.find((chunk) => chunk.id === chunkId)
+      || searchResults.find((chunk) => chunk.id === chunkId)
+      || null;
+  };
+
+  useEffect(() => {
+    setSearchQuery('');
+    setSearchDirection('all');
+    setSearchResults([]);
+    setSearching(false);
+    setSearchPerformed(false);
+    setSearchError('');
+    setSelectedChunkIds([]);
+    setDiffLoading(false);
+    setDiffResult(null);
+    setDiffError('');
+  }, [activeShellId]);
 
   const createReverse = async () => {
     const shellSession = await onCreateShellSession?.({
@@ -89,6 +148,19 @@ export default function ShellHub({
     }
   };
 
+  const createBind = async () => {
+    const shellSession = await onCreateShellSession?.({
+      type: 'bind',
+      label: bindDraft.label,
+      remoteHost: bindDraft.remoteHost,
+      remotePort: bindDraft.remotePort || undefined,
+      notes: bindDraft.notes,
+    });
+    if (shellSession?.id) {
+      setBindDraft(EMPTY_BIND);
+    }
+  };
+
   const submitInput = async () => {
     if (!activeShellId || !inputValue.trim()) return;
     await onSendInput?.(activeShellId, inputValue);
@@ -100,7 +172,7 @@ export default function ShellHub({
     const selection = terminalApiRef.current?.getSelection?.() || '';
     const transcript = selection.trim() || terminalApiRef.current?.getTranscript?.() || '';
     if (!transcript.trim()) return;
-    await onCreateTranscriptArtifact?.({
+    await onCreateShellArtifact?.({
       shellSessionId: activeShell.id,
       filename: `${activeShell.label || activeShell.id}-selection.txt`,
       content: transcript,
@@ -108,14 +180,90 @@ export default function ShellHub({
     });
   };
 
-  const saveLatestOutput = async (chunk = latestOutputChunk) => {
+  const saveChunkArtifact = async (chunk = latestOutputChunk) => {
     if (!activeShell || !chunk?.content) return;
-    await onCreateTranscriptArtifact?.({
+    await onCreateShellArtifact?.({
       shellSessionId: activeShell.id,
       sourceTranscriptChunkId: chunk.id,
       filename: `${activeShell.label || activeShell.id}-chunk-${chunk.seq}.txt`,
       notes: `Saved from transcript chunk ${chunk.seq}`,
     });
+  };
+
+  const toggleChunkSelection = useCallback((chunkId) => {
+    setSelectedChunkIds((current) => (
+      current.includes(chunkId)
+        ? current.filter((value) => value !== chunkId)
+        : [...current, chunkId]
+    ));
+  }, []);
+
+  const runTranscriptSearch = async () => {
+    if (!activeShellId || !searchQuery.trim()) {
+      setSearchResults([]);
+      setSearchPerformed(false);
+      setSearchError('');
+      return;
+    }
+    setSearching(true);
+    setSearchError('');
+    try {
+      const results = await onSearchTranscript?.(activeShellId, {
+        query: searchQuery,
+        direction: searchDirection,
+      });
+      setSearchResults(Array.isArray(results) ? results : []);
+      setSearchPerformed(true);
+    } catch (nextError) {
+      setSearchResults([]);
+      setSearchPerformed(true);
+      setSearchError(nextError?.message || 'Failed to search transcript.');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const resetTranscriptSearch = () => {
+    setSearchQuery('');
+    setSearchDirection('all');
+    setSearchResults([]);
+    setSearchPerformed(false);
+    setSearchError('');
+  };
+
+  const saveSelectedChunks = async () => {
+    if (!activeShell || selectedChunkIds.length === 0) return;
+    const selectedChunks = selectedChunkIds
+      .map((chunkId) => resolveChunkById(chunkId))
+      .filter(Boolean)
+      .sort((left, right) => Number(left.seq || 0) - Number(right.seq || 0));
+    for (const chunk of selectedChunks) {
+      await onCreateShellArtifact?.({
+        shellSessionId: activeShell.id,
+        sourceTranscriptChunkId: chunk.id,
+        filename: `${activeShell.label || activeShell.id}-chunk-${chunk.seq}.txt`,
+        notes: `Bulk-saved from transcript chunk ${chunk.seq}`,
+      });
+    }
+    setSelectedChunkIds([]);
+  };
+
+  const compareSelectedChunks = async () => {
+    if (!activeShellId || selectedChunkIds.length !== 2) return;
+    setDiffLoading(true);
+    setDiffError('');
+    try {
+      const result = await onDiffTranscriptChunks?.(activeShellId, {
+        leftChunkId: selectedChunkIds[0],
+        rightChunkId: selectedChunkIds[1],
+      });
+      setDiffResult(result || null);
+    } catch (nextError) {
+      setDiffResult(null);
+      setDiffError(nextError?.message || 'Failed to diff transcript chunks.');
+    } finally {
+      setDiffLoading(false);
+    }
   };
 
   return (
@@ -131,6 +279,9 @@ export default function ShellHub({
           <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.6rem' }}>
             <button type="button" className="btn-secondary mono" onClick={() => setMode('reverse')} style={{ fontSize: '0.74rem', padding: '3px 8px', borderColor: mode === 'reverse' ? 'var(--accent-secondary)' : undefined, color: mode === 'reverse' ? 'var(--accent-secondary)' : undefined }}>
               Reverse
+            </button>
+            <button type="button" className="btn-secondary mono" onClick={() => setMode('bind')} style={{ fontSize: '0.74rem', padding: '3px 8px', borderColor: mode === 'bind' ? 'var(--accent-secondary)' : undefined, color: mode === 'bind' ? 'var(--accent-secondary)' : undefined }}>
+              Bind
             </button>
             <button type="button" className="btn-secondary mono" onClick={() => setMode('webshell')} style={{ fontSize: '0.74rem', padding: '3px 8px', borderColor: mode === 'webshell' ? 'var(--accent-secondary)' : undefined, color: mode === 'webshell' ? 'var(--accent-secondary)' : undefined }}>
               Webshell
@@ -149,6 +300,18 @@ export default function ShellHub({
                 {creating ? 'Creating…' : 'Create Reverse Listener'}
               </button>
             </div>
+          ) : mode === 'bind' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              <input className="mono" value={bindDraft.label} onChange={(event) => setBindDraft((prev) => ({ ...prev, label: event.target.value }))} placeholder="Label" style={fieldStyle} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: '0.4rem' }}>
+                <input className="mono" value={bindDraft.remoteHost} onChange={(event) => setBindDraft((prev) => ({ ...prev, remoteHost: event.target.value }))} placeholder="Remote host" style={fieldStyle} />
+                <input className="mono" value={bindDraft.remotePort} onChange={(event) => setBindDraft((prev) => ({ ...prev, remotePort: event.target.value }))} placeholder="Port" style={fieldStyle} />
+              </div>
+              <textarea className="mono" value={bindDraft.notes} onChange={(event) => setBindDraft((prev) => ({ ...prev, notes: event.target.value }))} placeholder="Notes" style={{ ...fieldStyle, minHeight: '58px', resize: 'vertical' }} />
+              <button type="button" className="btn-secondary mono" onClick={createBind} disabled={creating || !bindDraft.remoteHost.trim() || !bindDraft.remotePort.trim()} style={{ fontSize: '0.76rem', padding: '5px 10px' }}>
+                {creating ? 'Creating…' : 'Connect Bind Shell'}
+              </button>
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
               <input className="mono" value={webshellDraft.label} onChange={(event) => setWebshellDraft((prev) => ({ ...prev, label: event.target.value }))} placeholder="Label" style={fieldStyle} />
@@ -161,7 +324,7 @@ export default function ShellHub({
                 </select>
                 <input className="mono" value={webshellDraft.webshellCommandField} onChange={(event) => setWebshellDraft((prev) => ({ ...prev, webshellCommandField: event.target.value }))} placeholder="Command field" style={fieldStyle} />
               </div>
-              <textarea className="mono" value={webshellDraft.webshellBodyTemplate} onChange={(event) => setWebshellDraft((prev) => ({ ...prev, webshellBodyTemplate: event.target.value }))} placeholder='Optional body template. Use {{command}}.' style={{ ...fieldStyle, minHeight: '68px', resize: 'vertical' }} />
+              <textarea className="mono" value={webshellDraft.webshellBodyTemplate} onChange={(event) => setWebshellDraft((prev) => ({ ...prev, webshellBodyTemplate: event.target.value }))} placeholder="Optional body template. Use {{command}}." style={{ ...fieldStyle, minHeight: '68px', resize: 'vertical' }} />
               <textarea className="mono" value={webshellDraft.notes} onChange={(event) => setWebshellDraft((prev) => ({ ...prev, notes: event.target.value }))} placeholder="Notes" style={{ ...fieldStyle, minHeight: '58px', resize: 'vertical' }} />
               <button type="button" className="btn-secondary mono" onClick={createWebshell} disabled={creating || !webshellDraft.webshellUrl.trim()} style={{ fontSize: '0.76rem', padding: '5px 10px' }}>
                 {creating ? 'Creating…' : 'Create Webshell Session'}
@@ -188,7 +351,7 @@ export default function ShellHub({
           )}
           {!loading && shellSessions.length === 0 && (
             <div className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-              No shell sessions yet. Create a reverse listener or configure a webshell on the left.
+              No shell sessions yet. Create a reverse listener, bind shell, or configure a webshell on the left.
             </div>
           )}
           {activeShell && (
@@ -217,13 +380,13 @@ export default function ShellHub({
       </div>
 
       {activeShell && (
-        <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) 320px', gap: '0.8rem' }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) 360px', gap: '0.8rem' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', minHeight: 0 }}>
             <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
               <button type="button" className="btn-secondary mono" onClick={saveSelection} style={{ fontSize: '0.74rem', padding: '3px 9px' }}>
                 Save Selection
               </button>
-              <button type="button" className="btn-secondary mono" onClick={() => saveLatestOutput()} disabled={!latestOutputChunk} style={{ fontSize: '0.74rem', padding: '3px 9px' }}>
+              <button type="button" className="btn-secondary mono" onClick={() => saveChunkArtifact()} disabled={!latestOutputChunk} style={{ fontSize: '0.74rem', padding: '3px 9px' }}>
                 Save Latest Output
               </button>
               <button type="button" className="btn-secondary mono" onClick={() => onClearLocalShell?.(activeShell.id)} style={{ fontSize: '0.74rem', padding: '3px 9px' }}>
@@ -247,7 +410,13 @@ export default function ShellHub({
                 className="mono"
                 value={inputValue}
                 onChange={(event) => setInputValue(event.target.value)}
-                placeholder={activeShell.type === 'webshell' ? 'Send command to webshell…' : 'Send command to connected reverse shell…'}
+                placeholder={
+                  activeShell.type === 'webshell'
+                    ? 'Send command to webshell…'
+                    : activeShell.type === 'bind'
+                      ? 'Send command to connected bind shell…'
+                      : 'Send command to connected reverse shell…'
+                }
                 style={{ ...fieldStyle, minHeight: '72px', resize: 'vertical' }}
               />
               <button type="button" className="btn-primary mono" onClick={submitInput} disabled={Boolean(busyByShell[activeShell.id]) || !inputValue.trim()} style={{ fontSize: '0.82rem', padding: '0.55rem 0.9rem', alignSelf: 'stretch' }}>
@@ -258,28 +427,100 @@ export default function ShellHub({
 
           <div style={{ border: '1px solid rgba(88,166,255,0.18)', borderRadius: '10px', background: 'rgba(1,4,9,0.34)', padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.55rem', overflowY: 'auto' }}>
             <div className="mono" style={{ fontSize: '0.76rem', color: 'var(--accent-secondary)' }}>
-              Transcript Chunks
+              Transcript Evidence
             </div>
-            {transcriptChunks.length === 0 ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 92px', gap: '0.45rem' }}>
+              <input
+                className="mono"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    void runTranscriptSearch();
+                  }
+                }}
+                placeholder="Search transcript..."
+                style={fieldStyle}
+              />
+              <select value={searchDirection} onChange={(event) => setSearchDirection(event.target.value)} style={fieldStyle}>
+                <option value="all">All</option>
+                <option value="output">Output</option>
+                <option value="input">Input</option>
+                <option value="status">Status</option>
+              </select>
+            </div>
+            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+              <button type="button" className="btn-secondary mono" onClick={() => void runTranscriptSearch()} disabled={searching || !searchQuery.trim()} style={{ fontSize: '0.7rem', padding: '3px 8px' }}>
+                {searching ? 'Searching…' : 'Search'}
+              </button>
+              <button type="button" className="btn-secondary mono" onClick={resetTranscriptSearch} style={{ fontSize: '0.7rem', padding: '3px 8px' }}>
+                Reset
+              </button>
+              <button type="button" className="btn-secondary mono" onClick={() => void saveSelectedChunks()} disabled={selectedChunkIds.length === 0} style={{ fontSize: '0.7rem', padding: '3px 8px' }}>
+                Save Selected ({selectedChunkIds.length})
+              </button>
+              <button type="button" className="btn-secondary mono" onClick={() => void compareSelectedChunks()} disabled={selectedChunkIds.length !== 2 || diffLoading} style={{ fontSize: '0.7rem', padding: '3px 8px' }}>
+                {diffLoading ? 'Comparing…' : 'Compare Selected'}
+              </button>
+            </div>
+
+            {searchError && (
+              <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--accent-danger)' }}>
+                {searchError}
+              </div>
+            )}
+            {diffError && (
+              <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--accent-danger)' }}>
+                {diffError}
+              </div>
+            )}
+
+            {visibleChunks.length === 0 ? (
               <span className="mono" style={{ color: 'var(--text-muted)', fontSize: '0.74rem' }}>
-                No transcript yet.
+                {searchPerformed && searchQuery.trim() ? 'No matching transcript chunks.' : 'No transcript yet.'}
               </span>
             ) : (
-              [...transcriptChunks].reverse().slice(0, 20).map((chunk) => (
-                <div key={chunk.id} style={{ border: '1px solid rgba(88,166,255,0.12)', borderRadius: '8px', padding: '0.5rem', background: 'rgba(8,17,29,0.72)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginBottom: '0.3rem' }}>
-                    <span className="mono" style={{ fontSize: '0.68rem', color: chunk.direction === 'input' ? 'var(--accent-warning)' : 'var(--accent-secondary)' }}>
-                      {chunk.direction.toUpperCase()} #{chunk.seq}
-                    </span>
-                    <button type="button" className="btn-secondary mono" onClick={() => saveLatestOutput(chunk)} style={{ fontSize: '0.66rem', padding: '2px 7px' }}>
-                      Save
-                    </button>
+              visibleChunks.map((chunk) => {
+                const selected = selectedChunkIds.includes(chunk.id);
+                return (
+                  <div key={chunk.id} style={{ border: '1px solid rgba(88,166,255,0.12)', borderRadius: '8px', padding: '0.5rem', background: selected ? 'rgba(16, 44, 80, 0.52)' : 'rgba(8,17,29,0.72)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginBottom: '0.3rem' }}>
+                      <label className="mono" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.68rem', color: chunk.direction === 'input' ? 'var(--accent-warning)' : 'var(--accent-secondary)' }}>
+                        <input type="checkbox" checked={selected} onChange={() => toggleChunkSelection(chunk.id)} />
+                        {chunk.direction.toUpperCase()} #{chunk.seq}
+                      </label>
+                      <button type="button" className="btn-secondary mono" onClick={() => void saveChunkArtifact(chunk)} style={{ fontSize: '0.66rem', padding: '2px 7px' }}>
+                        Save
+                      </button>
+                    </div>
+                    <div className="mono" style={{ marginBottom: '0.25rem', fontSize: '0.62rem', color: 'var(--text-muted)' }}>
+                      {formatTimestamp(chunk.createdAt) || 'timestamp unavailable'}
+                    </div>
+                    <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '0.7rem', color: 'var(--text-main)', maxHeight: '140px', overflow: 'auto' }}>
+                      {chunk.content}
+                    </pre>
                   </div>
-                  <pre className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '0.7rem', color: 'var(--text-main)', maxHeight: '140px', overflow: 'auto' }}>
-                    {chunk.content}
-                  </pre>
+                );
+              })
+            )}
+
+            {diffResult && (
+              <div style={{ borderTop: '1px solid rgba(88,166,255,0.14)', paddingTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                <div className="mono" style={{ fontSize: '0.74rem', color: 'var(--accent-secondary)' }}>
+                  Diff Preview
                 </div>
-              ))
+                <div className="mono" style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+                  left #{diffResult?.leftChunk?.seq || '?'} vs right #{diffResult?.rightChunk?.seq || '?'} · +{diffResult?.summary?.additions || 0} / -{diffResult?.summary?.removals || 0}
+                </div>
+                <div style={{ border: '1px solid rgba(88,166,255,0.12)', borderRadius: '8px', background: 'rgba(8,17,29,0.72)', maxHeight: '260px', overflow: 'auto', padding: '0.45rem' }}>
+                  {(diffResult?.changes || []).map((change, index) => (
+                    <pre key={`${change.type}-${index}`} className="mono" style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '0.68rem', color: diffColor(change) }}>
+                      {formatDiffLine(change)}{change.line}
+                    </pre>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         </div>

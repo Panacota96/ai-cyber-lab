@@ -17,7 +17,7 @@ Helm's Watch is a production-grade Next.js 16 CTF reconnaissance assistant with:
 - Multi-format export: PDF, DOCX, HTML, JSON, Markdown, with Plotly attack-timeline visualization in HTML exports
 - Vitest test suite (Phase 2 complete)
 
-**Current gaps:** Wave 22 still needs deeper shell transports and shell-driven evidence acquisition, and Waves 23-24 remain open for cross-session analysis plus collaboration/coach-quality hardening.
+**Current gaps:** Wave 24 remains open for collaboration plus coach-quality hardening.
 
 **Product scope:** Helm's Paladin is desktop/laptop-first; tablet and mobile responsive work is intentionally out of scope.
 
@@ -267,7 +267,7 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 
 #### Wave 22 — Shell Depth and Evidence Acquisition
 
-**Status:** Planned
+**Status:** Implemented (2026-03-12)
 
 **Scope:** `EX.13`, `CTF.15`, `C.8`
 
@@ -276,15 +276,29 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 - Support direct artifact pull and provenance from shell sessions back into the session artifact store.
 - Improve shell and history usability with fuzzy search, output diffing, and bulk evidence operations.
 
+**Implemented:**
+- Added transcript search and transcript-chunk diff routes on top of the current shell session model, keeping the existing SSE + POST transport unchanged.
+- Extended the shell hub UI with transcript search, chunk selection, diff preview, and bulk-save actions so operators can turn shell evidence into artifacts without leaving the shells view.
+- Added `/api/artifacts/from-shell`, which saves inline shell selections or transcript-linked shell output directly into the artifact store with `shellSessionId`, `sourceTranscriptChunkId`, and `targetId` provenance.
+- Added a bind-shell transport on the same runtime/transcript model, so the shell hub now supports reverse listeners, bind-shell client connections, and webshell command routing without introducing a parallel transport stack.
+- Kept Meterpreter and other heavier transports deferred while still fulfilling the Wave 22 goal of going beyond reverse-shell/webshell v1 on the current transcript/session model.
+
 #### Wave 23 — Search and Cross-Session Analysis
 
-**Status:** Planned
+**Status:** Implemented (2026-03-12)
 
 **Scope:** `C.3`, `C.4`, `C.9`, `C.10`
 
 **Outcome:**
 - Add session comparison, tagging/custom fields, global cross-session search, and scheduled execution.
 - Let operators reason across multiple engagements over time instead of treating each session as isolated.
+
+**Implemented:**
+- Added normalized `session.metadata.tags` and `session.metadata.customFields` handling in session create/update/list flows instead of leaving those values as ad hoc client state.
+- Added `GET /api/search` backed by a dedicated SQLite FTS index over sessions, timeline events, findings, credentials, flags, artifacts, and writeups for cross-session lookup.
+- Added `GET /api/sessions/compare` to summarize target, timeline, finding, credential, flag, artifact, and writeup deltas between two sessions.
+- Added persisted scheduled command execution through `GET/POST/DELETE /api/schedules`, with background dispatch into the existing execution queue and linked timeline events.
+- Added a Wave 23 analysis modal in the desktop UI so operators can search across engagements, compare sessions, edit session tags/custom fields, and manage scheduled commands without leaving the workspace.
 
 #### Wave 24 — Collaboration and Coach Quality
 
@@ -341,7 +355,7 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 - Wave 19B: adversarial challenge guidance remains isolated from the core execution, evidence, and reporting paths.
 - Wave 20: extracted modules, route schemas, shared constants, and error envelopes reduce change risk across execute, graph, report, credential, shell, and artifact flows.
 - Wave 21: implemented one Chronicle/report source that now produces audience-specific outputs, CVSS-linked severity context, and SysReptor-ready handoff payloads without duplicate report models.
-- Wave 22: shell work is no longer limited to reverse-shell/webshell v1, and shell-pulled evidence retains transcript/session provenance inside the artifact store.
+- Wave 22: shell evidence can be searched, diffed, and saved with transcript provenance, and the shell hub now extends beyond reverse-shell/webshell v1 through a bind-shell transport on the same session model.
 - Wave 23: operators can search, compare, tag, and schedule across sessions without losing target or evidence context.
 - Wave 24: collaboration conflicts stay manageable, and coach trust improves through validation, comparison, feedback, and confidence signals without degrading the existing coach workflow.
 
@@ -349,14 +363,14 @@ Foundation wave completed on 2026-03-11: `EX.1`, `CTF.1`, `SEC.2`, `B.7` (SSE ex
 
 | ID | Item | Impact | Effort |
 |----|------|--------|--------|
-| C.3 | Session comparison mode (side-by-side diff in commands/findings) | Low-Med | H |
-| C.4 | Session tagging + custom fields + cross-session full-text search | Med | M |
+| C.3 | Session comparison mode (side-by-side diff in commands/findings) | Implemented | H |
+| C.4 | Session tagging + custom fields + cross-session full-text search | Implemented | M |
 | C.5 | Live collaboration (multi-user session with live updates) | Med | H |
 | C.6 | Command history fuzzy search on command text and output | Implemented | S |
 | C.7 | Bulk screenshot operations (batch-tag/delete/rename) | Implemented | S |
-| C.8 | Output diff view for similar commands | Low-Med | M |
-| C.9 | Global search across sessions | Med | M |
-| C.10 | Scheduled command execution | Low-Med | H |
+| C.8 | Output diff view for similar commands | Implemented | M |
+| C.9 | Global search across sessions | Implemented | M |
+| C.10 | Scheduled command execution | Implemented | H |
 
 ### UX
 
@@ -405,7 +419,7 @@ All currently tracked GitHub / CI-CD items are completed through Wave 9.
 | EX.2 | Nmap XML auto-parser (`-oX` output → graph host/service nodes) | High | M |
 | EX.3 | Structured output detection (auto-pretty-print JSON/XML in terminal) | Med | M |
 | EX.12 | Interactive shell session hub — v1 ships reverse shells and webshells with multiple live tabs and transcript persistence; deeper transports stay deferred | High | H |
-| EX.13 | Extended shell transports — deepen shell-hub support beyond reverse-shell/webshell v1 on the current transcript/session model | High | H |
+| EX.13 | Extended shell transports — deepen shell-hub support beyond reverse-shell/webshell v1 on the current transcript/session model | Implemented | H |
 
 ### CTF-Specific Features (NEW)
 
@@ -419,7 +433,7 @@ All currently tracked GitHub / CI-CD items are completed through Wave 9.
 | CTF.10 | CVE/ExploitDB lookup integration — auto-fetch CVSS + PoC count when CVE node created | High | M |
 | CTF.11 | Credential verification + blast radius — test found creds against all discovered services | Med | M |
 | CTF.14 | Session artifact manager — save documents/files pulled from shells or webshells as session-scoped loot linked to notes and reports | High | M |
-| CTF.15 | Remote artifact pull from shells — save files pulled from shell sessions into the artifact store with transcript/session provenance | High | M |
+| CTF.15 | Remote artifact pull from shells — save files pulled from shell sessions into the artifact store with transcript/session provenance | Implemented | M |
 
 ### Code Quality & Tests
 

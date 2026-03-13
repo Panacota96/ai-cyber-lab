@@ -94,6 +94,25 @@ export function useArtifacts({ sessionId, targetId = null, apiFetch, enabled = t
     return artifact;
   }, [apiFetch, enabled, sessionId, targetId]);
 
+  const createArtifactFromShell = useCallback(async (payload) => {
+    if (!enabled || !sessionId) return null;
+    const response = await apiFetch('/api/artifacts/from-shell', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, sessionId, targetId }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(body?.error || 'Failed to save shell artifact.');
+    }
+    const artifact = body?.artifact || null;
+    if (artifact?.id) {
+      setArtifacts((prev) => [artifact, ...prev.filter((item) => item.id !== artifact.id)]);
+      setSelectedArtifactId(artifact.id);
+    }
+    return artifact;
+  }, [apiFetch, enabled, sessionId, targetId]);
+
   const updateArtifact = useCallback(async (artifactId, updates) => {
     const response = await apiFetch('/api/artifacts', {
       method: 'PATCH',
@@ -150,6 +169,7 @@ export function useArtifacts({ sessionId, targetId = null, apiFetch, enabled = t
     selectArtifact: setSelectedArtifactId,
     uploadArtifact,
     createArtifactFromTranscript,
+    createArtifactFromShell,
     updateArtifact,
     deleteArtifact: deleteArtifactById,
   };

@@ -19,10 +19,12 @@ export const dynamic = 'force-dynamic';
 const CreateShellSchema = z.object({
   sessionId: z.string().optional().default('default'),
   targetId: z.string().optional().nullable(),
-  type: z.enum(['reverse', 'webshell']).default('reverse'),
+  type: z.enum(['reverse', 'bind', 'webshell']).default('reverse'),
   label: z.string().trim().min(1).max(255).optional(),
   bindHost: z.string().trim().min(1).max(255).optional(),
   bindPort: z.coerce.number().int().min(0).max(65535).optional(),
+  remoteHost: z.string().trim().min(1).max(255).optional(),
+  remotePort: z.coerce.number().int().min(1).max(65535).optional(),
   webshellUrl: z.string().trim().max(2048).optional(),
   webshellMethod: z.enum(['GET', 'POST', 'PUT']).optional(),
   webshellHeaders: z.record(z.string(), z.string()).optional(),
@@ -71,6 +73,9 @@ export const POST = withErrorHandler(
       }
       if (parsed.data.type === 'webshell' && !parsed.data.webshellUrl) {
         return apiError('webshellUrl is required for webshell sessions.', 400);
+      }
+      if (parsed.data.type === 'bind' && (!parsed.data.remoteHost || !parsed.data.remotePort)) {
+        return apiError('remoteHost and remotePort are required for bind shell sessions.', 400);
       }
 
       const shellSession = createShellSession(sessionId, parsed.data);

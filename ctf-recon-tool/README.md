@@ -29,10 +29,12 @@ The current product name is **Helm's Watch**. Some runtime identifiers still use
 - Session-scoped timeline for commands, notes, screenshots, and evidence metadata.
 - Live command output streaming via SSE with timeline polling fallback when the stream is unavailable.
 - Filters, collapse controls, and stable scroll behavior.
+- Cross-session analysis modal for indexed search, side-by-side comparison, session tags/custom fields, and scheduled execution.
 - Screenshot uploads with metadata normalization and inline evidence rendering.
 - Discovery graph view backed by persisted graph state.
-- Tabbed shell hub for reverse shells and webshells with transcript persistence and SSE updates.
+- Tabbed shell hub for reverse shells, bind shells, and webshells with transcript persistence, SSE updates, transcript search/diff, and shell-derived artifact saves.
 - Local flag tracking, read-only wordlist browsing, session credential management with hash identification and John/Hashcat command insertion, and per-session timer controls in the workspace sidebar/header.
+- Scheduled command execution queues future runs into the existing execution pipeline while preserving target, timeout, and tag context.
 
 ### Reporting and evidence
 - Six report formats:
@@ -53,7 +55,7 @@ The current product name is **Helm's Watch**. Some runtime identifiers still use
 - Executive-summary drafting, remediation suggestion helpers, and before/after session comparison reports in the Chronicle workflow.
 - Audience-pack reporting views (`executive`, `technical`, `certification`) and reusable report presets from the same Chronicle/report model.
 - PoC step recorder with ordering and export integration.
-- Session artifact manager for operator uploads and saved transcript output, with preview/download routes and report insertion hooks.
+- Session artifact manager for operator uploads, saved transcript output, and shell-derived artifact saves with transcript provenance, plus preview/download routes and report insertion hooks.
 - Read-only share-link snapshots for reports via unique `/share/[token]` URLs with operator-side revoke controls.
 - One-way SysReptor handoff export for downstream report-platform continuation without creating a second in-app report model.
 - Export targets: Markdown, PDF, HTML, JSON, and DOCX.
@@ -189,6 +191,9 @@ Copy `.env.example` to `.env` when you want explicit local configuration.
 - OpenAPI JSON: `/api/docs`
 - Swagger UI: `/api/docs?ui=1`
 - SysReptor handoff route: `POST /api/report/handoff/sysreptor`
+- Cross-session search route: `GET /api/search`
+- Session comparison route: `GET /api/sessions/compare`
+- Scheduled execution routes: `GET/POST/DELETE /api/schedules`
 - Product roadmap: [./docs/ROADMAP.md](./docs/ROADMAP.md)
 - Improvement backlog: [./docs/improvement-backlog.md](./docs/improvement-backlog.md)
 
@@ -211,6 +216,8 @@ Key tables currently tracked in SQLite:
 - `shell_sessions`
 - `shell_transcript_chunks`
 - `session_artifacts`
+- `scheduled_commands`
+- `search_documents`
 - `app_logs`
 
 Uploaded screenshots are stored under `data/sessions/<sessionId>/screenshots/`.
@@ -221,7 +228,7 @@ Use the codebase by subsystem rather than the older single-file MVP model:
 - `app/page.js` - thin Next.js page wrapper
 - `app/HomeClient.js` - primary desktop UI shell and composition root
 - `app/components/` - extracted UI modules such as sidebar panels
-- `app/domains/` - domain-owned components, hooks, and helpers for reporting, toolbox, and session/platform surfaces
+- `app/domains/` - domain-owned components, hooks, and helpers for reporting, toolbox, session/platform, and session-analysis surfaces
 - `app/hooks/` - client hooks for API access, execution streaming, shell state, artifacts, and focused state
 - `app/api/` - session, timeline, execute, shell, artifact, report, export, findings, PoC, coach, media, admin, and docs routes
 - `app/lib/` - DB access, repositories/services, report formats, export builders, runtime helpers, validation, graph schemas, and security utilities
@@ -232,6 +239,7 @@ Use the codebase by subsystem rather than the older single-file MVP model:
 
 ## Current export and report behavior
 - Audience packs (`executive`, `technical`, `certification`) and report presets resolve from one Chronicle/report source instead of duplicating report state.
+- Session tags and custom fields now live in normalized `session.metadata` and flow through session list/detail responses instead of staying client-only.
 - `technical-walkthrough` and `pentest` can include findings and PoC sections.
 - All report formats include cover/header metadata, and findings-backed severity summaries render when findings exist.
 - SysReptor handoff packages include a manifest, markdown report, findings JSON, and targets JSON for downstream import/mapping work.

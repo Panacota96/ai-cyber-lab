@@ -74,7 +74,33 @@ function closeReverseRuntime(runtime) {
   }
 }
 
+function closeSocketRuntime(runtime) {
+  try {
+    runtime?.socket?.destroy();
+  } catch {
+    // ignore best effort close
+  }
+}
+
 function finalizeReverseSession(sessionId, shellSessionId, { status = 'closed', error = null } = {}) {
+  const current = getShellSession(sessionId, shellSessionId);
+  const next = updateShellSession(sessionId, shellSessionId, {
+    status,
+    closedAt: new Date().toISOString(),
+    metadata: {
+      ...(current?.metadata || {}),
+      lastError: error ? String(error) : current?.metadata?.lastError || null,
+    },
+  });
+  if (error) {
+    upsertStatusChunk(sessionId, shellSessionId, `[session] ${String(error)}`);
+  }
+  publishState(sessionId, next);
+  clearRuntime(shellSessionId);
+  return next;
+}
+
+function finalizeBindSession(sessionId, shellSessionId, { status = 'closed', error = null } = {}) {
   const current = getShellSession(sessionId, shellSessionId);
   const next = updateShellSession(sessionId, shellSessionId, {
     status,
@@ -180,6 +206,92 @@ async function startReverseShellListener(session) {
   return updated;
 }
 
+async function startBindShellConnection(session) {
+  const existing = getRuntime(session.id);
+  if (existing?.kind === 'bind' && existing.socket && !existing.socket.destroyed) {
+    return getShellSession(session.sessionId, session.id) || session;
+  }
+  if (!session.remoteHost || !session.remotePort) {
+    return finalizeBindSession(session.sessionId, session.id, {
+      status: 'error',
+      error: 'Bind shell requires a remote host and port.',
+    });
+  }
+
+  const runtime = {
+    kind: 'bind',
+    sessionId: session.sessionId,
+    shellSessionId: session.id,
+    socket: null,
+  };
+  setRuntime(session.id, runtime);
+
+  const startedAt = new Date().toISOString();
+  const connecting = updateShellSession(session.sessionId, session.id, {
+    status: 'connecting',
+    lastActivityAt: startedAt,
+  });
+  publishState(session.sessionId, connecting);
+  upsertStatusChunk(session.sessionId, session.id, `[session] connecting to ${session.remoteHost}:${session.remotePort}`);
+
+  return new Promise((resolve) => {
+    const socket = net.createConnection({
+      host: session.remoteHost,
+      port: session.remotePort,
+    });
+    runtime.socket = socket;
+
+    const handleConnectError = (error) => {
+      logger.warn('Bind shell connection failed', {
+        sessionId: session.sessionId,
+        shellSessionId: session.id,
+        error: error?.message || 'Bind shell connection failed.',
+      });
+      closeSocketRuntime(runtime);
+      resolve(finalizeBindSession(session.sessionId, session.id, {
+        status: 'error',
+        error: error?.message || 'Bind shell connection failed.',
+      }));
+    };
+
+    socket.once('error', handleConnectError);
+    socket.once('connect', () => {
+      socket.off('error', handleConnectError);
+      const connectedAt = new Date().toISOString();
+      const connected = updateShellSession(session.sessionId, session.id, {
+        status: 'connected',
+        connectedAt,
+        lastActivityAt: connectedAt,
+        metadata: {
+          ...(session.metadata || {}),
+          transport: 'bind',
+        },
+      });
+      publishState(session.sessionId, connected);
+      upsertStatusChunk(session.sessionId, session.id, `[session] connected to ${session.remoteHost}:${session.remotePort}`);
+
+      socket.on('data', (buffer) => {
+        captureSocketActivity(session.sessionId, session.id, buffer.toString('utf8'), 'output');
+      });
+
+      socket.on('error', (error) => {
+        finalizeBindSession(session.sessionId, session.id, {
+          status: 'error',
+          error: error?.message || 'Bind shell socket error.',
+        });
+      });
+
+      socket.on('close', () => {
+        finalizeBindSession(session.sessionId, session.id, {
+          status: 'closed',
+        });
+      });
+
+      resolve(connected);
+    });
+  });
+}
+
 function interpolateTemplate(template = '', command = '') {
   return String(template || '').replace(/\{\{\s*command\s*\}\}/g, command);
 }
@@ -240,14 +352,29 @@ export async function ensureShellRuntime(session) {
   if (session.type === 'reverse' && session.status === 'listening' && !getRuntime(session.id)) {
     return startReverseShellListener(session);
   }
+  if (session.type === 'bind' && !getRuntime(session.id) && !['closed', 'error'].includes(String(session.status || ''))) {
+    return startBindShellConnection(session);
+  }
   return session;
 }
 
 export async function ensureShellRuntimesForSession(sessionId) {
   const sessions = listShellSessions(sessionId);
   for (const session of sessions) {
-    if (session.type === 'reverse' && session.status === 'listening') {
-      await ensureShellRuntime(session);
+    if (
+      (session.type === 'reverse' && session.status === 'listening')
+      || (session.type === 'bind' && !['closed', 'error'].includes(String(session.status || '')))
+    ) {
+      try {
+        await ensureShellRuntime(session);
+      } catch (error) {
+        logger.warn('Failed to ensure shell runtime', {
+          sessionId,
+          shellSessionId: session.id,
+          type: session.type,
+          error: error?.message || 'Runtime startup failed.',
+        });
+      }
     }
   }
   return listShellSessions(sessionId);
@@ -263,6 +390,9 @@ export async function startShellSessionRuntime(session) {
 
   if (session.type === 'reverse') {
     return startReverseShellListener(session);
+  }
+  if (session.type === 'bind') {
+    return startBindShellConnection(session);
   }
 
   publishState(session.sessionId, session);
@@ -286,10 +416,10 @@ export async function sendShellInput({ sessionId, shellSessionId, input }) {
     throw new Error('Input could not be persisted.');
   }
 
-  if (session.type === 'reverse') {
+  if (session.type === 'reverse' || session.type === 'bind') {
     const runtime = getRuntime(shellSessionId);
     if (!runtime?.socket) {
-      throw new Error('Reverse shell is not connected.');
+      throw new Error(`${session.type === 'bind' ? 'Bind' : 'Reverse'} shell is not connected.`);
     }
     runtime.socket.write(trimmedInput.endsWith('\n') ? trimmedInput : `${trimmedInput}\n`);
     return {
@@ -368,6 +498,8 @@ export function disconnectShellSession({ sessionId, shellSessionId }) {
   const runtime = getRuntime(shellSessionId);
   if (runtime?.kind === 'reverse') {
     closeReverseRuntime(runtime);
+  } else if (runtime?.kind === 'bind') {
+    closeSocketRuntime(runtime);
   }
 
   const next = updateShellSession(sessionId, shellSessionId, {
@@ -384,6 +516,8 @@ export async function clearShellRuntimeForTests() {
   for (const runtime of runtimeState.sessions.values()) {
     if (runtime?.kind === 'reverse') {
       closeReverseRuntime(runtime);
+    } else if (runtime?.kind === 'bind') {
+      closeSocketRuntime(runtime);
     }
   }
   runtimeState.sessions.clear();

@@ -69,6 +69,7 @@ export const POST = withErrorHandler(withAuth(async (request) => {
       mode = 'stream',
       reportBlocks = [],
       selectedSectionIds = [],
+      sectionAction = 'refine',
       evidenceContext = '',
     } = parsed.data;
 
@@ -100,6 +101,7 @@ export const POST = withErrorHandler(withAuth(async (request) => {
         skill,
         reportBlocks,
         selectedSectionIds,
+        sectionAction,
         evidenceContext,
       });
       return NextResponse.json({ mode: 'section-patch', patches: data.patches });

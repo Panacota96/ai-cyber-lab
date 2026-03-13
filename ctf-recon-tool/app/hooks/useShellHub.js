@@ -81,6 +81,26 @@ export function useShellHub({ sessionId, targetId = null, apiFetch, enabled = tr
     return chunks;
   }, [apiFetch, enabled, sessionId]);
 
+  const searchTranscript = useCallback(async (shellSessionId, { query = '', direction = 'all', limit = 50 } = {}) => {
+    if (!enabled || !sessionId || !shellSessionId) return [];
+    const response = await apiFetch(`/api/shell/sessions/${encodeURIComponent(shellSessionId)}/search?sessionId=${encodeURIComponent(sessionId)}&q=${encodeURIComponent(query)}&direction=${encodeURIComponent(direction)}&limit=${encodeURIComponent(limit)}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error || 'Failed to search shell transcript.');
+    }
+    return Array.isArray(payload?.chunks) ? payload.chunks : [];
+  }, [apiFetch, enabled, sessionId]);
+
+  const diffTranscriptChunks = useCallback(async (shellSessionId, { leftChunkId, rightChunkId } = {}) => {
+    if (!enabled || !sessionId || !shellSessionId) return null;
+    const response = await apiFetch(`/api/shell/sessions/${encodeURIComponent(shellSessionId)}/diff?sessionId=${encodeURIComponent(sessionId)}&leftChunkId=${encodeURIComponent(leftChunkId)}&rightChunkId=${encodeURIComponent(rightChunkId)}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error || 'Failed to diff shell transcript chunks.');
+    }
+    return payload;
+  }, [apiFetch, enabled, sessionId]);
+
   const selectShell = useCallback(async (shellSessionId) => {
     setActiveShellId(shellSessionId);
     setUnreadByShell((prev) => ({ ...prev, [shellSessionId]: 0 }));
@@ -247,6 +267,8 @@ export function useShellHub({ sessionId, targetId = null, apiFetch, enabled = tr
     streamStatus,
     refreshShellSessions,
     loadTranscript,
+    searchTranscript,
+    diffTranscriptChunks,
     selectShell,
     createShellSession,
     sendInput,

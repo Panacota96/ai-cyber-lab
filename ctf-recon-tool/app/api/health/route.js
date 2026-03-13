@@ -19,8 +19,10 @@ import {
   isOfflineAiEnabled,
   isShellHubEnabled,
 } from '@/lib/security';
+import { ensureScheduleRuntimeStarted } from '@/lib/schedule-runtime';
 
 export async function GET() {
+  ensureScheduleRuntimeStarted();
   const toolAvailability = Object.fromEntries(
     collectToolRequirements(SUGGESTIONS, CHEATSHEET)
       .map((binary) => [binary, isToolAvailable(binary)])

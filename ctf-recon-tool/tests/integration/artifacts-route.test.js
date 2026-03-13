@@ -1,4 +1,5 @@
 import { GET as artifactFileGet } from '@/api/artifacts/[sessionId]/[artifactId]/route';
+import { POST as artifactFromShellPost } from '@/api/artifacts/from-shell/route';
 import { POST as artifactFromTranscriptPost } from '@/api/artifacts/from-transcript/route';
 import { GET as artifactsGet, POST as artifactsPost } from '@/api/artifacts/route';
 import { createShellSession, appendShellTranscriptChunk } from '@/lib/shell-repository';
@@ -82,5 +83,60 @@ describe('artifacts routes', () => {
     expect(downloadRes.headers.get('content-type')).toContain('text/plain');
     const text = await downloadRes.text();
     expect(text).toContain('www-data');
+  });
+
+  it('creates shell-derived artifacts from inline content and transcript chunk provenance', async () => {
+    const session = createTestSession();
+    sessions.push(session.id);
+    const targetId = session.primaryTargetId;
+
+    const shellSession = createShellSession(session.id, {
+      type: 'webshell',
+      label: 'Provenance Shell',
+      webshellUrl: 'http://example.invalid/shell.php',
+      targetId,
+    });
+    const transcriptChunk = appendShellTranscriptChunk(session.id, shellSession.id, {
+      direction: 'output',
+      content: 'cat flag.txt\nHTB{wave22}\n',
+    });
+
+    const inlineReq = makeJsonRequest('/api/artifacts/from-shell', 'POST', {
+      sessionId: session.id,
+      targetId,
+      shellSessionId: shellSession.id,
+      filename: 'selection.txt',
+      content: 'selected shell text',
+      notes: 'Saved from terminal selection',
+    }, { auth: true });
+    const inlineRes = await artifactFromShellPost(inlineReq);
+    expect(inlineRes.status).toBe(201);
+    const inlinePayload = await readJson(inlineRes);
+    expect(inlinePayload.artifact.kind).toBe('shell-pull');
+    expect(inlinePayload.artifact.shellSessionId).toBe(shellSession.id);
+    expect(inlinePayload.artifact.sourceTranscriptChunkId).toBeNull();
+
+    const chunkReq = makeJsonRequest('/api/artifacts/from-shell', 'POST', {
+      sessionId: session.id,
+      targetId,
+      shellSessionId: shellSession.id,
+      sourceTranscriptChunkId: transcriptChunk.id,
+      filename: 'flag.txt',
+      notes: 'Pulled from shell transcript chunk',
+    }, { auth: true });
+    const chunkRes = await artifactFromShellPost(chunkReq);
+    expect(chunkRes.status).toBe(201);
+    const chunkPayload = await readJson(chunkRes);
+    expect(chunkPayload.artifact.kind).toBe('shell-pull');
+    expect(chunkPayload.artifact.shellSessionId).toBe(shellSession.id);
+    expect(chunkPayload.artifact.sourceTranscriptChunkId).toBe(transcriptChunk.id);
+    expect(chunkPayload.artifact.targetId).toBe(targetId);
+
+    const downloadRes = await artifactFileGet(new Request(`http://localhost/api/artifacts/${session.id}/${chunkPayload.artifact.id}`), {
+      params: Promise.resolve({ sessionId: session.id, artifactId: chunkPayload.artifact.id }),
+    });
+    expect(downloadRes.status).toBe(200);
+    const text = await downloadRes.text();
+    expect(text).toContain('HTB{wave22}');
   });
 });
