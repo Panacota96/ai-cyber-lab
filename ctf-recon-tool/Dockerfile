@@ -1,11 +1,11 @@
-FROM node:25-bookworm AS deps
+FROM node:26-bookworm AS deps
 
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
 RUN npm ci --legacy-peer-deps
 
-FROM node:25-bookworm AS builder
+FROM node:26-bookworm AS builder
 
 WORKDIR /app
 
@@ -17,7 +17,7 @@ COPY . .
 
 RUN npm run build
 
-FROM node:25-bookworm-slim AS runner
+FROM node:26-bookworm-slim AS runner
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
